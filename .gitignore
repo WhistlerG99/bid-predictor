@@ -1,5 +1,7 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
+mlruns/
+catboost_info/
 *.py[codz]
 *$py.class
 

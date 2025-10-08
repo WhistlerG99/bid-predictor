@@ -1,135 +1,12 @@
 import os
-import time
-import threading
 import pandas as pd
 import numpy as np
-import mlflow
 from catboost import CatBoostClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.base import BaseEstimator, ClassifierMixin
-
-
-class MlflowCallback(object):
-    """
-    CatBoost callback to log training and validation metrics to MLflow.
-    """
-    def after_iteration(self, info):
-        # Log metrics after each iteration
-        iteration = info.iteration
-        self.iteration = iteration
-
-        # Log training loss
-        train_loss = info.metrics["learn"]["Logloss"][-1]
-        mlflow.log_metric("train_loss", train_loss, step=iteration)
-
-        # Log validation loss
-        validation_loss = info.metrics["validation"]["Logloss"][-1]
-        mlflow.log_metric("validation_loss", validation_loss, step=iteration)
-
-        # Log validation AUC
-        validation_auc = info.metrics["validation"]["AUC"][-1]
-        mlflow.log_metric("validation_auc", validation_auc, step=iteration)
-
-        return True  # Continue training
-
-
-def follow_tsv(path: str, key: str, run_id: str, client: mlflow.MlflowClient, stop_event: threading.Event):
-    """
-    Tail a CatBoost TSV metrics file and log values to MLflow for a specific run.
-
-    Parameters
-    ----------
-    path : str
-        Path to the TSV file (e.g., learn_error.tsv, test_error.tsv).
-    key : str
-        Metric name to log (e.g., "train_Logloss", "eval_Logloss").
-    run_id : str
-        Active MLflow run ID to log into.
-    client : mlflow.MlflowClient
-        Reusable MLflow client.
-    stop_event : threading.Event
-        Cooperative stop signal for the tailer thread.
-    """
-    # Wait (a bit) for the file to appear
-    t0 = time.time()
-    while not os.path.exists(path) and not stop_event.is_set():
-        if time.time() - t0 > 300:  # 5-minute safety
-            return
-        time.sleep(0.2)
-    if not os.path.exists(path):
-        return
-
-    with open(path, "r") as f:
-        # skip header if present
-        header_line = f.readline()
-        _ = header_line  # not used; discard
-
-        while not stop_event.is_set():
-            pos = f.tell()
-            line = f.readline()
-            if not line:
-                time.sleep(0.2)
-                f.seek(pos)
-                continue
-
-            parts = line.strip().split("\t")
-            if not parts:
-                continue
-
-            # Typical format: iter \t <metric(s)>
-            try:
-                step = int(parts[0])
-            except Exception:
-                continue
-
-            # Log the last numeric column
-            for c in reversed(parts[1:]):
-                try:
-                    val = float(c)
-                    client.log_metric(run_id, key, val, step=step)
-                    break
-                except ValueError:
-                    continue
-
-
-def start_catboost_mlflow_stream(train_dir: str, run_id: str, metric_prefix: str = ""):
-    """
-    Start background threads that tail CatBoost metric TSVs and log to MLflow.
-
-    Returns
-    -------
-    stop_stream : callable
-        Call to stop threads and join them.
-    """
-    client = mlflow.tracking.MlflowClient()
-    stop_event = threading.Event()
-    threads = []
-
-    learn_path = os.path.join(train_dir, "learn_error.tsv")
-    test_path = os.path.join(train_dir, "test_error.tsv")
-
-    t1 = threading.Thread(
-        target=follow_tsv,
-        args=(learn_path, f"{metric_prefix}train_Logloss" if metric_prefix else "train_Logloss", run_id, client, stop_event),
-        daemon=True,
-    )
-    t2 = threading.Thread(
-        target=follow_tsv,
-        args=(test_path,  f"{metric_prefix}eval_Logloss" if metric_prefix else "eval_Logloss",  run_id, client, stop_event),
-        daemon=True,
-    )
-    t1.start()
-    t2.start()
-    threads.extend([t1, t2])
-
-    def stop_stream():
-        stop_event.set()
-        for t in threads:
-            t.join(timeout=2)
-
-    return stop_stream
-
+from .utils import get_output_dir, in_sagemaker
+from .tracking import MlflowCallback
 
 pre_features = [
     "carrier_code",
@@ -310,36 +187,6 @@ def add_quantiles(out):
     )
     return out
 
-# def loo_quantiles(group, col):
-#     vals = group[col].to_numpy()
-#     n = len(vals)
-#     q25, q50, q75 = [], [], []
-#     for i in range(n):
-#         if n == 1:
-#             q25.append(np.nan)
-#             q50.append(np.nan)
-#             q75.append(np.nan)
-#         else:
-#             others = np.concatenate([vals[:i], vals[i + 1 :]])
-#             q25.append(np.quantile(others, 0.25))
-#             q50.append(np.quantile(others, 0.50))
-#             q75.append(np.quantile(others, 0.75))
-#     return pd.DataFrame(
-#         {"q25_excl_self": q25, "median_excl_self": q50, "q75_excl_self": q75},
-#         index=group.index,
-#     )
-
-
-# def add_loo_quantiles(out):
-#     out[["usd_base_amount_25%", "usd_base_amount_50%", "usd_base_amount_75%"]] = (
-#         out.groupby(
-#             ["carrier_code", "flight_number", "travel_date", "upgrade_type"],
-#             group_keys=False,
-#             observed=True,
-#         ).apply(loo_quantiles, col="usd_base_amount", include_groups=False)
-#     )
-#     return out
-
 
 # --- Wrappers around your existing funcs so they can be used in pipelines ---
 def add_group_features_wrapper(X):
@@ -377,33 +224,22 @@ quantiles_transformer = FunctionTransformer(add_quantiles_wrapper)
 reduce_features_transformer = FunctionTransformer(reduce_features)
 
 
-def get_train_dir():
-    # Prefer CATBOOST_TRAIN_DIR if present, else /opt/ml/output
-    train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
-    try:
-        os.makedirs(train_dir, exist_ok=True)
-    except PermissionError:
-        # Fall back to /tmp to avoid failing the whole job
-        train_dir = os.path.join("/tmp", "catboost")
-        os.makedirs(train_dir, exist_ok=True)
-        print(f"WARNING: /opt/ml/output not writable; using {train_dir}")
-    return train_dir
-
-
 # ---- 1) Minimal routing-aware wrapper
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, **cb_params):
-        train_dir = get_train_dir()
-        cb_params["train_dir"] = train_dir
-        cb_params["allow_writing_files"] = True
-        cb_params["verbose"] = 1
+        if in_sagemaker():
+            train_dir = get_output_dir()
+            cb_params["train_dir"] = train_dir
+            cb_params["allow_writing_files"] = True
+            cb_params["verbose"] = 1
+            self._callbacks = None
+        else:
+            self._callbacks = [MlflowCallback()]
         self.cb_params = cb_params
         self._cb = None
 
     # sklearn will route eval_set here if we request it on the instance
     def fit(self, X, y=None, eval_set=None, **fit_kwargs):
-
-
         self._cb = CatBoostClassifier(
             **self.cb_params
         )
@@ -413,10 +249,8 @@ class CBC(BaseEstimator, ClassifierMixin):
             y,
             eval_set=eval_set,
             cat_features=cat_features,
-            # callbacks=[
-            #     MlflowCallback()
-            # ],
-            ** fit_kwargs,
+            callbacks=self._callbacks,
+            **fit_kwargs,
         )
         return self
 

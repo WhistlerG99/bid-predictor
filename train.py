@@ -1,3 +1,4 @@
+import os
 import argparse
 import pandas as pd
 import mlflow
@@ -18,12 +19,14 @@ from bid_predictor.bid_predictor import (
     pre_features,
     cat_features,
     features,
-    start_catboost_mlflow_stream,
 )
-import os
-arn = "arn:aws:sagemaker:us-east-1:622055002283:mlflow-tracking-server/tracking-server-5vt5uv9jpcqmxz-c3e5i8l64ccsh3-dev"
-mlflow.set_tracking_uri(arn)
-# os.environ["MLFLOW_TRACKING_URI"] = arn
+from bid_predictor.tracking import start_catboost_mlflow_stream
+from bid_predictor.utils import in_sagemaker
+from dotenv import load_dotenv
+load_dotenv()
+if in_sagemaker():
+    arn = os.environ["MLFLOW_AWS_ARN"]
+    mlflow.set_tracking_uri(arn)
 
 
 def parse_args():
@@ -90,18 +93,21 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
             task_type=args.task_type,
             devices=args.devices,
         )
-        # cat = pipeline[-1]  # CatBoostClassifier
-        # train_dir = cat._cb.get_param("train_dir")
-        train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
-        # os.makedirs(train_dir, exist_ok=True)
 
-        # start streaming before fit
-        stop_stream = start_catboost_mlflow_stream(train_dir, run.info.run_id)
+        if in_sagemaker():
+            train_dir = pipeline[-1].cb_params.get("train_dir", "/opt/ml/output/catboost")
+            # train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
 
-        try:
+            # start streaming before fit
+            stop_stream = start_catboost_mlflow_stream(train_dir, run.info.run_id)
+
+            try:
+                pipeline.fit(X_train, y_train, eval_set=(X_test, y_test))
+            finally:
+                stop_stream()
+        else:
             pipeline.fit(X_train, y_train, eval_set=(X_test, y_test))
-        finally:
-            stop_stream()
+
         proba = pipeline.predict_proba(X_test)[:, 1]
         y_pred = (proba >= 0.5).astype(int)
         mlflow.log_metrics(
@@ -183,7 +189,10 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
 
 
 def main():
-    train_dir = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
+    if in_sagemaker():
+        train_dir = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
+    else:
+        train_dir = "../old-bid-predictor"
 
     train_file = train_dir + "/bid_data_enriched_new_reduced.csv"
 
