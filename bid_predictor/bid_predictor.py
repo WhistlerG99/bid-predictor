@@ -131,63 +131,6 @@ def start_catboost_mlflow_stream(train_dir: str, run_id: str, metric_prefix: str
     return stop_stream
 
 
-# def start_catboost_mlflow_stream(train_dir, run_id, metric_prefix=""):
-#     client = mlflow.tracking.MlflowClient()
-#     stop = threading.Event()
-
-#     def _follow_tsv(path, key):
-#         # wait for file to appear
-#         t0 = time.time()
-#         while not os.path.exists(path) and not stop.is_set():
-#             if time.time() - t0 > 300:  # 5 min safety
-#                 return
-#             time.sleep(0.2)
-#         if not os.path.exists(path):
-#             return
-
-#         with open(path, "r") as f:
-#             _ = f.readline()  # skip header
-#             while not stop.is_set():
-#                 pos = f.tell()
-#                 line = f.readline()
-#                 if not line:
-#                     time.sleep(0.2)
-#                     f.seek(pos)
-#                     continue
-#                 parts = line.strip().split("\t")
-#                 if not parts:
-#                     continue
-#                 try:
-#                     step = int(parts[0])
-#                     # last numeric column is the metric value
-#                     for c in reversed(parts[1:]):
-#                         try:
-#                             val = float(c)
-#                             client.log_metric(run_id, key, val, step=step)
-#                             break
-#                         except ValueError:
-#                             continue
-#                 except Exception:
-#                     continue
-
-#     threads = []
-#     learn_path = os.path.join(train_dir, "learn_error.tsv")
-#     test_path = os.path.join(train_dir, "test_error.tsv")
-
-#     t1 = threading.Thread(target=_follow_tsv, args=(learn_path, f"{metric_prefix}train_logloss"), daemon=True)
-#     t2 = threading.Thread(target=_follow_tsv, args=(test_path,  f"{metric_prefix}eval_logloss"),  daemon=True)
-#     t1.start()
-#     t2.start()
-#     threads.extend([t1, t2])
-
-#     def stop_stream():
-#         stop.set()
-#         for t in threads:
-#             t.join(timeout=2)
-
-#     return stop_stream
-
-
 pre_features = [
     "carrier_code",
     "flight_number",
