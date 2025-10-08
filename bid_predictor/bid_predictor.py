@@ -231,7 +231,6 @@ class CBC(BaseEstimator, ClassifierMixin):
             train_dir = get_output_dir()
             cb_params["train_dir"] = train_dir
             cb_params["allow_writing_files"] = True
-            cb_params["verbose"] = 1
             self._callbacks = None
         else:
             self._callbacks = [MlflowCallback()]

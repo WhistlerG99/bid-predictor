@@ -4,6 +4,8 @@ import datetime as dt
 import sagemaker
 from sagemaker.estimator import Estimator
 from sagemaker.inputs import TrainingInput
+from dotenv import load_dotenv
+load_dotenv()
 
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 # ROLE_ARN = os.environ["SAGEMAKER_ROLE_ARN"]
@@ -14,13 +16,13 @@ repo = "bid-predictor-sklearn-gpu"
 tag = "latest"
 image_uri = f"{account}.dkr.ecr.{REGION}.amazonaws.com/{repo}:{tag}"
 
-task_type = "CPU"
-instance_type = "ml.m5.xlarge"
-devices = "0"
-
-# task_type = "GPU"
-# instance_type = "ml.g5.xlarge"
+# task_type = "CPU"
+# instance_type = "ml.m5.xlarge"
 # devices = "0"
+
+task_type = "GPU"
+instance_type = "ml.g5.xlarge"
+devices = "0"
 # instance_type = "ml.g5.12xlarge" # 4 GPUs
 # devices = "-1"
 # devices = "0,1,2,3"
@@ -53,7 +55,8 @@ est = Estimator(
     }
 )
 
-train_s3 = "s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/shared/bid-predictor/bid_data_enriched_new_reduced.csv"  # ends with a slash; can hold multiple files
+
+train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data/air_canada_and_lot/bid_data_enriched_new_reduced.csv"
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,
