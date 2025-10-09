@@ -2,6 +2,7 @@
 __pycache__/
 mlruns/
 catboost_info/
+scratch/
 *.py[codz]
 *$py.class
 
