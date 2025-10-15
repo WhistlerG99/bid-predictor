@@ -3,6 +3,7 @@ __pycache__/
 mlruns/
 catboost_info/
 scratch/
+.DS_Store
 *.py[codz]
 *$py.class
 
