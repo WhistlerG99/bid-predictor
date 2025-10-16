@@ -3,10 +3,12 @@ import time
 import threading
 import mlflow
 
+
 class MlflowCallback(object):
     """
     CatBoost callback to log training and validation metrics to MLflow.
     """
+
     def after_iteration(self, info):
         # Log metrics after each iteration
         iteration = info.iteration
@@ -27,7 +29,13 @@ class MlflowCallback(object):
         return True  # Continue training
 
 
-def follow_tsv(path: str, key: str, run_id: str, client: mlflow.MlflowClient, stop_event: threading.Event):
+def follow_tsv(
+    path: str,
+    key: str,
+    run_id: str,
+    client: mlflow.MlflowClient,
+    stop_event: threading.Event,
+):
     """
     Tail a CatBoost TSV metrics file and log values to MLflow for a specific run.
 
@@ -104,12 +112,24 @@ def start_catboost_mlflow_stream(train_dir: str, run_id: str, metric_prefix: str
 
     t1 = threading.Thread(
         target=follow_tsv,
-        args=(learn_path, f"{metric_prefix}train_Logloss" if metric_prefix else "train_Logloss", run_id, client, stop_event),
+        args=(
+            learn_path,
+            f"{metric_prefix}train_Logloss" if metric_prefix else "train_Logloss",
+            run_id,
+            client,
+            stop_event,
+        ),
         daemon=True,
     )
     t2 = threading.Thread(
         target=follow_tsv,
-        args=(test_path,  f"{metric_prefix}eval_Logloss" if metric_prefix else "eval_Logloss",  run_id, client, stop_event),
+        args=(
+            test_path,
+            f"{metric_prefix}eval_Logloss" if metric_prefix else "eval_Logloss",
+            run_id,
+            client,
+            stop_event,
+        ),
         daemon=True,
     )
     t1.start()

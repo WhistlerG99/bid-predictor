@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 import mlflow
 from catboost import Pool
+import pyarrow.dataset as ds
 import matplotlib.pyplot as plt
 import sklearn
 from sklearn.metrics import (
@@ -46,12 +47,14 @@ def parse_args():
     return p.parse_args()
 
 
-def prepare_features(out):
-    out.sort_values(["travel_date", "carrier_code", "flight_number"]).reset_index(
+def prepare_features(data):
+    data = data[data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")]
+
+    data.sort_values(["travel_date", "carrier_code", "flight_number"]).reset_index(
         drop=True
     )
 
-    out = out.fillna(
+    data = data.fillna(
         {
             "multiplier_fare_class": 1.0,
             "multiplier_loyalty": 1.0,
@@ -62,9 +65,9 @@ def prepare_features(out):
 
     cutoff = "2025-05-01"
     # cutoff = "2023-08-01"
-    yX_train = out[out.travel_date < cutoff][pre_features + ["offer_status"]]
-    yX_test = out[out.travel_date >= cutoff][pre_features + ["offer_status"]]
-    # yX_test = out[(out.travel_date >= cutoff) & (out.travel_date <= "2023-08-15")][
+    yX_train = data[data.travel_date < cutoff][pre_features + ["offer_status"]]
+    yX_test = data[data.travel_date >= cutoff][pre_features + ["offer_status"]]
+    # yX_test = data[(data.travel_date >= cutoff) & (data.travel_date <= "2023-08-15")][
         # pre_features + ["offer_status"]
     # ]
 
@@ -77,7 +80,7 @@ def prepare_features(out):
 def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features):
     args = parse_args()
 
-    mlflow.set_experiment("catboost-bid-predictor")
+    mlflow.set_experiment("snapshot-bid-predictor")
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(run_name=run_name, nested=(mlflow.active_run() is not None), log_system_metrics=True) as run:
         eval_metric = "AUC"
@@ -190,22 +193,19 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
 
 def main():
     if in_sagemaker():
-        train_dir = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
+        train_file = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
     else:
-        train_dir = "../old-bid-predictor"
+        train_file = "../bid_data_snapshots_v2.parquet"
 
-    train_file = train_dir + "/bid_data_enriched_new_reduced.csv"
+    dataset = ds.dataset(train_file, format="parquet")  # auto-detects partitions (Hive-style)
+    table = dataset.to_table()                                  # optionally: .to_table(columns=["col1","col2"])
+    data = table.to_pandas()
 
-    data = pd.read_csv(
-        train_file,
-        parse_dates=["travel_date"],
-        dtype={
-            "carrier_code": "category",
-            "flight_number": "category",
-            "fare_class": "category",
-        },
-        low_memory=False,
-    )
+    # Make these categorical
+    for col in ["carrier_code", "flight_number", "fare_class"]:
+        data[col] = data[col].astype("category")
+
+    data = data.rename(columns={"current_available_seats": "seats_available"}, errors="ignore")
 
     X_train, X_test, y_train, y_test = prepare_features(data)
     train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features)

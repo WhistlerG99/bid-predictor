@@ -12,6 +12,7 @@ pre_features = [
     "carrier_code",
     "flight_number",
     "travel_date",
+    "departure_timestamp",
     "item_count",
     "usd_base_amount",
     "seats_available",
@@ -22,6 +23,8 @@ pre_features = [
     "multiplier_success_history",
     "multiplier_payment_type",
     "upgrade_type",
+    "current_timestamp",
+    "snapshot_num",
 ]
 
 features = [
@@ -38,6 +41,7 @@ features = [
     "seats_available_grp",
     "fare_class",
     "offer_time_grp",
+    "days_before_departure",
     "multiplier_fare_class",
     "multiplier_loyalty",
     "multiplier_success_history",
@@ -56,36 +60,67 @@ cat_features = [
 ]
 
 
-def add_group_features(out):
+def add_days_b4_depart(data):
+    data["days_before_departure"] = (
+        data.departure_timestamp - data.current_timestamp
+    ).apply(lambda y: y.total_seconds()) / (60 * 60 * 24)
+    return data
+
+
+def add_group_features(data):
     num_offers_col_name = "num_offers"
     usd_base_amount_max_name = "usd_base_amount_max"
-    out = out.drop(
+    data = data.drop(
         columns=[num_offers_col_name, usd_base_amount_max_name], errors="ignore"
     )
-    out = out.merge(
-        out.groupby(
-            ["carrier_code", "flight_number", "travel_date", "upgrade_type"],
+    data = data.merge(
+        data.groupby(
+            [
+                "carrier_code",
+                "flight_number",
+                "travel_date",
+                "upgrade_type",
+                "snapshot_num",
+            ],
             observed=True,
         )
         .size()
         .rename(num_offers_col_name)
         .reset_index(),
-        on=["carrier_code", "flight_number", "travel_date", "upgrade_type"],
+        on=[
+            "carrier_code",
+            "flight_number",
+            "travel_date",
+            "upgrade_type",
+            "snapshot_num",
+        ],
     )
-    out = out.merge(
-        out.groupby(
-            ["carrier_code", "flight_number", "travel_date", "upgrade_type"],
+    data = data.merge(
+        data.groupby(
+            [
+                "carrier_code",
+                "flight_number",
+                "travel_date",
+                "upgrade_type",
+                "snapshot_num",
+            ],
             observed=True,
         )["usd_base_amount"]
         .max()
         .rename(usd_base_amount_max_name)
         .reset_index(),
-        on=["carrier_code", "flight_number", "travel_date", "upgrade_type"],
+        on=[
+            "carrier_code",
+            "flight_number",
+            "travel_date",
+            "upgrade_type",
+            "snapshot_num",
+        ],
     )
-    return out
+    return data
 
 
-def bin_features(out):
+def bin_features(data):
     amount_bins = [-float("inf")] + list(range(100, 1701, 100)) + [float("inf")]
     amount_labels = (
         ["<" + str(amount_bins[1])]
@@ -95,29 +130,29 @@ def bin_features(out):
         ]
         + [">" + str(amount_bins[-2])]
     )
-    out["usd_base_amount_grp"] = pd.cut(
-        out["usd_base_amount"], bins=amount_bins, labels=amount_labels
+    data["usd_base_amount_grp"] = pd.cut(
+        data["usd_base_amount"], bins=amount_bins, labels=amount_labels
     )
     offer_time_bins = list(range(0, 31, 1)) + [float("inf")]
     offer_time_labels = list(range(1, 32, 1))
-    out["offer_time_grp"] = pd.cut(
-        out["offer_time"],
+    data["offer_time_grp"] = pd.cut(
+        data["offer_time"],
         bins=offer_time_bins,
         labels=offer_time_labels,
     )
     item_count_threshold = 4
-    out["item_count_grp"] = out["item_count"].apply(
+    data["item_count_grp"] = data["item_count"].apply(
         lambda x: x if x <= item_count_threshold else item_count_threshold + 1
     )
-    out["item_count_grp"] = pd.Categorical(out["item_count_grp"])
+    data["item_count_grp"] = pd.Categorical(data["item_count_grp"])
     num_offers_threshold = 15
-    out["num_offers_grp"] = out["num_offers"].apply(
+    data["num_offers_grp"] = data["num_offers"].apply(
         lambda x: x if x <= num_offers_threshold else num_offers_threshold + 1
     )
-    out["num_offers_grp"] = pd.Categorical(out["num_offers_grp"])
+    data["num_offers_grp"] = pd.Categorical(data["num_offers_grp"])
     seats_available_low_threshold = -1
     seats_available_high_threshold = 30
-    out["seats_available_grp"] = out["seats_available"].apply(
+    data["seats_available_grp"] = data["seats_available"].apply(
         lambda x: (
             (
                 x
@@ -128,39 +163,39 @@ def bin_features(out):
             else seats_available_low_threshold
         )
     )
-    out["seats_available_grp"] = pd.Categorical(
-        out.fillna({"seats_available_grp": -2}).seats_available_grp.astype(int)
+    data["seats_available_grp"] = pd.Categorical(
+        data.fillna({"seats_available_grp": -2}).seats_available_grp.astype(int)
     )
-    return out
+    return data
 
 
 def quantiles_vectorized(vals, qs=(0.25, 0.50, 0.75)):
     vals = np.asarray(vals)
     n = vals.size
-    out = np.full((len(qs), n), np.nan, dtype=float)
+    data = np.full((len(qs), n), np.nan, dtype=float)
     if n <= 1:
-        return out
+        return data
 
     # Stable sort to keep deterministic ranks with ties
     order = np.argsort(vals, kind="mergesort")
-    S = vals[order]                           # sorted values
+    S = vals[order]  # sorted values
     ranks = np.empty(n, dtype=int)
-    ranks[order] = np.arange(n)               # rank of each original element
+    ranks[order] = np.arange(n)  # rank of each original element
 
     m = n - 1
     for qi, q in enumerate(qs):
-        h = q * (m - 1)                       # NumPy's 'linear' method position
+        h = q * (m - 1)  # NumPy's 'linear' method position
         j = int(np.floor(h))
         gamma = h - j
-        j2 = min(j + 1, m - 1)                # clamp upper neighbor inside [0, m-1]
+        j2 = min(j + 1, m - 1)  # clamp upper neighbor inside [0, m-1]
 
         # Map indices from T (length m) back to S (length n), accounting for the removed item
-        idx_a = j  + (j  >= ranks)
+        idx_a = j + (j >= ranks)
         idx_b = j2 + (j2 >= ranks)
 
-        out[qi, :] = (1.0 - gamma) * S[idx_a] + gamma * S[idx_b]
+        data[qi, :] = (1.0 - gamma) * S[idx_a] + gamma * S[idx_b]
 
-    return out  # shape (len(qs), n)
+    return data  # shape (len(qs), n)
 
 
 def quantiles_group(group, col):
@@ -176,19 +211,32 @@ def quantiles_group(group, col):
     )
 
 
-def add_quantiles(out):
-    out[["usd_base_amount_25%", "usd_base_amount_50%", "usd_base_amount_75%"]] = (
-        out.groupby(
-            ["carrier_code", "flight_number", "travel_date", "upgrade_type"],
+def add_quantiles(data):
+    data[["usd_base_amount_25%", "usd_base_amount_50%", "usd_base_amount_75%"]] = (
+        data.groupby(
+            [
+                "carrier_code",
+                "flight_number",
+                "travel_date",
+                "upgrade_type",
+                "snapshot_num",
+            ],
             group_keys=False,
             observed=True,
             sort=False,
         ).apply(quantiles_group, col="usd_base_amount", include_groups=False)
     )
-    return out
+    return data
 
 
 # --- Wrappers around your existing funcs so they can be used in pipelines ---
+def add_days_b4_depart_wrapper(X):
+    if isinstance(X, pd.DataFrame):
+        return add_days_b4_depart(X)
+    else:
+        return X
+
+
 def add_group_features_wrapper(X):
     if isinstance(X, pd.DataFrame):
         return add_group_features(X)
@@ -218,6 +266,8 @@ def reduce_features(X):
 
 
 # FunctionTransformer allows arbitrary pandas-based functions
+
+add_days_b4_depart_transformer = FunctionTransformer(add_days_b4_depart_wrapper)
 group_features_transformer = FunctionTransformer(add_group_features_wrapper)
 bin_features_transformer = FunctionTransformer(bin_features_wrapper)
 quantiles_transformer = FunctionTransformer(add_quantiles_wrapper)
@@ -239,9 +289,7 @@ class CBC(BaseEstimator, ClassifierMixin):
 
     # sklearn will route eval_set here if we request it on the instance
     def fit(self, X, y=None, eval_set=None, **fit_kwargs):
-        self._cb = CatBoostClassifier(
-            **self.cb_params
-        )
+        self._cb = CatBoostClassifier(**self.cb_params)
         # eval_set supports (X_val, y_val) tuples or Pool objects
         self._cb.fit(
             X,
@@ -289,6 +337,7 @@ def build_pipeline(**kw):
 
     pipeline = Pipeline(
         steps=[
+            ("depart", add_days_b4_depart_transformer),
             ("group", group_features_transformer),
             ("bin", bin_features_transformer),
             ("loo", quantiles_transformer),

@@ -69,7 +69,7 @@ def preprocess_data(df_flights, df_offers):
             },
         }
     )
-    out = df_offers_.merge(
+    data = df_offers_.merge(
         df_flights_,
         left_on=[
             "carrier_code",
@@ -87,44 +87,46 @@ def preprocess_data(df_flights, df_offers):
         ],
         how="inner",
     )
-    out = out.replace(
+    data = data.replace(
         {
             k: {"PREMIUM_ECONOMY": "P-ECON", "ECONOMY": "ECON", "BUSINESS": "BUS"}
             for k in ["from_cabin", "upgrade_type"]
         }
     )
-    out["decision_timestamp"] = pd.to_datetime(
-        out["upgrade_timestamp"].combine_first(out["expiration_timestamp"])
+    data["decision_timestamp"] = pd.to_datetime(
+        data["upgrade_timestamp"].combine_first(data["expiration_timestamp"])
     )
     for i in [1, 12, 24, 48, 72]:
-        out[f"event_date_{i:02d}h"] = pd.to_datetime(out[f"event_date_{i:02d}h"])
-        out[f"update_time_{i:02d}h"] = pd.to_datetime(out[f"update_time_{i:02d}h"])
-    out["created"] = pd.to_datetime(out["created"])
-    out["departure_local_date_time"] = pd.to_datetime(out["departure_local_date_time"])
-    out["departure_timestamp"] = pd.to_datetime(
-        out[["travel_dt", "dep_tm"]].apply(
+        data[f"event_date_{i:02d}h"] = pd.to_datetime(data[f"event_date_{i:02d}h"])
+        data[f"update_time_{i:02d}h"] = pd.to_datetime(data[f"update_time_{i:02d}h"])
+    data["created"] = pd.to_datetime(data["created"])
+    data["departure_local_date_time"] = pd.to_datetime(
+        data["departure_local_date_time"]
+    )
+    data["departure_timestamp"] = pd.to_datetime(
+        data[["travel_dt", "dep_tm"]].apply(
             lambda x: x["travel_dt"] + " " + x["dep_tm"], axis=1
         )
     )
-    out["departure_timestamp_utc"] = out["departure_timestamp"] - pd.to_timedelta(
-        out["utc_diff"], "m"
+    data["departure_timestamp_utc"] = data["departure_timestamp"] - pd.to_timedelta(
+        data["utc_diff"], "m"
     )
     for i in [1, 12, 24, 48, 72]:
-        out[f"event_local_date_{i:02d}h"] = out[f"event_date_{i:02d}h"] + (
-            out["departure_local_date_time"] - out["departure_date_utc"]
+        data[f"event_local_date_{i:02d}h"] = data[f"event_date_{i:02d}h"] + (
+            data["departure_local_date_time"] - data["departure_date_utc"]
         )
-        out[f"update_local_time_{i:02d}h"] = out[f"update_time_{i:02d}h"] + (
-            out["departure_local_date_time"] - out["departure_date_utc"]
+        data[f"update_local_time_{i:02d}h"] = data[f"update_time_{i:02d}h"] + (
+            data["departure_local_date_time"] - data["departure_date_utc"]
         )
-    out["offer_time"] = out.apply(
+    data["offer_time"] = data.apply(
         lambda x: (x["departure_timestamp"] - x["created"]).total_seconds()
         / (60 * 60 * 24),
         axis=1,
     )
-    out = out[out.instant_upgrade == 0].reset_index(drop=True)
-    out["usd_base_amount"] = (out["base_amount"] * out["inverse_rate"]).round(2)
-    out["flight_number"] = pd.Categorical(out["flight_number"])
-    return out
+    data = data[data.instant_upgrade == 0].reset_index(drop=True)
+    data["usd_base_amount"] = (data["base_amount"] * data["inverse_rate"]).round(2)
+    data["flight_number"] = pd.Categorical(data["flight_number"])
+    return data
 
 
 def get_seats_available(row):

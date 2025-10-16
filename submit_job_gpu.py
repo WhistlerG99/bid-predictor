@@ -33,7 +33,7 @@ est = Estimator(
     instance_count=1,
     instance_type=instance_type,    # GPU instance
     sagemaker_session=sess,
-    base_job_name="catboost-bid-predictor-gpu",
+    base_job_name="snapshot-bid-predictor-gpu",
     # pass anything your train.py parses; ensure CatBoost runs on GPU
     hyperparameters={
         # only matters if your build_pipeline uses these
@@ -56,15 +56,17 @@ est = Estimator(
 )
 
 
-train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data/air_canada_and_lot/bid_data_enriched_new_reduced.csv"
+train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,
-        content_type="text/csv",
+        content_type="application/x-parquet",#"text/csv",
+        # distribution="ShardedByS3Key",
+        s3_data_type="S3Prefix",
         input_mode="File",
     )
 }
 
-job_name = "catboost-bid-predictor-gpu-" + dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
+job_name = "snapshot-bid-predictor-gpu-" + dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 print(f"Submitting job: {job_name}")
 est.fit(inputs, job_name=job_name, wait=True, logs=True)
