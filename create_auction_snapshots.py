@@ -202,9 +202,9 @@ def event_times(df):
     event_dates.columns = [0]
 
     times = pd.concat((decision_timestamps, createds, event_dates))
-    
+
     try:
-        times = pd.to_datetime(times[0], format='ISO8601')
+        times = pd.to_datetime(times[0], format="ISO8601")
     except ValueError as e:
         print(times)
         print(e)
@@ -274,7 +274,7 @@ if __name__ == "__main__":
 
     data = pd.read_csv(
         train_file,
-        parse_dates=["travel_date","decision_timestamp","created"] + event_date_cols,
+        parse_dates=["travel_date", "decision_timestamp", "created"] + event_date_cols,
         dtype={
             "carrier_code": "category",
             "flight_number": "category",

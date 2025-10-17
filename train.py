@@ -22,10 +22,15 @@ from bid_predictor.bid_predictor import (
     features,
 )
 from bid_predictor.tracking import start_catboost_mlflow_stream
-from bid_predictor.utils import in_sagemaker
+from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
+
 load_dotenv()
-if in_sagemaker():
+if detect_execution_environment()[0] in (
+    "sagemaker_notebook",
+    "sagemaker_job",
+    "sagemaker_terminal",
+):
     arn = os.environ["MLFLOW_AWS_ARN"]
     mlflow.set_tracking_uri(arn)
 
@@ -33,8 +38,8 @@ if in_sagemaker():
 def parse_args():
     p = argparse.ArgumentParser()
     # CatBoost knobs
-    p.add_argument("--task_type", type=str, default="CPU")   # "GPU" to use GPU
-    p.add_argument("--devices", type=str, default="0")       # "0", "0,1", etc.
+    p.add_argument("--task_type", type=str, default="CPU")  # "GPU" to use GPU
+    p.add_argument("--devices", type=str, default="0")  # "0", "0,1", etc.
     p.add_argument("--iterations", type=int, default=200)
     p.add_argument("--depth", type=int, default=8)
     p.add_argument("--learning_rate", type=float, default=0.1)
@@ -43,12 +48,14 @@ def parse_args():
     p.add_argument("--eval_metric", type=str, default="AUC")
     p.add_argument("--seed", type=int, default=42)
     # bool flags — use explicit parsing
-    p.add_argument("--use_border_count", type=int, default=1) # 1/0 from SageMaker
+    p.add_argument("--use_border_count", type=int, default=1)  # 1/0 from SageMaker
     return p.parse_args()
 
 
 def prepare_features(data):
-    data = data[data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")]
+    data = data[
+        data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")
+    ]
 
     data.sort_values(["travel_date", "carrier_code", "flight_number"]).reset_index(
         drop=True
@@ -63,13 +70,16 @@ def prepare_features(data):
         }
     )
 
-    cutoff = "2025-05-01"
-    # cutoff = "2023-08-01"
+    testing = True
+    if testing:
+        cutoff = "2023-08-01"
+        yX_test = data[
+            (data.travel_date >= cutoff) & (data.travel_date <= "2023-08-15")
+        ][pre_features + ["offer_status"]]
+    else:
+        cutoff = "2025-05-01"
+        yX_test = data[data.travel_date >= cutoff][pre_features + ["offer_status"]]
     yX_train = data[data.travel_date < cutoff][pre_features + ["offer_status"]]
-    yX_test = data[data.travel_date >= cutoff][pre_features + ["offer_status"]]
-    # yX_test = data[(data.travel_date >= cutoff) & (data.travel_date <= "2023-08-15")][
-        # pre_features + ["offer_status"]
-    # ]
 
     X_train, X_test = yX_train[pre_features], yX_test[pre_features]
     y_train = (yX_train["offer_status"] == "TICKETED").astype(int)
@@ -82,7 +92,11 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
 
     mlflow.set_experiment("snapshot-bid-predictor")
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
-    with mlflow.start_run(run_name=run_name, nested=(mlflow.active_run() is not None), log_system_metrics=True) as run:
+    with mlflow.start_run(
+        run_name=run_name,
+        nested=(mlflow.active_run() is not None),
+        log_system_metrics=True,
+    ) as run:
         eval_metric = "AUC"
         mlflow.log_param("n_features", len(features))
         mlflow.log_param("features", ",".join(features))
@@ -97,8 +111,14 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
             devices=args.devices,
         )
 
-        if in_sagemaker():
-            train_dir = pipeline[-1].cb_params.get("train_dir", "/opt/ml/output/catboost")
+        if detect_execution_environment()[0] in (
+            "sagemaker_notebook",
+            "sagemaker_job",
+            "sagemaker_terminal",
+        ):  # == "sagemaker_job":
+            train_dir = pipeline[-1].cb_params.get(
+                "train_dir", "/opt/ml/output/catboost"
+            )
             # train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
 
             # start streaming before fit
@@ -192,20 +212,32 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
 
 
 def main():
-    if in_sagemaker():
+    if detect_execution_environment()[0] == "sagemaker_job":
         train_file = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
+    elif detect_execution_environment()[0] in (
+        "sagemaker_notebook",
+        "sagemaker_terminal",
+    ):
+        train_file = (
+            os.environ.get("S3_BUCKET_DATA")
+            + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+        )
     else:
         train_file = "../bid_data_snapshots_v2.parquet"
 
-    dataset = ds.dataset(train_file, format="parquet")  # auto-detects partitions (Hive-style)
-    table = dataset.to_table()                                  # optionally: .to_table(columns=["col1","col2"])
+    dataset = ds.dataset(
+        train_file, format="parquet"
+    )  # auto-detects partitions (Hive-style)
+    table = dataset.to_table()  # optionally: .to_table(columns=["col1","col2"])
     data = table.to_pandas()
 
     # Make these categorical
     for col in ["carrier_code", "flight_number", "fare_class"]:
         data[col] = data[col].astype("category")
 
-    data = data.rename(columns={"current_available_seats": "seats_available"}, errors="ignore")
+    data = data.rename(
+        columns={"current_available_seats": "seats_available"}, errors="ignore"
+    )
 
     X_train, X_test, y_train, y_test = prepare_features(data)
     train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features)

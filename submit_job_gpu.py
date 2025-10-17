@@ -5,6 +5,7 @@ import sagemaker
 from sagemaker.estimator import Estimator
 from sagemaker.inputs import TrainingInput
 from dotenv import load_dotenv
+
 load_dotenv()
 
 REGION = os.environ.get("AWS_REGION", "us-east-1")
@@ -31,14 +32,14 @@ est = Estimator(
     image_uri=image_uri,
     # role=ROLE_ARN,
     instance_count=1,
-    instance_type=instance_type,    # GPU instance
+    instance_type=instance_type,  # GPU instance
     sagemaker_session=sess,
     base_job_name="snapshot-bid-predictor-gpu",
     # pass anything your train.py parses; ensure CatBoost runs on GPU
     hyperparameters={
         # only matters if your build_pipeline uses these
         "task_type": task_type,
-        "devices": devices
+        "devices": devices,
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
@@ -52,21 +53,26 @@ est = Estimator(
         # "MLFLOW_TRACKING_REQUEST_HEADER_PROVIDER":
         #   "mlflow_sagemaker.request_header_provider:SigV4RequestHeaderProvider",
         "AWS_REGION": REGION
-    }
+    },
 )
 
 
-train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+train_s3 = (
+    os.environ.get("S3_BUCKET_DATA")
+    + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+)
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,
-        content_type="application/x-parquet",#"text/csv",
+        content_type="application/x-parquet",  # "text/csv",
         # distribution="ShardedByS3Key",
         s3_data_type="S3Prefix",
         input_mode="File",
     )
 }
 
-job_name = "snapshot-bid-predictor-gpu-" + dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
+job_name = "snapshot-bid-predictor-gpu-" + dt.datetime.utcnow().strftime(
+    "%Y-%m-%d-%H-%M-%S"
+)
 print(f"Submitting job: {job_name}")
 est.fit(inputs, job_name=job_name, wait=True, logs=True)

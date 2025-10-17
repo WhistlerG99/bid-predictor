@@ -19,19 +19,17 @@ estimator = Estimator(
     base_job_name="catboost-bid-predictor",
     # you *can* still override hyperparameters if your train.py parses them
     hyperparameters={},
-    entry_point="train.py",    # <— yes: you can still pass your code in source_dir
-    source_dir=".",            # so you don't have to rebuild the image on code changes
+    entry_point="train.py",  # <— yes: you can still pass your code in source_dir
+    source_dir=".",  # so you don't have to rebuild the image on code changes
 )
 
 train_s3 = "s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/shared/bid-predictor/bid_data_enriched_new_reduced.csv"  # ends with a slash; can hold multiple files
 inputs = {
-    "train": TrainingInput(
-        s3_data=train_s3,
-        content_type="text/csv",
-        input_mode="File"
-    )
+    "train": TrainingInput(s3_data=train_s3, content_type="text/csv", input_mode="File")
 }
 
-job_name = "catboost-bid-predictor-" + dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
+job_name = "catboost-bid-predictor-" + dt.datetime.utcnow().strftime(
+    "%Y-%m-%d-%H-%M-%S"
+)
 print(f"Submitting job: {job_name}")
 estimator.fit(inputs, job_name=job_name, wait=True, logs=True)

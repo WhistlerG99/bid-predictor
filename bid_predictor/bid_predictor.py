@@ -5,7 +5,7 @@ from catboost import CatBoostClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.base import BaseEstimator, ClassifierMixin
-from .utils import get_output_dir, in_sagemaker
+from .utils import get_output_dir, detect_execution_environment
 from .tracking import MlflowCallback
 
 pre_features = [
@@ -277,7 +277,7 @@ reduce_features_transformer = FunctionTransformer(reduce_features)
 # ---- 1) Minimal routing-aware wrapper
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, **cb_params):
-        if in_sagemaker():
+        if detect_execution_environment()[0] == "sagemaker_job":
             train_dir = get_output_dir()
             cb_params["train_dir"] = train_dir
             cb_params["allow_writing_files"] = True
