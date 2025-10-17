@@ -41,14 +41,12 @@ def parse_args():
     p.add_argument("--task_type", type=str, default="CPU")  # "GPU" to use GPU
     p.add_argument("--devices", type=str, default="0")  # "0", "0,1", etc.
     p.add_argument("--iterations", type=int, default=200)
-    p.add_argument("--depth", type=int, default=8)
-    p.add_argument("--learning_rate", type=float, default=0.1)
+    p.add_argument("--depth", type=int, default=6)
+    p.add_argument("--learning_rate", type=float, default=None)
     p.add_argument("--l2_leaf_reg", type=float, default=3.0)
     # your own toggles
     p.add_argument("--eval_metric", type=str, default="AUC")
-    p.add_argument("--seed", type=int, default=42)
-    # bool flags — use explicit parsing
-    p.add_argument("--use_border_count", type=int, default=1)  # 1/0 from SageMaker
+    p.add_argument("--random_state", type=int, default=42)
     return p.parse_args()
 
 
@@ -70,7 +68,7 @@ def prepare_features(data):
         }
     )
 
-    testing = True
+    testing = False
     if testing:
         cutoff = "2023-08-01"
         yX_test = data[
@@ -97,19 +95,14 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
-        eval_metric = "AUC"
         mlflow.log_param("n_features", len(features))
         mlflow.log_param("features", ",".join(features))
         mlflow.log_param("categorical_features", ",".join(cat_features))
         mlflow.log_param("train_rows", len(X_train))
         mlflow.log_param("test_rows", len(X_test))
-        mlflow.log_param("eval_metric", eval_metric)
         mlflow.log_params(vars(args))
 
-        pipeline = build_pipeline(
-            task_type=args.task_type,
-            devices=args.devices,
-        )
+        pipeline = build_pipeline(**vars(args))
 
         if detect_execution_environment()[0] in (
             "sagemaker_notebook",

@@ -327,12 +327,7 @@ class CBC(BaseEstimator, ClassifierMixin):
 def build_pipeline(**kw):
     # CatBoostClassifier integrates with sklearn API
     clf = CBC(
-        task_type=kw.get("task_type", "CPU"),
-        devices=kw.get("devices", "0"),
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_state=42,
-        auto_class_weights="Balanced",
+        loss_function="Logloss", auto_class_weights="Balanced", **kw
     ).set_fit_request(eval_set=True)
 
     pipeline = Pipeline(

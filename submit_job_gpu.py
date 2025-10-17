@@ -40,6 +40,7 @@ est = Estimator(
         # only matters if your build_pipeline uses these
         "task_type": task_type,
         "devices": devices,
+        "iterations": "200"
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
