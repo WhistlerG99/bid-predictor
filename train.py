@@ -15,12 +15,7 @@ from sklearn.metrics import (
     RocCurveDisplay,
     PrecisionRecallDisplay,
 )
-from bid_predictor.bid_predictor import (
-    build_pipeline,
-    pre_features,
-    cat_features,
-    features,
-)
+from bid_predictor.bid_predictor import build_pipeline, load_feature_config
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
@@ -47,10 +42,11 @@ def parse_args():
     # your own toggles
     p.add_argument("--eval_metric", type=str, default="AUC")
     p.add_argument("--random_state", type=int, default=42)
+    p.add_argument("--feature_config", type=str, default=None)
     return p.parse_args()
 
 
-def prepare_features(data):
+def prepare_features(data, pre_features):
     data = data[
         data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")
     ]
@@ -68,25 +64,36 @@ def prepare_features(data):
         }
     )
 
+    available_pre_features = [feature for feature in pre_features if feature in data.columns]
+    selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
+
     testing = False
     if testing:
         cutoff = "2023-08-01"
         yX_test = data[
             (data.travel_date >= cutoff) & (data.travel_date <= "2023-08-15")
-        ][pre_features + ["offer_status"]]
+        ][selection_columns]
     else:
         cutoff = "2025-05-01"
-        yX_test = data[data.travel_date >= cutoff][pre_features + ["offer_status"]]
-    yX_train = data[data.travel_date < cutoff][pre_features + ["offer_status"]]
+        yX_test = data[data.travel_date >= cutoff][selection_columns]
+    yX_train = data[data.travel_date < cutoff][selection_columns]
 
-    X_train, X_test = yX_train[pre_features], yX_test[pre_features]
+    X_train, X_test = yX_train[available_pre_features], yX_test[available_pre_features]
     y_train = (yX_train["offer_status"] == "TICKETED").astype(int)
     y_test = (yX_test["offer_status"] == "TICKETED").astype(int)
     return X_train, X_test, y_train, y_test
 
 
-def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features):
-    args = parse_args()
+def train_and_log_model(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    feature_config,
+    args,
+):
+    cat_features = list(feature_config["cat_features"])
+    features = list(feature_config["features"])
 
     mlflow.set_experiment("snapshot-bid-predictor")
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
@@ -102,7 +109,10 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
         mlflow.log_param("test_rows", len(X_test))
         mlflow.log_params(vars(args))
 
-        pipeline = build_pipeline(**vars(args))
+        catboost_kwargs = vars(args).copy()
+        catboost_kwargs.pop("feature_config", None)
+
+        pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
 
         if detect_execution_environment()[0] in (
             "sagemaker_notebook",
@@ -135,7 +145,10 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
         )
 
         X_train_trns = pipeline[:-1].transform(X_train)
-        train_pool = Pool(X_train_trns, y_train, cat_features=cat_features)
+        active_cat_features = [
+            feature for feature in cat_features if feature in X_train_trns.columns
+        ]
+        train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
         fi_vals = pipeline[-1].get_feature_importance(train_pool)
         fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
         fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
@@ -232,8 +245,19 @@ def main():
         columns={"current_available_seats": "seats_available"}, errors="ignore"
     )
 
-    X_train, X_test, y_train, y_test = prepare_features(data)
-    train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features)
+    args = parse_args()
+    feature_config = load_feature_config(args.feature_config)
+    pre_features = feature_config["pre_features"]
+
+    X_train, X_test, y_train, y_test = prepare_features(data, pre_features)
+    train_and_log_model(
+        X_train,
+        X_test,
+        y_train,
+        y_test,
+        feature_config,
+        args,
+    )
 
 
 if __name__ == "__main__":

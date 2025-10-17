@@ -1,0 +1,53 @@
+features:
+  carrier_code:
+    categorical: true
+  flight_number:
+    categorical: true
+  travel_date:
+  departure_timestamp:
+    include_in_model: false
+  current_timestamp:
+    include_in_model: false
+  item_count:
+    include_in_model: false
+  usd_base_amount:
+    include_in_model: false
+  seats_available:
+    include_in_model: false
+  fare_class:
+    categorical: true
+  offer_time:
+    include_in_model: false
+  multiplier_fare_class:
+  multiplier_loyalty:
+  multiplier_success_history:
+  multiplier_payment_type:
+  upgrade_type:
+    include_in_model: false
+  snapshot_num:
+    include_in_model: false
+  days_before_departure:
+    derived: true
+  item_count_grp:
+    derived: true
+    categorical: true
+  usd_base_amount_grp:
+    derived: true
+    categorical: true
+  usd_base_amount_25%:
+    derived: true
+  usd_base_amount_50%:
+    derived: true
+  usd_base_amount_75%:
+    derived: true
+  usd_base_amount_max:
+    derived: true
+  num_offers_grp:
+    derived: true
+    categorical: true
+  seats_available_grp:
+    derived: true
+    categorical: true
+  offer_time_grp:
+    derived: true
+    categorical: true

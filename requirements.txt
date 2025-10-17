@@ -6,6 +6,7 @@ pandas==2.3.2
 scikit-learn==1.7.1
 scipy==1.15.3
 python-dotenv==1.1.1
+PyYAML==6.0.2
 sagemaker-mlflow
 psutil
 pynvml
