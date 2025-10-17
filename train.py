@@ -15,12 +15,7 @@ from sklearn.metrics import (
     RocCurveDisplay,
     PrecisionRecallDisplay,
 )
-from bid_predictor.bid_predictor import (
-    build_pipeline,
-    pre_features,
-    cat_features,
-    features,
-)
+from bid_predictor.bid_predictor import build_pipeline, load_feature_config
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
@@ -34,23 +29,26 @@ if detect_execution_environment()[0] in (
     arn = os.environ["MLFLOW_AWS_ARN"]
     mlflow.set_tracking_uri(arn)
 
+DEFAULT_EXP_NAME="tests"
 
 def parse_args():
     p = argparse.ArgumentParser()
     # CatBoost knobs
-    p.add_argument("--task_type", type=str, default="CPU")  # "GPU" to use GPU
+    p.add_argument("--task-type", type=str, default="CPU")  # "GPU" to use GPU
     p.add_argument("--devices", type=str, default="0")  # "0", "0,1", etc.
     p.add_argument("--iterations", type=int, default=200)
     p.add_argument("--depth", type=int, default=6)
-    p.add_argument("--learning_rate", type=float, default=None)
-    p.add_argument("--l2_leaf_reg", type=float, default=3.0)
+    p.add_argument("--learning-rate", type=float, default=None)
+    p.add_argument("--l2-leaf-reg", type=float, default=3.0)
     # your own toggles
-    p.add_argument("--eval_metric", type=str, default="AUC")
-    p.add_argument("--random_state", type=int, default=42)
+    p.add_argument("--eval-metric", type=str, default="AUC")
+    p.add_argument("--random-state", type=int, default=42)
+    p.add_argument("--feature-config", type=str, default=None)
+    p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
     return p.parse_args()
 
 
-def prepare_features(data):
+def prepare_features(data, pre_features):
     data = data[
         data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")
     ]
@@ -59,36 +57,50 @@ def prepare_features(data):
         drop=True
     )
 
-    data = data.fillna(
-        {
-            "multiplier_fare_class": 1.0,
-            "multiplier_loyalty": 1.0,
-            "multiplier_success_history": 1.0,
-            "multiplier_payment_type": 1.0,
-        }
-    )
+    # data = data.fillna(
+    #     {
+    #         "multiplier_fare_class": 1.0,
+    #         "multiplier_loyalty": 1.0,
+    #         "multiplier_success_history": 1.0,
+    #         "multiplier_payment_type": 1.0,
+    #     }
+    # )
+
+    available_pre_features = [feature for feature in pre_features if feature in data.columns]
+    selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
 
     testing = False
     if testing:
         cutoff = "2023-08-01"
         yX_test = data[
             (data.travel_date >= cutoff) & (data.travel_date <= "2023-08-15")
-        ][pre_features + ["offer_status"]]
+        ][selection_columns]
     else:
         cutoff = "2025-05-01"
-        yX_test = data[data.travel_date >= cutoff][pre_features + ["offer_status"]]
-    yX_train = data[data.travel_date < cutoff][pre_features + ["offer_status"]]
+        yX_test = data[data.travel_date >= cutoff][selection_columns]
+    yX_train = data[data.travel_date < cutoff][selection_columns]
 
-    X_train, X_test = yX_train[pre_features], yX_test[pre_features]
+    X_train, X_test = yX_train[available_pre_features], yX_test[available_pre_features]
     y_train = (yX_train["offer_status"] == "TICKETED").astype(int)
     y_test = (yX_test["offer_status"] == "TICKETED").astype(int)
     return X_train, X_test, y_train, y_test
 
 
-def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features):
-    args = parse_args()
+def train_and_log_model(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    feature_config,
+    args,
+):
+    cat_features = list(feature_config["cat_features"])
+    features = list(feature_config["features"])
+    
+    var_args = vars(args)
 
-    mlflow.set_experiment("snapshot-bid-predictor")
+    experiment_name = var_args.pop("experiment_name",DEFAULT_EXP_NAME)
+    mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
         run_name=run_name,
@@ -100,9 +112,12 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
         mlflow.log_param("categorical_features", ",".join(cat_features))
         mlflow.log_param("train_rows", len(X_train))
         mlflow.log_param("test_rows", len(X_test))
-        mlflow.log_params(vars(args))
+        mlflow.log_params(var_args)
 
-        pipeline = build_pipeline(**vars(args))
+        catboost_kwargs = var_args.copy()
+        catboost_kwargs.pop("feature_config", None)
+
+        pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
 
         if detect_execution_environment()[0] in (
             "sagemaker_notebook",
@@ -135,7 +150,10 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
         )
 
         X_train_trns = pipeline[:-1].transform(X_train)
-        train_pool = Pool(X_train_trns, y_train, cat_features=cat_features)
+        active_cat_features = [
+            feature for feature in cat_features if feature in X_train_trns.columns
+        ]
+        train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
         fi_vals = pipeline[-1].get_feature_importance(train_pool)
         fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
         fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
@@ -232,8 +250,19 @@ def main():
         columns={"current_available_seats": "seats_available"}, errors="ignore"
     )
 
-    X_train, X_test, y_train, y_test = prepare_features(data)
-    train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features)
+    args = parse_args()
+    feature_config = load_feature_config(args.feature_config)
+    pre_features = feature_config["pre_features"]
+
+    X_train, X_test, y_train, y_test = prepare_features(data, pre_features)
+    train_and_log_model(
+        X_train,
+        X_test,
+        y_train,
+        y_test,
+        feature_config,
+        args,
+    )
 
 
 if __name__ == "__main__":
