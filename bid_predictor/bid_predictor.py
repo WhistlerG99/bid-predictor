@@ -192,16 +192,17 @@ def add_group_features(data):
 
 
 def bin_features(data):
-    amount_bins = [-float("inf")] + list(range(100, 1701, 100)) + [float("inf")]
-    amount_labels = (
-        ["<" + str(amount_bins[1])]
-        + [
-            f"{amount_bins[i]}-{amount_bins[i+1]}"
-            for i in range(1, len(amount_bins) - 2)
-        ]
-        + [">" + str(amount_bins[-2])]
-    )
     if "usd_base_amount" in data.columns:
+        amount_bins = [-float("inf")] + list(range(100, 1701, 100)) + [float("inf")]
+        amount_labels = (
+            ["<" + str(amount_bins[1])]
+            + [
+                f"{amount_bins[i]}-{amount_bins[i+1]}"
+                for i in range(1, len(amount_bins) - 2)
+            ]
+            + [">" + str(amount_bins[-2])]
+        )
+
         data["usd_base_amount_grp"] = pd.cut(
             data["usd_base_amount"], bins=amount_bins, labels=amount_labels
         )
