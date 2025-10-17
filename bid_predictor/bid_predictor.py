@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from catboost import CatBoostClassifier
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
 
@@ -343,14 +343,33 @@ def add_quantiles_wrapper(X):
         return X
 
 
-def _make_reduce_features_transformer(selected_features):
-    def reduce_features(X):
-        if isinstance(X, pd.DataFrame):
-            existing = [feature for feature in selected_features if feature in X.columns]
-            return X.reindex(columns=existing)
-        return X
+class ColumnReducer(BaseEstimator, TransformerMixin):
+    """Selects the configured columns from a pandas DataFrame."""
 
-    return FunctionTransformer(reduce_features)
+    def __init__(self, selected_features):
+        self.selected_features = list(selected_features)
+        self._existing_features = None
+
+    def fit(self, X, y=None):
+        if isinstance(X, pd.DataFrame):
+            self._existing_features = [
+                feature for feature in self.selected_features if feature in X.columns
+            ]
+        else:
+            self._existing_features = list(self.selected_features)
+        return self
+
+    def transform(self, X):
+        if not isinstance(X, pd.DataFrame):
+            return X
+
+        features = self._existing_features
+        if features is None:
+            features = [feature for feature in self.selected_features if feature in X.columns]
+        else:
+            features = [feature for feature in features if feature in X.columns]
+
+        return X.reindex(columns=features)
 
 
 # FunctionTransformer allows arbitrary pandas-based functions
@@ -426,7 +445,7 @@ def build_pipeline(feature_config=None, **kw):
     selected_features = feature_config["features"]
     categorical_features = feature_config["cat_features"]
 
-    reduce_features_transformer = _make_reduce_features_transformer(selected_features)
+    reduce_features_transformer = ColumnReducer(selected_features)
 
     # CatBoostClassifier integrates with sklearn API
     clf = CBC(
