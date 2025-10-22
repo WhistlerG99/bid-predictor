@@ -24,7 +24,7 @@ from bid_predictor.feature_config import (
     feature_config_fingerprint,
     feature_summary_markdown,
     feature_parameters_for_mlflow,
-    feature_importance_metric_series,
+    feature_importance_metrics,
 )
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
@@ -199,174 +199,16 @@ def train_and_log_model(
         train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
         fi_vals = pipeline[-1].get_feature_importance(train_pool)
         fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
-
-        fi_metric_series = feature_importance_metric_series(fi)
-        if fi_metric_series["entries"]:
-            for entry in fi_metric_series["entries"]:
-                mlflow.log_metric(
-                    fi_metric_series["metric_key"],
-                    entry["importance"],
-                    step=entry["step"],
-                )
-
-            mlflow.log_dict(
-                {
-                    "metric_key": fi_metric_series["metric_key"],
-                    "feature_importance": fi_metric_series["entries"],
-                },
-                "metrics/feature_importance_series.json",
-            )
-
-        feature_index = {item["feature"]: item for item in feature_summary}
-        palette = {
-            "categorical": "#577590",
-            "derived": "#43aa8b",
-            "numeric": "#f3722c",
-            "missing_indicator": "#4d908e",
-            "other": "#adb5bd",
-        }
-
-        metric_step_by_feature = {
-            entry["feature"]: entry["step"]
-            for entry in fi_metric_series["entries"]
-        }
-
-        sanitized_feature_by_feature = {
-            entry["feature"]: entry["sanitized_feature"]
-            for entry in fi_metric_series["entries"]
-        }
-
-        fi_records = []
-        for feature_name, importance in fi.items():
-            base_name = feature_name[:-3] if feature_name.endswith("_na") else feature_name
-            metadata = feature_index.get(base_name)
-
-            descriptor_parts = []
-            transforms = []
-            if feature_name.endswith("_na"):
-                transforms.append("missing_indicator")
-
-            if metadata:
-                if metadata.get("derived"):
-                    descriptor_parts.append("derived")
-                if metadata.get("categorical"):
-                    descriptor_parts.append("categorical")
-                for transform in metadata.get("transformations", []):
-                    transform_name = transform.get("type")
-                    if transform_name in {
-                        "passthrough",
-                        "catboost_categorical",
-                    }:
-                        continue
-                    if transform_name == "missing_indicator" and feature_name.endswith("_na"):
-                        continue
-                    transforms.append(transform_name)
-
-            descriptor_parts.extend(transforms)
-            descriptor = ", ".join(dict.fromkeys(descriptor_parts))
-            if descriptor:
-                label = f"{feature_name}\n[{descriptor}]"
-            else:
-                label = feature_name
-
-            if feature_name.endswith("_na"):
-                category = "missing_indicator"
-            elif metadata and metadata.get("categorical"):
-                category = "categorical"
-            elif metadata and metadata.get("derived"):
-                category = "derived"
-            elif metadata:
-                category = "numeric"
-            else:
-                category = "other"
-
-            color = palette.get(category, palette["other"])
-
-            fi_records.append(
-                {
-                    "feature": feature_name,
-                    "importance": float(importance),
-                    "base_feature": base_name,
-                    "category": category,
-                    "color": color,
-                    "label": label,
-                    "transforms": transforms,
-                    "metadata_present": bool(metadata),
-                    "metric_step": metric_step_by_feature.get(feature_name),
-                    "sanitized_feature": sanitized_feature_by_feature.get(
-                        feature_name
-                    ),
-                }
-            )
-
-        if fi_records:
-            fi_df = pd.DataFrame(fi_records)
-            artifact_records = [
-                {
-                    key: record[key]
-                    for key in (
-                        "feature",
-                        "importance",
-                        "base_feature",
-                        "category",
-                        "transforms",
-                        "metadata_present",
-                        "metric_step",
-                        "sanitized_feature",
-                    )
-                }
-                for record in fi_records
-            ]
-            mlflow.log_dict(
-                {"feature_importance": artifact_records},
-                "feature_importance_details.json",
-            )
-
-            chart_height = max(6, 0.4 * len(fi_df))
-            fig_fi, ax_fi = plt.subplots(figsize=(12, chart_height))
-            bars = ax_fi.barh(
-                fi_df["label"],
-                fi_df["importance"],
-                color=fi_df["color"],
-                zorder=3,
-            )
-            ax_fi.set_title("CatBoost Feature Importance")
-            ax_fi.set_xlabel("Importance")
-            ax_fi.set_ylabel("")
-            ax_fi.grid(axis="x", linestyle="--", linewidth=0.5, alpha=0.6, zorder=0)
-            ax_fi.set_axisbelow(True)
-
-            if hasattr(ax_fi, "bar_label"):
-                ax_fi.bar_label(
-                    bars,
-                    labels=[f"{value:.4f}" for value in fi_df["importance"]],
-                    padding=4,
-                    fontsize=8,
-                )
-
-            legend_labels = {
-                "categorical": "Categorical feature",
-                "derived": "Derived feature",
-                "numeric": "Numeric feature",
-                "missing_indicator": "Missing indicator",
-                "other": "Other",
-            }
-            legend_handles = [
-                Patch(facecolor=palette[key], label=legend_labels[key])
-                for key in legend_labels
-                if key in fi_df["category"].values
-            ]
-            if legend_handles:
-                ax_fi.legend(
-                    handles=legend_handles,
-                    title="Feature type",
-                    frameon=False,
-                    loc="lower right",
-                )
-
-            fig_fi.tight_layout()
-            mlflow.log_figure(fig_fi, "plots/feature_importance_horizontal_bar.png")
-            plt.close(fig_fi)
+        mlflow.log_metrics(feature_importance_metrics(fi))
+        fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
+        fi.plot.barh(ax=ax_fi)
+        ax_fi.set_title("CatBoost Feature Importance")
+        ax_fi.set_xlabel("Importance")
+        ax_fi.grid(zorder=0)
+        ax_fi.set_axisbelow(True)
+        fig_fi.tight_layout()
+        mlflow.log_figure(fig_fi, "feature_importance.png")
+        plt.close(fig_fi)
 
         cm = confusion_matrix(y_test, y_pred)
         cmn = confusion_matrix(y_test, y_pred, normalize="true")

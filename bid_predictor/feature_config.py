@@ -357,13 +357,6 @@ def feature_importance_metrics(importances, prefix="feature_importance"):
     -------
     dict[str, float]
         Dictionary mapping MLflow-safe metric keys to float importances.
-
-    Notes
-    -----
-    This helper retains backwards compatibility for any callers that still
-    expect a flattened mapping of individual metric names. New code should use
-    :func:`feature_importance_metric_series` to keep the importances grouped in
-    a single MLflow metric for consolidated plotting.
     """
 
     metrics = {}
@@ -374,45 +367,6 @@ def feature_importance_metrics(importances, prefix="feature_importance"):
         metrics[metric_name] = float(value)
 
     return metrics
-
-
-def feature_importance_metric_series(importances, prefix="feature_importance"):
-    """Return a grouped feature-importance series for MLflow metric logging.
-
-    Parameters
-    ----------
-    importances : Mapping[str, float] or pandas.Series
-        Per-feature importance values indexed by feature name. Ordering is
-        preserved when provided by an ordered mapping or Pandas Series.
-    prefix : str, default "feature_importance"
-        Base metric name to log in MLflow.
-
-    Returns
-    -------
-    dict
-        Dictionary with two keys: ``metric_key`` describing the name to use
-        when logging to MLflow and ``entries`` containing a list of ordered
-        feature-importance records. Each record exposes the raw feature name,
-        a sanitized MLflow-safe variant, the sequential ``step`` index, and the
-        numeric importance value.
-    """
-
-    entries = []
-    step_index = 0
-    for feature_name, value in importances.items():
-        if value is None:
-            continue
-        entries.append(
-            {
-                "step": step_index,
-                "feature": str(feature_name),
-                "sanitized_feature": _sanitize_feature_name(str(feature_name)),
-                "importance": float(value),
-            }
-        )
-        step_index += 1
-
-    return {"metric_key": prefix, "entries": entries}
 
 
 _DEFAULT_FEATURE_CONFIG = load_feature_config()
