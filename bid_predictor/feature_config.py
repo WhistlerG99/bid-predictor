@@ -343,6 +343,32 @@ def feature_parameters_for_mlflow(feature_summary):
     return params
 
 
+def feature_importance_metrics(importances, prefix="feature_importance"):
+    """Prepare MLflow metric names for feature importances.
+
+    Parameters
+    ----------
+    importances : Mapping[str, float] or pandas.Series
+        Per-feature importance values indexed by feature name.
+    prefix : str, default "feature_importance"
+        Prefix to prepend to the sanitized feature name.
+
+    Returns
+    -------
+    dict[str, float]
+        Dictionary mapping MLflow-safe metric keys to float importances.
+    """
+
+    metrics = {}
+    for feature_name, value in importances.items():
+        if value is None:
+            continue
+        metric_name = f"{prefix}__{_sanitize_feature_name(str(feature_name))}"
+        metrics[metric_name] = float(value)
+
+    return metrics
+
+
 _DEFAULT_FEATURE_CONFIG = load_feature_config()
 # pre_features = _DEFAULT_FEATURE_CONFIG["pre_features"]
 # features = _DEFAULT_FEATURE_CONFIG["features"]

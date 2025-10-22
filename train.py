@@ -23,6 +23,7 @@ from bid_predictor.feature_config import (
     feature_config_fingerprint,
     feature_summary_markdown,
     feature_parameters_for_mlflow,
+    feature_importance_metrics,
 )
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
@@ -197,6 +198,7 @@ def train_and_log_model(
         train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
         fi_vals = pipeline[-1].get_feature_importance(train_pool)
         fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
+        mlflow.log_metrics(feature_importance_metrics(fi))
         fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
         fi.plot.barh(ax=ax_fi)
         ax_fi.set_title("CatBoost Feature Importance")
