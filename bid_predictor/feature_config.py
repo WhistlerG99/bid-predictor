@@ -363,7 +363,7 @@ def feature_importance_metrics(importances, prefix="feature_importance"):
     for feature_name, value in importances.items():
         if value is None:
             continue
-        metric_name = f"{prefix}__{_sanitize_feature_name(str(feature_name))}"
+        metric_name = f"{_sanitize_feature_name(str(feature_name))}_{prefix}"
         metrics[metric_name] = float(value)
 
     return metrics

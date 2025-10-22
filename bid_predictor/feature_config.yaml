@@ -45,7 +45,7 @@ features:
     bins: 
       min: 0
       max: 1700
-      interval: 25    
+      interval: 10
     include_in_model: true
   fare_class:
     categorical: true
@@ -59,16 +59,16 @@ features:
     include_in_model: false
   multiplier_fare_class:
     impute_value: 1.0
-    include_in_model: true
+    include_in_model: false
   multiplier_loyalty:
     impute_value: 1.0
-    include_in_model: true
+    include_in_model: false
   multiplier_success_history:
     impute_value: 1.0
-    include_in_model: true
+    include_in_model: false
   multiplier_payment_type:
     impute_value: 1.0
-    include_in_model: true
+    include_in_model: false
   upgrade_type:
     categorical: true
     include_in_model: true
