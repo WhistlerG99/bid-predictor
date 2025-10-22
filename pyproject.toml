@@ -34,5 +34,5 @@ dependencies = { file = ["requirements.txt"] }
 # test = { file = ["requirements-test.txt"] }
 
 # If you ship non-.py files inside bid_predictor/, uncomment:
-# [tool.setuptools]
-# include-package-data = true
+[tool.setuptools]
+include-package-data = true

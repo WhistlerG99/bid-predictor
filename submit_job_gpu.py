@@ -38,9 +38,10 @@ est = Estimator(
     # pass anything your train.py parses; ensure CatBoost runs on GPU
     hyperparameters={
         # only matters if your build_pipeline uses these
-        "task_type": task_type,
+        "task-type": task_type,
         "devices": devices,
-        "iterations": "200"
+        "iterations": "200",
+        "experiment-name": "snapshot-bid-predictor",
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
