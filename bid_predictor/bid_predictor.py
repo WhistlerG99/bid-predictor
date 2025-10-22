@@ -87,60 +87,118 @@ def build_pipeline(feature_config=None, **kw):
     selected_features = feature_config["features"]
     categorical_features = feature_config["cat_features"]
 
-    indicator = AddMissingIndicatorCustom(
-        variables=[
-            "seats_available",
-            "multiplier_fare_class",
-            "multiplier_loyalty",
-            "multiplier_success_history",
-            "multiplier_payment_type",
-        ]
-    )
-    multi_imputer = ArbitraryNumberImputerCustom(
-        imputer_dict={
-            "multiplier_fare_class": 1,
-            "multiplier_loyalty": 1,
-            "multiplier_success_history": 1,
-            "multiplier_payment_type": 1,
-        }
-    )
-    seat_imputer = MeanMedianImputerCustom(
-        variables=["seats_available"], imputation_method="median"
-    )
-    outliers = ArbitraryOutlierCapperCustom(
-        max_capping_dict={"item_count": 5, "num_offers": 16},
-    )
+    steps = [
+        ("flight_code", add_flight_code_transformer),
+        ("depart", add_days_b4_depart_transformer),
+        ("group", group_features_transformer),
+    ]
 
-    offer_time_bins = [-float("inf")] + list(range(0, 31, 1)) + [float("inf")]
+    if "impute_value" in feature_config or "impute_median" in feature_config:
+        variables = []
+        if "impute_value" in feature_config:
+            for feature, value in feature_config.get("impute_value", []):
+                variables.append(feature)
+        if "impute_median" in feature_config:
+            for feature in feature_config.get("impute_median", []):
+                variables.append(feature)
 
-    amount_bins = list(range(0, 1701, 25)) + [float("inf")]
-    amount_cats = {
-        i: f"<{y}" if x == 0 else f">{x}" if y == float("inf") else f"{x}-{y}"
-        for i, (x, y) in enumerate(list(zip(amount_bins[:-1], amount_bins[1:])))
-    }
-    seat_bins = [-float("inf")] + list(range(-1, 30, 1)) + [float("inf")]
-    seat_cats = {i: i - 1 for i in range(len(seat_bins) - 1)}
+        if variables:
+            steps.append(
+                (
+                    "indicator",
+                    AddMissingIndicatorCustom(
+                        variables=variables,
+                    ),
+                )
+            )
 
-    day_b4_bins = (
-        [-float("inf")] + [i / 24 for i in range(0, 5 * 24 + 1, 1)] + [float("inf")]
-    )
-    day_b4_cats = {i: (i - 1) / 24 for i in range(len(day_b4_bins) - 1)}
+    if "impute_value" in feature_config:
+        imputer_dict={}
+        for feature, value in feature_config.get("impute_value", []):
+            imputer_dict[feature] = value
 
-    discrete = ArbitraryDiscretiserCustom(
-        binning_dict={
-            "offer_time": offer_time_bins,
-            "usd_base_amount": amount_bins,
-            "seats_available": seat_bins,
-            "days_before_departure": day_b4_bins,
-        },
-        bin_names_dict={
-            "usd_base_amount": amount_cats,
-            "seats_available": seat_cats,
-            "days_before_departure": day_b4_cats,
-        },
-    )
+        if imputer_dict:
+            steps.append(
+                (
+                    "value_imputer",
+                    ArbitraryNumberImputerCustom(
+                        imputer_dict=imputer_dict,
+                    ),
+                )
+            )
+    if "impute_median" in feature_config:
+        variables = []
+        for feature in feature_config.get("impute_median", []):
+            variables.append(feature)
+        
+        if variables:
+            steps.append(
+                (
+                    "median_imputer",
+                    MeanMedianImputerCustom(
+                        variables=variables,
+                        imputation_method="median",
+                    ),
+                )
+            )
+
+    if "outlier" in feature_config:
+        min_capping_dict, max_capping_dict = {}, {}
+        for feature, outlier in feature_config.get("outlier",[]):
+            if "max" in outlier:
+                max_capping_dict[feature] = outlier["max"]
+            if "min" in outlier:
+                min_capping_dict[feature] = outlier["min"]
+
+        outlier_args = {}
+        if min_capping_dict:
+            outlier_args["min_capping_dict"] = min_capping_dict
+        if max_capping_dict:
+            outlier_args["max_capping_dict"] = max_capping_dict
+
+        if outlier_args:
+            steps.append(
+                (
+                    "outliers",
+                    ArbitraryOutlierCapperCustom(
+                        **outlier_args,
+                    ),
+                )
+            )
+    
+    steps.append(("quantile", quantiles_transformer))
+
+    if "bins" in feature_config:
+        binning_dict = {}
+        for feature, bins in feature_config.get("bins", []):
+            if "interval" in bins:
+                binning_dict[feature] = (
+                    [-float("inf")]
+                    + list(range(bins["min"], bins["max"] + 1, bins["interval"]))
+                    + [float("inf")]
+                )
+            elif "nsteps" in bins:
+                binning_dict[feature] = (
+                    [-float("inf")]
+                    + np.linspace(bins["min"], bins["max"], bins["nsteps"]).tolist()
+                    + [float("inf")]
+                )
+            else:
+                raise ValueError(f"Invalid binning specification for feature {feature}")
+
+        if binning_dict:
+            steps.append(
+                (
+                    "discrete",
+                    ArbitraryDiscretiserCustom(
+                        binning_dict=binning_dict,
+                        return_boundaries=True,
+                    ),
+                )
+            )
 
     reduce_features_transformer = ColumnReducer(selected_features)
+    steps.append(("reduce", reduce_features_transformer))
 
     # CatBoostClassifier integrates with sklearn API
     clf = CBC(
@@ -149,21 +207,10 @@ def build_pipeline(feature_config=None, **kw):
         cat_features=categorical_features,
         **kw,
     ).set_fit_request(eval_set=True)
+    steps.append(("clf", clf))
 
     pipeline = Pipeline(
-        steps=[
-            ("flight_code", add_flight_code_transformer),
-            ("depart", add_days_b4_depart_transformer),
-            ("group", group_features_transformer),
-            ("indicator", indicator),
-            ("multi_imputer", multi_imputer),
-            ("seat_imputer", seat_imputer),
-            ("outliers", outliers),
-            ("quantile", quantiles_transformer),
-            ("discrete", discrete),
-            ("reduce", reduce_features_transformer),
-            ("clf", clf),
-        ],
+        steps=steps,
         transform_input=["eval_set"],
     )
     return pipeline

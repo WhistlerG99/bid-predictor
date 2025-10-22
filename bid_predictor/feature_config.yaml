@@ -18,31 +18,56 @@ features:
   current_timestamp:
     include_in_model: false
   days_before_departure:
+    categorical: true
+    bins: 
+      min: 0
+      max: 5
+      nsteps: 121
     include_in_model: true
     derived: true
 
   seats_available:
     categorical: true
+    impute_median: true
+    bins: 
+      min: -1
+      max: 30
+      interval: 1
     include_in_model: true
 
   item_count:
     categorical: true
+    outlier:
+      max: 5
     include_in_model: true
   usd_base_amount:
     categorical: true
+    bins: 
+      min: 0
+      max: 1700
+      interval: 25    
     include_in_model: true
   fare_class:
     categorical: true
     include_in_model: true
   offer_time:
+    categorical: true
+    bins: 
+      min: 0
+      max: 30
+      interval: 1  
     include_in_model: false
   multiplier_fare_class:
+    impute_value: 1.0
     include_in_model: true
   multiplier_loyalty:
+    impute_value: 1.0
     include_in_model: true
   multiplier_success_history:
+    impute_value: 1.0
     include_in_model: true
   multiplier_payment_type:
+    impute_value: 1.0
     include_in_model: true
   upgrade_type:
     categorical: true
@@ -66,5 +91,7 @@ features:
   num_offers:
     derived: true
     categorical: true
+    outlier:
+      max: 16
     include_in_model: true
 

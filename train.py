@@ -64,7 +64,7 @@ def prepare_features(data, pre_features):
     ]
     selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
 
-    testing = False
+    testing = True
     if testing:
         cutoff = "2023-08-01"
         yX_test = data[

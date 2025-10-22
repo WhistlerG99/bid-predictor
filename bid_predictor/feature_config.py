@@ -12,10 +12,21 @@ _GROUPBY_KEY_FEATURES = [
     "snapshot_num",
 ]
 
-_FEATURE_BOOLEAN_FIELDS = {
+_FEATURE_FIELDS = {
     "categorical": False,
     "include_in_model": True,
     "derived": False,
+    "impute_value": None,
+    "impute_median": False,
+    "outlier": None,
+    "bins": None,
+}
+
+_FEATURE_BOOLEAN_FIELDS = {
+    "categorical",
+    "include_in_model",
+    "derived",
+    "impute_median",
 }
 
 
@@ -48,8 +59,8 @@ def _parse_feature_spec(values):
             )
 
         normalized = {
-            field: bool(metadata.get(field, default))
-            for field, default in _FEATURE_BOOLEAN_FIELDS.items()
+            field: metadata.get(field, default) if field not in _FEATURE_BOOLEAN_FIELDS else bool(metadata.get(field, default))
+            for field, default in _FEATURE_FIELDS.items()
         }
         parsed.append((name, normalized))
         seen.add(name)
@@ -100,11 +111,39 @@ def load_feature_config(config_path=None):
         if values["include_in_model"] and values["categorical"]
     ]
 
+    impute_value = [
+        (name, values["impute_value"])
+        for name, values in feature_entries
+        if values["include_in_model"] and values["impute_value"]
+    ]
+
+    impute_median = [
+        name
+        for name, values in feature_entries
+        if values["include_in_model"] and values["impute_median"]
+    ]
+
+    outlier = [
+        (name,values["outlier"])
+        for name, values in feature_entries
+        if values["include_in_model"] and (values["outlier"] is not None)
+    ]
+
+    bins = [
+        (name,values["bins"])
+        for name, values in feature_entries
+        if values["include_in_model"] and values["categorical"] and (values["bins"] is not None)
+    ]
+    
     return {
         "pre_features": pre_features,
         "features": selected_features,
         "cat_features": categorical_features,
         "feature_metadata": metadata,
+        "impute_value": impute_value,
+        "impute_median": impute_median,
+        "outlier": outlier,
+        "bins": bins,
     }
 
 
