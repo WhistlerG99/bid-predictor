@@ -5,61 +5,66 @@ features:
   flight_number:
     categorical: true
     include_in_model: false
+  flight_code:
+    derived: true
+    categorical: true
+    include_in_model: false
+
+
   travel_date:
     include_in_model: false
   departure_timestamp:
     include_in_model: false
   current_timestamp:
     include_in_model: false
-  item_count:
+  days_before_departure:
     include_in_model: true
-    categorical: true
-  usd_base_amount:
-    include_in_model: true
-    categorical: true
+    derived: true
+
   seats_available:
-    include_in_model: true
     categorical: true
+    include_in_model: true
+
+  item_count:
+    categorical: true
+    include_in_model: true
+  usd_base_amount:
+    categorical: true
+    include_in_model: true
   fare_class:
     categorical: true
+    include_in_model: true
   offer_time:
     include_in_model: false
-  # multiplier_fare_class:
-  # multiplier_loyalty:
-  # multiplier_success_history:
-  # multiplier_payment_type:
-  upgrade_type:
+  multiplier_fare_class:
     include_in_model: true
+  multiplier_loyalty:
+    include_in_model: true
+  multiplier_success_history:
+    include_in_model: true
+  multiplier_payment_type:
+    include_in_model: true
+  upgrade_type:
     categorical: true
+    include_in_model: true
+
   snapshot_num:
     include_in_model: false
-  days_before_departure:
-    include_in_model: false
+
+  usd_base_amount_25%:
     derived: true
-  flight_code:
-    derived: true
-    categorical: true
     include_in_model: true
-  # item_count_grp:
-  #   derived: true
-  #   categorical: true
-  # usd_base_amount_grp:
-  #   derived: true
-  #   categorical: true
-  # usd_base_amount_25%:
-  #   derived: true
-  # usd_base_amount_50%:
-  #   derived: true
-  # usd_base_amount_75%:
-  #   derived: true
+  usd_base_amount_50%:
+    derived: true
+    include_in_model: true
+  usd_base_amount_75%:
+    derived: true
+    include_in_model: true
   usd_base_amount_max:
     derived: true
+    include_in_model: true
   num_offers:
     derived: true
     categorical: true
-  # seats_available_grp:
-  #   derived: true
-  #   categorical: true
-  # offer_time_grp:
-  #   derived: true
-  #   categorical: true
+    include_in_model: true
+

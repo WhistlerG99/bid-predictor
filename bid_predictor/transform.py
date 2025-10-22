@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 from typing import Optional
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.preprocessing import FunctionTransformer
 from feature_engine.outliers import ArbitraryOutlierCapper
 from feature_engine.discretisation import ArbitraryDiscretiser
 from feature_engine.imputation import (
@@ -8,6 +10,7 @@ from feature_engine.imputation import (
     AddMissingIndicator,
     MeanMedianImputer,
 )
+from .feature_config import _GROUPBY_KEY_FEATURES
 
 
 class AddMissingIndicatorCustom(AddMissingIndicator):
@@ -176,3 +179,186 @@ class ArbitraryDiscretiserCustom(ArbitraryDiscretiser):
             return X_tf
         else:
             return X
+
+
+def add_flight_code(data):
+    required = {"carrier_code", "flight_number"}
+    if not required.issubset(data.columns):
+        return data
+    data["flight_code"] = (
+        data["carrier_code"].astype(str) + data["flight_number"].astype(str)
+    ).astype("category")
+    return data
+
+
+def add_days_b4_depart(data):
+    required = {"departure_timestamp", "current_timestamp"}
+    if not required.issubset(data.columns):
+        return data
+    data["days_before_departure"] = (
+        data.departure_timestamp - data.current_timestamp
+    ).apply(lambda y: y.total_seconds()) / (60 * 60 * 24)
+    return data
+
+
+def add_group_features(data):
+    if "usd_base_amount" not in data.columns:
+        return data
+    if any(key not in data.columns for key in _GROUPBY_KEY_FEATURES):
+        return data
+    num_offers_col_name = "num_offers"
+    usd_base_amount_max_name = "usd_base_amount_max"
+    data = data.drop(
+        columns=[num_offers_col_name, usd_base_amount_max_name], errors="ignore"
+    )
+    data = data.merge(
+        data.groupby(
+            _GROUPBY_KEY_FEATURES,
+            observed=True,
+        )
+        .size()
+        .rename(num_offers_col_name)
+        .reset_index(),
+        on=_GROUPBY_KEY_FEATURES,
+    )
+    data = data.merge(
+        data.groupby(
+            _GROUPBY_KEY_FEATURES,
+            observed=True,
+        )["usd_base_amount"]
+        .max()
+        .rename(usd_base_amount_max_name)
+        .reset_index(),
+        on=_GROUPBY_KEY_FEATURES,
+    )
+    return data
+
+
+def quantiles_vectorized(vals, qs=(0.25, 0.50, 0.75)):
+    vals = np.asarray(vals)
+    n = vals.size
+    data = np.full((len(qs), n), np.nan, dtype=float)
+    if n <= 1:
+        return data
+
+    # Stable sort to keep deterministic ranks with ties
+    order = np.argsort(vals, kind="mergesort")
+    S = vals[order]  # sorted values
+    ranks = np.empty(n, dtype=int)
+    ranks[order] = np.arange(n)  # rank of each original element
+
+    m = n - 1
+    for qi, q in enumerate(qs):
+        h = q * (m - 1)  # NumPy's 'linear' method position
+        j = int(np.floor(h))
+        gamma = h - j
+        j2 = min(j + 1, m - 1)  # clamp upper neighbor inside [0, m-1]
+
+        # Map indices from T (length m) back to S (length n), accounting for the removed item
+        idx_a = j + (j >= ranks)
+        idx_b = j2 + (j2 >= ranks)
+
+        data[qi, :] = (1.0 - gamma) * S[idx_a] + gamma * S[idx_b]
+
+    return data  # shape (len(qs), n)
+
+
+def quantiles_group(group, col):
+    arr = group[col].to_numpy()
+    q25, q50, q75 = quantiles_vectorized(arr, (0.25, 0.50, 0.75))
+    return pd.DataFrame(
+        {
+            "q25_excl_self": q25,
+            "median_excl_self": q50,
+            "q75_excl_self": q75,
+        },
+        index=group.index,
+    )
+
+
+def add_quantiles(data):
+    if "usd_base_amount" not in data.columns:
+        return data
+    if any(key not in data.columns for key in _GROUPBY_KEY_FEATURES):
+        return data
+    data[["usd_base_amount_25%", "usd_base_amount_50%", "usd_base_amount_75%"]] = (
+        data.groupby(
+            _GROUPBY_KEY_FEATURES,
+            group_keys=False,
+            observed=True,
+            sort=False,
+        ).apply(quantiles_group, col="usd_base_amount", include_groups=False)
+    )
+    return data
+
+
+# --- Wrappers around your existing funcs so they can be used in pipelines ---
+def add_flight_code_wrapper(X):
+    if isinstance(X, pd.DataFrame):
+        return add_flight_code(X)
+    else:
+        return X
+
+
+def add_days_b4_depart_wrapper(X):
+    if isinstance(X, pd.DataFrame):
+        return add_days_b4_depart(X)
+    else:
+        return X
+
+
+def add_group_features_wrapper(X):
+    if isinstance(X, pd.DataFrame):
+        return add_group_features(X)
+    else:
+        return X
+
+
+def add_quantiles_wrapper(X):
+    if isinstance(X, pd.DataFrame):
+        return add_quantiles(X)
+    else:
+        return X
+
+
+class ColumnReducer(BaseEstimator, TransformerMixin):
+    """Selects the configured columns from a pandas DataFrame."""
+
+    def __init__(self, selected_features):
+        self.selected_features = list(selected_features)
+        self._existing_features = None
+
+    def fit(self, X, y=None):
+        if isinstance(X, pd.DataFrame):
+            self._existing_features = [
+                feature for feature in self.selected_features if feature in X.columns
+            ]
+            self._existing_features += [
+                feature + "_na"
+                for feature in self.selected_features
+                if feature + "_na" in X.columns
+            ]
+        else:
+            self._existing_features = list(self.selected_features)
+        return self
+
+    def transform(self, X):
+        if not isinstance(X, pd.DataFrame):
+            return X
+
+        features = self._existing_features
+        if features is None:
+            features = [
+                feature for feature in self.selected_features if feature in X.columns
+            ]
+        else:
+            features = [feature for feature in features if feature in X.columns]
+
+        return X.reindex(columns=features)
+
+
+# FunctionTransformer allows arbitrary pandas-based functions
+add_flight_code_transformer = FunctionTransformer(add_flight_code_wrapper)
+add_days_b4_depart_transformer = FunctionTransformer(add_days_b4_depart_wrapper)
+group_features_transformer = FunctionTransformer(add_group_features_wrapper)
+quantiles_transformer = FunctionTransformer(add_quantiles_wrapper)

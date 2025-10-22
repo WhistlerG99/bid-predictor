@@ -15,7 +15,8 @@ from sklearn.metrics import (
     RocCurveDisplay,
     PrecisionRecallDisplay,
 )
-from bid_predictor.bid_predictor import build_pipeline, load_feature_config
+from bid_predictor.bid_predictor import build_pipeline
+from bid_predictor.feature_config import load_feature_config
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
@@ -29,7 +30,8 @@ if detect_execution_environment()[0] in (
     arn = os.environ["MLFLOW_AWS_ARN"]
     mlflow.set_tracking_uri(arn)
 
-DEFAULT_EXP_NAME="tests"
+DEFAULT_EXP_NAME = "tests"
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -57,16 +59,9 @@ def prepare_features(data, pre_features):
         drop=True
     )
 
-    # data = data.fillna(
-    #     {
-    #         "multiplier_fare_class": 1.0,
-    #         "multiplier_loyalty": 1.0,
-    #         "multiplier_success_history": 1.0,
-    #         "multiplier_payment_type": 1.0,
-    #     }
-    # )
-
-    available_pre_features = [feature for feature in pre_features if feature in data.columns]
+    available_pre_features = [
+        feature for feature in pre_features if feature in data.columns
+    ]
     selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
 
     testing = False
@@ -96,10 +91,10 @@ def train_and_log_model(
 ):
     cat_features = list(feature_config["cat_features"])
     features = list(feature_config["features"])
-    
+
     var_args = vars(args)
 
-    experiment_name = var_args.pop("experiment_name",DEFAULT_EXP_NAME)
+    experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
     mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
