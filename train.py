@@ -1,5 +1,6 @@
 import os
 import argparse
+from collections import defaultdict
 import pandas as pd
 import mlflow
 from catboost import Pool
@@ -16,7 +17,12 @@ from sklearn.metrics import (
     PrecisionRecallDisplay,
 )
 from bid_predictor.bid_predictor import build_pipeline
-from bid_predictor.feature_config import load_feature_config
+from bid_predictor.feature_config import (
+    load_feature_config,
+    summarize_feature_transformations,
+    feature_config_fingerprint,
+    feature_summary_markdown,
+)
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
@@ -108,6 +114,43 @@ def train_and_log_model(
         mlflow.log_param("train_rows", len(X_train))
         mlflow.log_param("test_rows", len(X_test))
         mlflow.log_params(var_args)
+
+        feature_summary = summarize_feature_transformations(feature_config)
+        fingerprint = feature_config_fingerprint(feature_summary)
+        transformation_index = defaultdict(list)
+        for item in feature_summary:
+            for transform in item["transformations"]:
+                transformation_index[transform["type"]].append(item["feature"])
+
+        transformation_counts = {
+            name: len(sorted(set(features))) for name, features in transformation_index.items()
+        }
+
+        mlflow.set_tags(
+            {
+                "feature_fingerprint": fingerprint,
+                "feature_count": len(feature_summary),
+                "feature_transformations": ";".join(
+                    f"{name}:{count}" for name, count in sorted(transformation_counts.items())
+                ),
+            }
+        )
+
+        mlflow.log_dict(
+            {
+                "features": feature_summary,
+                "transformation_counts": transformation_counts,
+                "transformation_index": {
+                    name: sorted(set(features))
+                    for name, features in transformation_index.items()
+                },
+            },
+            "feature_pipeline_summary.json",
+        )
+        mlflow.log_text(
+            feature_summary_markdown(feature_summary),
+            "feature_pipeline_summary.md",
+        )
 
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)

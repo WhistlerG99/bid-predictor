@@ -1,7 +1,10 @@
 import os
-import yaml
+import json
+import hashlib
 from functools import lru_cache
 from pathlib import Path
+
+import yaml
 
 _FEATURE_CONFIG_ENV = "BID_PREDICTOR_FEATURE_CONFIG"
 _GROUPBY_KEY_FEATURES = [
@@ -145,6 +148,141 @@ def load_feature_config(config_path=None):
         "outlier": outlier,
         "bins": bins,
     }
+
+
+def _format_bins(bins):
+    if not bins:
+        return None
+    if "interval" in bins:
+        return {
+            "type": "interval",
+            "min": bins.get("min"),
+            "max": bins.get("max"),
+            "interval": bins.get("interval"),
+        }
+    if "nsteps" in bins:
+        return {
+            "type": "nsteps",
+            "min": bins.get("min"),
+            "max": bins.get("max"),
+            "nsteps": bins.get("nsteps"),
+        }
+    return bins
+
+
+def _format_outlier(outlier):
+    if not outlier:
+        return None
+    return {key: outlier[key] for key in ("min", "max") if key in outlier}
+
+
+def summarize_feature_transformations(feature_config):
+    """Summarize model features and their transformations for MLflow logging.
+
+    Parameters
+    ----------
+    feature_config : Mapping[str, Any]
+        Loaded feature configuration dictionary.
+
+    Returns
+    -------
+    list[dict]
+        A deterministic list of feature metadata dictionaries describing the
+        transformations applied to every feature that participates in the
+        model.
+    """
+
+    metadata = feature_config.get("feature_metadata", {})
+    summary = []
+    for feature_name in sorted(metadata):
+        values = metadata[feature_name]
+        if not values.get("include_in_model", False):
+            continue
+
+        transformations = []
+        impute_value = values.get("impute_value")
+        impute_median = values.get("impute_median", False)
+
+        if impute_value is not None:
+            transformations.append({"type": "impute_value", "value": impute_value})
+            transformations.append({"type": "missing_indicator"})
+        elif impute_median:
+            transformations.append({"type": "impute_median"})
+            transformations.append({"type": "missing_indicator"})
+
+        outlier = _format_outlier(values.get("outlier"))
+        if outlier:
+            transformations.append({"type": "outlier_capper", "params": outlier})
+
+        bins = _format_bins(values.get("bins"))
+        if bins:
+            transformations.append({"type": "discretiser", "params": bins})
+
+        if values.get("categorical", False):
+            transformations.append({"type": "catboost_categorical"})
+
+        if not transformations:
+            transformations.append({"type": "passthrough"})
+
+        summary.append(
+            {
+                "feature": feature_name,
+                "derived": bool(values.get("derived", False)),
+                "categorical": bool(values.get("categorical", False)),
+                "impute_value": impute_value,
+                "impute_median": bool(impute_median),
+                "outlier": outlier,
+                "bins": bins,
+                "transformations": transformations,
+            }
+        )
+
+    return summary
+
+
+def feature_config_fingerprint(feature_summary):
+    """Create a stable fingerprint for a feature configuration summary."""
+
+    encoded = json.dumps(feature_summary, sort_keys=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def feature_summary_markdown(feature_summary):
+    """Render a markdown table describing the feature summary."""
+
+    if not feature_summary:
+        return "No features are configured for this run."
+
+    header = [
+        "| Feature | Derived | Categorical | Transformations |",
+        "| --- | --- | --- | --- |",
+    ]
+    rows = []
+    for item in feature_summary:
+        transforms = []
+        for transform in item["transformations"]:
+            if transform["type"] in {"impute_value", "outlier_capper", "discretiser"}:
+                detail = transform.copy()
+                detail_type = detail.pop("type")
+                transforms.append(f"**{detail_type}**: {json.dumps(detail, sort_keys=True)}")
+            elif transform["type"] == "impute_median":
+                transforms.append("**impute_median**")
+            elif transform["type"] == "missing_indicator":
+                transforms.append("missing_indicator")
+            elif transform["type"] == "catboost_categorical":
+                transforms.append("catboost_categorical")
+            else:
+                transforms.append(transform["type"])
+        rows.append(
+            "| {feature} | {derived} | {categorical} | {transforms} |".format(
+                feature=item["feature"],
+                derived="✅" if item["derived"] else "",
+                categorical="✅" if item["categorical"] else "",
+                transforms="<br>".join(transforms),
+            )
+        )
+
+    return "\n".join(header + rows)
 
 
 _DEFAULT_FEATURE_CONFIG = load_feature_config()
