@@ -1,6 +1,7 @@
 import os
 import json
 import hashlib
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -283,6 +284,63 @@ def feature_summary_markdown(feature_summary):
         )
 
     return "\n".join(header + rows)
+
+
+def _sanitize_feature_name(name):
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
+
+
+def feature_parameters_for_mlflow(feature_summary):
+    """Flatten feature summary for MLflow parameter logging."""
+
+    params = {}
+    for item in feature_summary:
+        feature_name = item["feature"]
+        prefix = f"feature_{_sanitize_feature_name(feature_name)}"
+
+        transforms = []
+        for transform in item["transformations"]:
+            base_descriptor = transform["type"]
+            payload = {
+                key: value
+                for key, value in transform.items()
+                if key != "type" and value is not None
+            }
+            if payload:
+                payload_json = json.dumps(
+                    payload, sort_keys=True, separators=(",", ":")
+                )
+                transforms.append(f"{base_descriptor}:{payload_json}")
+            else:
+                transforms.append(base_descriptor)
+
+        if transforms:
+            params[f"{prefix}__transformations"] = " | ".join(transforms)
+
+        if item.get("derived"):
+            params[f"{prefix}__derived"] = "true"
+
+        params[f"{prefix}__categorical"] = "true" if item.get("categorical") else "false"
+
+        if item.get("impute_value") is not None:
+            params[f"{prefix}__impute_value"] = str(item["impute_value"])
+
+        if item.get("impute_median"):
+            params[f"{prefix}__impute_median"] = "true"
+
+        outlier = item.get("outlier")
+        if outlier:
+            params[f"{prefix}__outlier"] = json.dumps(
+                outlier, sort_keys=True, separators=(",", ":")
+            )
+
+        bins = item.get("bins")
+        if bins:
+            params[f"{prefix}__bins"] = json.dumps(
+                bins, sort_keys=True, separators=(",", ":")
+            )
+
+    return params
 
 
 _DEFAULT_FEATURE_CONFIG = load_feature_config()

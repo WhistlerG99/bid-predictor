@@ -22,6 +22,7 @@ from bid_predictor.feature_config import (
     summarize_feature_transformations,
     feature_config_fingerprint,
     feature_summary_markdown,
+    feature_parameters_for_mlflow,
 )
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
@@ -151,6 +152,8 @@ def train_and_log_model(
             feature_summary_markdown(feature_summary),
             "feature_pipeline_summary.md",
         )
+
+        mlflow.log_params(feature_parameters_for_mlflow(feature_summary))
 
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)
