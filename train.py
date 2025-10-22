@@ -24,7 +24,7 @@ from bid_predictor.feature_config import (
     feature_config_fingerprint,
     feature_summary_markdown,
     feature_parameters_for_mlflow,
-    feature_importance_metrics,
+    feature_importance_metric_series,
 )
 from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
@@ -199,7 +199,23 @@ def train_and_log_model(
         train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
         fi_vals = pipeline[-1].get_feature_importance(train_pool)
         fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
-        mlflow.log_metrics(feature_importance_metrics(fi))
+
+        fi_metric_series = feature_importance_metric_series(fi)
+        if fi_metric_series["entries"]:
+            for entry in fi_metric_series["entries"]:
+                mlflow.log_metric(
+                    fi_metric_series["metric_key"],
+                    entry["importance"],
+                    step=entry["step"],
+                )
+
+            mlflow.log_dict(
+                {
+                    "metric_key": fi_metric_series["metric_key"],
+                    "feature_importance": fi_metric_series["entries"],
+                },
+                "metrics/feature_importance_series.json",
+            )
 
         feature_index = {item["feature"]: item for item in feature_summary}
         palette = {
@@ -208,6 +224,16 @@ def train_and_log_model(
             "numeric": "#f3722c",
             "missing_indicator": "#4d908e",
             "other": "#adb5bd",
+        }
+
+        metric_step_by_feature = {
+            entry["feature"]: entry["step"]
+            for entry in fi_metric_series["entries"]
+        }
+
+        sanitized_feature_by_feature = {
+            entry["feature"]: entry["sanitized_feature"]
+            for entry in fi_metric_series["entries"]
         }
 
         fi_records = []
@@ -266,6 +292,10 @@ def train_and_log_model(
                     "label": label,
                     "transforms": transforms,
                     "metadata_present": bool(metadata),
+                    "metric_step": metric_step_by_feature.get(feature_name),
+                    "sanitized_feature": sanitized_feature_by_feature.get(
+                        feature_name
+                    ),
                 }
             )
 
@@ -281,6 +311,8 @@ def train_and_log_model(
                         "category",
                         "transforms",
                         "metadata_present",
+                        "metric_step",
+                        "sanitized_feature",
                     )
                 }
                 for record in fi_records
