@@ -234,7 +234,8 @@ def main():
             + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         )
     else:
-        train_file = "../bid_data_snapshots_v2.parquet"
+        train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+        # train_file = "../bid_data_snapshots_v2.parquet"
 
     dataset = ds.dataset(
         train_file, format="parquet"

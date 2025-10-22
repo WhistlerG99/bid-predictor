@@ -9,19 +9,25 @@ from catboost import CatBoostClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import FunctionTransformer
-
+from .transform import (
+    ArbitraryOutlierCapperCustom,
+    ArbitraryDiscretiserCustom,
+    ArbitraryNumberImputerCustom,
+    AddMissingIndicatorCustom,
+    MeanMedianImputerCustom,
+)
 from .tracking import MlflowCallback
 from .utils import detect_execution_environment, get_output_dir
 
 
 _FEATURE_CONFIG_ENV = "BID_PREDICTOR_FEATURE_CONFIG"
-_GROUPBY_KEY_FEATURES = (
+_GROUPBY_KEY_FEATURES = [
     "carrier_code",
     "flight_number",
     "travel_date",
     "upgrade_type",
     "snapshot_num",
-)
+]
 
 _FEATURE_BOOLEAN_FIELDS = {
     "categorical": False,
@@ -58,7 +64,10 @@ def _parse_feature_spec(values):
                 f"Feature '{name}' metadata must be a mapping, got {type(metadata)!r}"
             )
 
-        normalized = {field: bool(metadata.get(field, default)) for field, default in _FEATURE_BOOLEAN_FIELDS.items()}
+        normalized = {
+            field: bool(metadata.get(field, default))
+            for field, default in _FEATURE_BOOLEAN_FIELDS.items()
+        }
         parsed.append((name, normalized))
         seen.add(name)
 
@@ -94,15 +103,14 @@ def load_feature_config(config_path=None):
 
     feature_entries = _parse_feature_spec(config.get("features"))
 
-    metadata = {
-        name: values.copy()
-        for name, values in feature_entries
-    }
+    metadata = {name: values.copy() for name, values in feature_entries}
 
     pre_features = [name for name, values in feature_entries if not values["derived"]]
     pre_features = _ensure_groupby_keys(pre_features)
 
-    selected_features = [name for name, values in feature_entries if values["include_in_model"]]
+    selected_features = [
+        name for name, values in feature_entries if values["include_in_model"]
+    ]
     categorical_features = [
         name
         for name, values in feature_entries
@@ -122,6 +130,16 @@ pre_features = _DEFAULT_FEATURE_CONFIG["pre_features"]
 features = _DEFAULT_FEATURE_CONFIG["features"]
 cat_features = _DEFAULT_FEATURE_CONFIG["cat_features"]
 feature_metadata = _DEFAULT_FEATURE_CONFIG["feature_metadata"]
+
+
+def add_flight_code(data):
+    required = {"carrier_code", "flight_number"}
+    if not required.issubset(data.columns):
+        return data
+    data["flight_code"] = (
+        data["carrier_code"].astype(str) + data["flight_number"].astype(str)
+    ).astype("category")
+    return data
 
 
 def add_days_b4_depart(data):
@@ -146,107 +164,24 @@ def add_group_features(data):
     )
     data = data.merge(
         data.groupby(
-            [
-                "carrier_code",
-                "flight_number",
-                "travel_date",
-                "upgrade_type",
-                "snapshot_num",
-            ],
+            _GROUPBY_KEY_FEATURES,
             observed=True,
         )
         .size()
         .rename(num_offers_col_name)
         .reset_index(),
-        on=[
-            "carrier_code",
-            "flight_number",
-            "travel_date",
-            "upgrade_type",
-            "snapshot_num",
-        ],
+        on=_GROUPBY_KEY_FEATURES,
     )
     data = data.merge(
         data.groupby(
-            [
-                "carrier_code",
-                "flight_number",
-                "travel_date",
-                "upgrade_type",
-                "snapshot_num",
-            ],
+            _GROUPBY_KEY_FEATURES,
             observed=True,
         )["usd_base_amount"]
         .max()
         .rename(usd_base_amount_max_name)
         .reset_index(),
-        on=[
-            "carrier_code",
-            "flight_number",
-            "travel_date",
-            "upgrade_type",
-            "snapshot_num",
-        ],
+        on=_GROUPBY_KEY_FEATURES,
     )
-    return data
-
-
-def bin_features(data):
-    if "usd_base_amount" in data.columns:
-        amount_bins = [-float("inf")] + list(range(100, 1701, 100)) + [float("inf")]
-        amount_labels = (
-            ["<" + str(amount_bins[1])]
-            + [
-                f"{amount_bins[i]}-{amount_bins[i+1]}"
-                for i in range(1, len(amount_bins) - 2)
-            ]
-            + [">" + str(amount_bins[-2])]
-        )
-
-        data["usd_base_amount_grp"] = pd.cut(
-            data["usd_base_amount"], bins=amount_bins, labels=amount_labels
-        )
-
-    if "offer_time" in data.columns:
-        offer_time_bins = list(range(0, 31, 1)) + [float("inf")]
-        offer_time_labels = list(range(1, 32, 1))
-        data["offer_time_grp"] = pd.cut(
-            data["offer_time"],
-            bins=offer_time_bins,
-            labels=offer_time_labels,
-        )
-
-    if "item_count" in data.columns:
-        item_count_threshold = 4
-        data["item_count_grp"] = data["item_count"].apply(
-            lambda x: x if x <= item_count_threshold else item_count_threshold + 1
-        )
-        data["item_count_grp"] = pd.Categorical(data["item_count_grp"])
-
-    if "num_offers" in data.columns:
-        num_offers_threshold = 15
-        data["num_offers_grp"] = data["num_offers"].apply(
-            lambda x: x if x <= num_offers_threshold else num_offers_threshold + 1
-        )
-        data["num_offers_grp"] = pd.Categorical(data["num_offers_grp"])
-
-    if "seats_available" in data.columns:
-        seats_available_low_threshold = -1
-        seats_available_high_threshold = 30
-        data["seats_available_grp"] = data["seats_available"].apply(
-            lambda x: (
-                (
-                    x
-                    if x < seats_available_high_threshold or np.isnan(x)
-                    else seats_available_high_threshold
-                )
-                if x > seats_available_low_threshold or np.isnan(x)
-                else seats_available_low_threshold
-            )
-        )
-        data["seats_available_grp"] = pd.Categorical(
-            data.fillna({"seats_available_grp": -2}).seats_available_grp.astype(int)
-        )
     return data
 
 
@@ -299,13 +234,7 @@ def add_quantiles(data):
         return data
     data[["usd_base_amount_25%", "usd_base_amount_50%", "usd_base_amount_75%"]] = (
         data.groupby(
-            [
-                "carrier_code",
-                "flight_number",
-                "travel_date",
-                "upgrade_type",
-                "snapshot_num",
-            ],
+            _GROUPBY_KEY_FEATURES,
             group_keys=False,
             observed=True,
             sort=False,
@@ -315,6 +244,12 @@ def add_quantiles(data):
 
 
 # --- Wrappers around your existing funcs so they can be used in pipelines ---
+def add_flight_code_wrapper(X):
+    if isinstance(X, pd.DataFrame):
+        return add_flight_code(X)
+    else:
+        return X
+
 def add_days_b4_depart_wrapper(X):
     if isinstance(X, pd.DataFrame):
         return add_days_b4_depart(X)
@@ -325,13 +260,6 @@ def add_days_b4_depart_wrapper(X):
 def add_group_features_wrapper(X):
     if isinstance(X, pd.DataFrame):
         return add_group_features(X)
-    else:
-        return X
-
-
-def bin_features_wrapper(X):
-    if isinstance(X, pd.DataFrame):
-        return bin_features(X)
     else:
         return X
 
@@ -355,6 +283,11 @@ class ColumnReducer(BaseEstimator, TransformerMixin):
             self._existing_features = [
                 feature for feature in self.selected_features if feature in X.columns
             ]
+            self._existing_features += [
+                feature + "_na"
+                for feature in self.selected_features
+                if feature + "_na" in X.columns
+            ]
         else:
             self._existing_features = list(self.selected_features)
         return self
@@ -365,7 +298,9 @@ class ColumnReducer(BaseEstimator, TransformerMixin):
 
         features = self._existing_features
         if features is None:
-            features = [feature for feature in self.selected_features if feature in X.columns]
+            features = [
+                feature for feature in self.selected_features if feature in X.columns
+            ]
         else:
             features = [feature for feature in features if feature in X.columns]
 
@@ -373,10 +308,9 @@ class ColumnReducer(BaseEstimator, TransformerMixin):
 
 
 # FunctionTransformer allows arbitrary pandas-based functions
-
+add_flight_code_transformer = FunctionTransformer(add_flight_code_wrapper)
 add_days_b4_depart_transformer = FunctionTransformer(add_days_b4_depart_wrapper)
 group_features_transformer = FunctionTransformer(add_group_features_wrapper)
-bin_features_transformer = FunctionTransformer(bin_features_wrapper)
 quantiles_transformer = FunctionTransformer(add_quantiles_wrapper)
 
 
@@ -398,7 +332,9 @@ class CBC(BaseEstimator, ClassifierMixin):
     def fit(self, X, y=None, eval_set=None, **fit_kwargs):
         self._cb = CatBoostClassifier(**self.cb_params)
         active_cat_features = [
-            feature for feature in self.cat_features if feature in getattr(X, "columns", [])
+            feature
+            for feature in self.cat_features
+            if feature in getattr(X, "columns", [])
         ]
         # eval_set supports (X_val, y_val) tuples or Pool objects
         self._cb.fit(
@@ -445,6 +381,59 @@ def build_pipeline(feature_config=None, **kw):
     selected_features = feature_config["features"]
     categorical_features = feature_config["cat_features"]
 
+    indicator = AddMissingIndicatorCustom(
+        variables=[
+            "seats_available",
+            "multiplier_fare_class",
+            "multiplier_loyalty",
+            "multiplier_success_history",
+            "multiplier_payment_type",
+        ]
+    )
+    multi_imputer = ArbitraryNumberImputerCustom(
+        imputer_dict={
+            "multiplier_fare_class": 1,
+            "multiplier_loyalty": 1,
+            "multiplier_success_history": 1,
+            "multiplier_payment_type": 1,
+        }
+    )
+    seat_imputer = MeanMedianImputerCustom(
+        variables=["seats_available"], imputation_method="median"
+    )
+    outliers = ArbitraryOutlierCapperCustom(
+        max_capping_dict={"item_count": 5, "num_offers": 16},
+    )
+
+    offer_time_bins = [-float("inf")] + list(range(0, 31, 1)) + [float("inf")]
+
+    amount_bins = list(range(0, 1701, 25)) + [float("inf")]
+    amount_cats = {
+        i: f"<{y}" if x == 0 else f">{x}" if y == float("inf") else f"{x}-{y}"
+        for i, (x, y) in enumerate(list(zip(amount_bins[:-1], amount_bins[1:])))
+    }
+    seat_bins = [-float("inf")] + list(range(-1, 30, 1)) + [float("inf")]
+    seat_cats = {i: i - 1 for i in range(len(seat_bins) - 1)}
+
+    day_b4_bins = (
+        [-float("inf")] + [i / 24 for i in range(0, 5 * 24 + 1, 1)] + [float("inf")]
+    )
+    day_b4_cats = {i: (i - 1) / 24 for i in range(len(day_b4_bins) - 1)}
+
+    discrete = ArbitraryDiscretiserCustom(
+        binning_dict={
+            "offer_time": offer_time_bins,
+            "usd_base_amount": amount_bins,
+            "seats_available": seat_bins,
+            "days_before_departure": day_b4_bins,
+        },
+        bin_names_dict={
+            "usd_base_amount": amount_cats,
+            "seats_available": seat_cats,
+            "days_before_departure": day_b4_cats,
+        },
+    )
+
     reduce_features_transformer = ColumnReducer(selected_features)
 
     # CatBoostClassifier integrates with sklearn API
@@ -457,10 +446,15 @@ def build_pipeline(feature_config=None, **kw):
 
     pipeline = Pipeline(
         steps=[
+            ("flight_code", add_flight_code_transformer),
             ("depart", add_days_b4_depart_transformer),
             ("group", group_features_transformer),
-            ("bin", bin_features_transformer),
-            ("loo", quantiles_transformer),
+            ("indicator", indicator),
+            ("multi_imputer", multi_imputer),
+            ("seat_imputer", seat_imputer),
+            ("outliers", outliers),
+            ("quantile", quantiles_transformer),
+            ("discrete", discrete),
             ("reduce", reduce_features_transformer),
             ("clf", clf),
         ],

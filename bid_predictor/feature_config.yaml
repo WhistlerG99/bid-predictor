@@ -1,53 +1,65 @@
 features:
   carrier_code:
     categorical: true
+    include_in_model: false
   flight_number:
     categorical: true
+    include_in_model: false
   travel_date:
+    include_in_model: false
   departure_timestamp:
     include_in_model: false
   current_timestamp:
     include_in_model: false
   item_count:
-    include_in_model: false
+    include_in_model: true
+    categorical: true
   usd_base_amount:
-    include_in_model: false
+    include_in_model: true
+    categorical: true
   seats_available:
-    include_in_model: false
+    include_in_model: true
+    categorical: true
   fare_class:
     categorical: true
   offer_time:
     include_in_model: false
-  multiplier_fare_class:
-  multiplier_loyalty:
-  multiplier_success_history:
-  multiplier_payment_type:
+  # multiplier_fare_class:
+  # multiplier_loyalty:
+  # multiplier_success_history:
+  # multiplier_payment_type:
   upgrade_type:
-    include_in_model: false
+    include_in_model: true
+    categorical: true
   snapshot_num:
     include_in_model: false
-  # days_before_departure:
+  days_before_departure:
+    include_in_model: false
+    derived: true
+  flight_code:
+    derived: true
+    categorical: true
+    include_in_model: true
+  # item_count_grp:
   #   derived: true
-  item_count_grp:
-    derived: true
-    categorical: true
-  usd_base_amount_grp:
-    derived: true
-    categorical: true
-  usd_base_amount_25%:
-    derived: true
-  usd_base_amount_50%:
-    derived: true
-  usd_base_amount_75%:
-    derived: true
+  #   categorical: true
+  # usd_base_amount_grp:
+  #   derived: true
+  #   categorical: true
+  # usd_base_amount_25%:
+  #   derived: true
+  # usd_base_amount_50%:
+  #   derived: true
+  # usd_base_amount_75%:
+  #   derived: true
   usd_base_amount_max:
     derived: true
-  num_offers_grp:
+  num_offers:
     derived: true
     categorical: true
-  seats_available_grp:
-    derived: true
-    categorical: true
-  offer_time_grp:
-    derived: true
-    categorical: true
+  # seats_available_grp:
+  #   derived: true
+  #   categorical: true
+  # offer_time_grp:
+  #   derived: true
+  #   categorical: true
