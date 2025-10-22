@@ -1,32 +1,20 @@
 import os
 import argparse
-from collections import defaultdict
 import pandas as pd
 import mlflow
-from catboost import Pool
 import pyarrow.dataset as ds
-import matplotlib.pyplot as plt
-from matplotlib.patches import Patch
 import sklearn
-from sklearn.metrics import (
-    precision_score,
-    recall_score,
-    accuracy_score,
-    confusion_matrix,
-    ConfusionMatrixDisplay,
-    RocCurveDisplay,
-    PrecisionRecallDisplay,
-)
 from bid_predictor.bid_predictor import build_pipeline
-from bid_predictor.feature_config import (
-    load_feature_config,
-    summarize_feature_transformations,
-    feature_config_fingerprint,
-    feature_summary_markdown,
-    feature_parameters_for_mlflow,
-    feature_importance_metrics,
+from bid_predictor.feature_config import load_feature_config
+from bid_predictor.tracking import (
+    log_classification_metrics,
+    log_evaluation_figures,
+    log_feature_config_artifacts,
+    log_feature_importances,
+    log_pipeline_model,
+    log_run_parameters,
+    start_catboost_mlflow_stream,
 )
-from bid_predictor.tracking import start_catboost_mlflow_stream
 from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
 
@@ -111,51 +99,8 @@ def train_and_log_model(
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
-        mlflow.log_param("n_features", len(features))
-        mlflow.log_param("features", ",".join(features))
-        mlflow.log_param("categorical_features", ",".join(cat_features))
-        mlflow.log_param("train_rows", len(X_train))
-        mlflow.log_param("test_rows", len(X_test))
-        mlflow.log_params(var_args)
-
-        feature_summary = summarize_feature_transformations(feature_config)
-        fingerprint = feature_config_fingerprint(feature_summary)
-        transformation_index = defaultdict(list)
-        for item in feature_summary:
-            for transform in item["transformations"]:
-                transformation_index[transform["type"]].append(item["feature"])
-
-        transformation_counts = {
-            name: len(sorted(set(features))) for name, features in transformation_index.items()
-        }
-
-        mlflow.set_tags(
-            {
-                "feature_fingerprint": fingerprint,
-                "feature_count": len(feature_summary),
-                "feature_transformations": ";".join(
-                    f"{name}:{count}" for name, count in sorted(transformation_counts.items())
-                ),
-            }
-        )
-
-        mlflow.log_dict(
-            {
-                "features": feature_summary,
-                "transformation_counts": transformation_counts,
-                "transformation_index": {
-                    name: sorted(set(features))
-                    for name, features in transformation_index.items()
-                },
-            },
-            "feature_pipeline_summary.json",
-        )
-        mlflow.log_text(
-            feature_summary_markdown(feature_summary),
-            "feature_pipeline_summary.md",
-        )
-
-        mlflow.log_params(feature_parameters_for_mlflow(feature_summary))
+        log_run_parameters(var_args, features, cat_features, len(X_train), len(X_test))
+        log_feature_config_artifacts(feature_config)
 
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)
@@ -184,86 +129,10 @@ def train_and_log_model(
 
         proba = pipeline.predict_proba(X_test)[:, 1]
         y_pred = (proba >= 0.5).astype(int)
-        mlflow.log_metrics(
-            {
-                "precision": float(precision_score(y_test, y_pred)),
-                "recall": float(recall_score(y_test, y_pred)),
-                "accuracy": float(accuracy_score(y_test, y_pred)),
-            }
-        )
-
-        X_train_trns = pipeline[:-1].transform(X_train)
-        active_cat_features = [
-            feature for feature in cat_features if feature in X_train_trns.columns
-        ]
-        train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
-        fi_vals = pipeline[-1].get_feature_importance(train_pool)
-        fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
-        mlflow.log_metrics(feature_importance_metrics(fi))
-        fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
-        fi.plot.barh(ax=ax_fi)
-        ax_fi.set_title("CatBoost Feature Importance")
-        ax_fi.set_xlabel("Importance")
-        ax_fi.grid(zorder=0)
-        ax_fi.set_axisbelow(True)
-        fig_fi.tight_layout()
-        mlflow.log_figure(fig_fi, "feature_importance.png")
-        plt.close(fig_fi)
-
-        cm = confusion_matrix(y_test, y_pred)
-        cmn = confusion_matrix(y_test, y_pred, normalize="true")
-
-        fig_cm, ax_cm = plt.subplots(figsize=(5, 5))
-        ConfusionMatrixDisplay(cm).plot(ax=ax_cm)
-        ax_cm.set_title("Confusion Matrix")
-        fig_cm.tight_layout()
-        mlflow.log_figure(fig_cm, "confusion_matrix.png")
-        plt.close(fig_cm)
-
-        fig_cmn, ax_cmn = plt.subplots(figsize=(5, 5))
-        ConfusionMatrixDisplay(cmn).plot(ax=ax_cmn)
-        ax_cmn.set_title("Confusion Matrix (Normalized)")
-        fig_cmn.tight_layout()
-        mlflow.log_figure(fig_cmn, "confusion_matrix_normalized.png")
-        plt.close(fig_cmn)
-
-        fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
-        RocCurveDisplay.from_predictions(
-            y_test, proba, ax=ax_roc, drop_intermediate=True
-        )
-        ax_roc.set_title("ROC Curve")
-        fig_roc.tight_layout()
-        mlflow.log_figure(fig_roc, "roc_curve.png")
-        plt.close(fig_roc)
-
-        fig_pr, ax_pr = plt.subplots(figsize=(6, 5))
-        PrecisionRecallDisplay.from_predictions(y_test, proba, ax=ax_pr)
-        ax_pr.set_title("Precision-Recall Curve")
-        fig_pr.tight_layout()
-        mlflow.log_figure(fig_pr, "precision_recall_curve.png")
-        plt.close(fig_pr)
-
-        fig_ap, ax_ap = plt.subplots(1, 2, figsize=(12, 5))
-        ax_ap[0].hist(proba[y_test == 1], alpha=0.4, label="Ticketed", bins=100)
-        ax_ap[0].hist(proba[y_test == 0], alpha=0.4, label="Expired", bins=100)
-        ax_ap[0].grid(zorder=0)
-        ax_ap[0].set_axisbelow(True)
-        ax_ap[0].legend(loc="best")
-        ax_ap[0].set_xlabel("Acceptence Probability")
-        ax_ap[0].set_title("Linear Scale")
-        ax_ap[1].hist(proba[y_test == 1], alpha=0.4, label="Ticketed", bins=100)
-        ax_ap[1].hist(proba[y_test == 0], alpha=0.4, label="Expired", bins=100)
-        ax_ap[1].set_yscale("log")
-        ax_ap[1].grid(zorder=0)
-        ax_ap[1].set_axisbelow(True)
-        ax_ap[1].legend(loc="best")
-        ax_ap[1].set_xlabel("Acceptence Probability")
-        ax_ap[1].set_title("Log Scale")
-        fig_ap.tight_layout()
-        mlflow.log_figure(fig_ap, "acceptance_probability.png")
-        plt.close(fig_ap)
-
-        mlflow.sklearn.log_model(pipeline, "pipeline")
+        log_classification_metrics(y_test, y_pred)
+        log_feature_importances(pipeline, X_train, y_train, cat_features)
+        log_evaluation_figures(y_test, y_pred, proba)
+        log_pipeline_model(pipeline)
 
 
 def main():

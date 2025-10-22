@@ -1,7 +1,4 @@
 import os
-import json
-import hashlib
-import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -128,13 +125,13 @@ def load_feature_config(config_path=None):
     ]
 
     outlier = [
-        (name,values["outlier"])
+        (name, values["outlier"])
         for name, values in feature_entries
         if values["include_in_model"] and (values["outlier"] is not None)
     ]
 
     bins = [
-        (name,values["bins"])
+        (name, values["bins"])
         for name, values in feature_entries
         if values["include_in_model"] and values["categorical"] and (values["bins"] is not None)
     ]
@@ -150,227 +147,17 @@ def load_feature_config(config_path=None):
         "bins": bins,
     }
 
-
-def _format_bins(bins):
-    if not bins:
-        return None
-    if "interval" in bins:
-        return {
-            "type": "interval",
-            "min": bins.get("min"),
-            "max": bins.get("max"),
-            "interval": bins.get("interval"),
-        }
-    if "nsteps" in bins:
-        return {
-            "type": "nsteps",
-            "min": bins.get("min"),
-            "max": bins.get("max"),
-            "nsteps": bins.get("nsteps"),
-        }
-    return bins
-
-
-def _format_outlier(outlier):
-    if not outlier:
-        return None
-    return {key: outlier[key] for key in ("min", "max") if key in outlier}
-
-
-def summarize_feature_transformations(feature_config):
-    """Summarize model features and their transformations for MLflow logging.
-
-    Parameters
-    ----------
-    feature_config : Mapping[str, Any]
-        Loaded feature configuration dictionary.
-
-    Returns
-    -------
-    list[dict]
-        A deterministic list of feature metadata dictionaries describing the
-        transformations applied to every feature that participates in the
-        model.
-    """
-
-    metadata = feature_config.get("feature_metadata", {})
-    summary = []
-    for feature_name in sorted(metadata):
-        values = metadata[feature_name]
-        if not values.get("include_in_model", False):
-            continue
-
-        transformations = []
-        impute_value = values.get("impute_value")
-        impute_median = values.get("impute_median", False)
-
-        if impute_value is not None:
-            transformations.append({"type": "impute_value", "value": impute_value})
-            transformations.append({"type": "missing_indicator"})
-        elif impute_median:
-            transformations.append({"type": "impute_median"})
-            transformations.append({"type": "missing_indicator"})
-
-        outlier = _format_outlier(values.get("outlier"))
-        if outlier:
-            transformations.append({"type": "outlier_capper", "params": outlier})
-
-        bins = _format_bins(values.get("bins"))
-        if bins:
-            transformations.append({"type": "discretiser", "params": bins})
-
-        if values.get("categorical", False):
-            transformations.append({"type": "catboost_categorical"})
-
-        if not transformations:
-            transformations.append({"type": "passthrough"})
-
-        summary.append(
-            {
-                "feature": feature_name,
-                "derived": bool(values.get("derived", False)),
-                "categorical": bool(values.get("categorical", False)),
-                "impute_value": impute_value,
-                "impute_median": bool(impute_median),
-                "outlier": outlier,
-                "bins": bins,
-                "transformations": transformations,
-            }
-        )
-
-    return summary
-
-
-def feature_config_fingerprint(feature_summary):
-    """Create a stable fingerprint for a feature configuration summary."""
-
-    encoded = json.dumps(feature_summary, sort_keys=True)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-
-def feature_summary_markdown(feature_summary):
-    """Render a markdown table describing the feature summary."""
-
-    if not feature_summary:
-        return "No features are configured for this run."
-
-    header = [
-        "| Feature | Derived | Categorical | Transformations |",
-        "| --- | --- | --- | --- |",
-    ]
-    rows = []
-    for item in feature_summary:
-        transforms = []
-        for transform in item["transformations"]:
-            if transform["type"] in {"impute_value", "outlier_capper", "discretiser"}:
-                detail = transform.copy()
-                detail_type = detail.pop("type")
-                transforms.append(f"**{detail_type}**: {json.dumps(detail, sort_keys=True)}")
-            elif transform["type"] == "impute_median":
-                transforms.append("**impute_median**")
-            elif transform["type"] == "missing_indicator":
-                transforms.append("missing_indicator")
-            elif transform["type"] == "catboost_categorical":
-                transforms.append("catboost_categorical")
-            else:
-                transforms.append(transform["type"])
-        rows.append(
-            "| {feature} | {derived} | {categorical} | {transforms} |".format(
-                feature=item["feature"],
-                derived="✅" if item["derived"] else "",
-                categorical="✅" if item["categorical"] else "",
-                transforms="<br>".join(transforms),
-            )
-        )
-
-    return "\n".join(header + rows)
-
-
-def _sanitize_feature_name(name):
-    return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
-
-
-def feature_parameters_for_mlflow(feature_summary):
-    """Flatten feature summary for MLflow parameter logging."""
-
-    params = {}
-    for item in feature_summary:
-        feature_name = item["feature"]
-        prefix = f"feature_{_sanitize_feature_name(feature_name)}"
-
-        transforms = []
-        for transform in item["transformations"]:
-            base_descriptor = transform["type"]
-            payload = {
-                key: value
-                for key, value in transform.items()
-                if key != "type" and value is not None
-            }
-            if payload:
-                payload_json = json.dumps(
-                    payload, sort_keys=True, separators=(",", ":")
-                )
-                transforms.append(f"{base_descriptor}:{payload_json}")
-            else:
-                transforms.append(base_descriptor)
-
-        if transforms:
-            params[f"{prefix}__transformations"] = " | ".join(transforms)
-
-        if item.get("derived"):
-            params[f"{prefix}__derived"] = "true"
-
-        params[f"{prefix}__categorical"] = "true" if item.get("categorical") else "false"
-
-        if item.get("impute_value") is not None:
-            params[f"{prefix}__impute_value"] = str(item["impute_value"])
-
-        if item.get("impute_median"):
-            params[f"{prefix}__impute_median"] = "true"
-
-        outlier = item.get("outlier")
-        if outlier:
-            params[f"{prefix}__outlier"] = json.dumps(
-                outlier, sort_keys=True, separators=(",", ":")
-            )
-
-        bins = item.get("bins")
-        if bins:
-            params[f"{prefix}__bins"] = json.dumps(
-                bins, sort_keys=True, separators=(",", ":")
-            )
-
-    return params
-
-
-def feature_importance_metrics(importances, prefix="feature_importance"):
-    """Prepare MLflow metric names for feature importances.
-
-    Parameters
-    ----------
-    importances : Mapping[str, float] or pandas.Series
-        Per-feature importance values indexed by feature name.
-    prefix : str, default "feature_importance"
-        Prefix to prepend to the sanitized feature name.
-
-    Returns
-    -------
-    dict[str, float]
-        Dictionary mapping MLflow-safe metric keys to float importances.
-    """
-
-    metrics = {}
-    for feature_name, value in importances.items():
-        if value is None:
-            continue
-        metric_name = f"{_sanitize_feature_name(str(feature_name))}_{prefix}"
-        metrics[metric_name] = float(value)
-
-    return metrics
-
-
 _DEFAULT_FEATURE_CONFIG = load_feature_config()
 # pre_features = _DEFAULT_FEATURE_CONFIG["pre_features"]
 # features = _DEFAULT_FEATURE_CONFIG["features"]
 # cat_features = _DEFAULT_FEATURE_CONFIG["cat_features"]
 # feature_metadata = _DEFAULT_FEATURE_CONFIG["feature_metadata"]
+
+# Re-export MLflow-related helpers from the tracking module for backwards compatibility.
+from .tracking import (  # noqa: E402
+    feature_config_fingerprint,
+    feature_importance_metrics,
+    feature_parameters_for_mlflow,
+    feature_summary_markdown,
+    summarize_feature_transformations,
+)
