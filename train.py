@@ -5,9 +5,11 @@ import mlflow
 import pyarrow.dataset as ds
 import sklearn
 from bid_predictor.bid_predictor import build_pipeline
-from bid_predictor.feature_config import load_feature_config
+from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
 from bid_predictor.tracking import (
     log_classification_metrics,
+    log_classification_metrics_by_time,
+    log_prob_examples,
     log_evaluation_figures,
     log_feature_config_artifacts,
     log_feature_importances,
@@ -60,7 +62,7 @@ def prepare_features(data, pre_features, testing=True):
     available_pre_features = [
         feature for feature in pre_features if feature in data.columns
     ]
-    selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
+    selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status", "id", "decision_timestamp"]))
 
     if testing:
         cutoff = "2023-08-01"
@@ -69,29 +71,46 @@ def prepare_features(data, pre_features, testing=True):
         ][selection_columns]
     else:
         cutoff = "2025-05-01"
-        yX_test = data[data.travel_date >= cutoff][selection_columns]
-    yX_train = data[data.travel_date < cutoff][selection_columns]
+        yX_test = data.loc[data.travel_date >= cutoff,selection_columns]
+    yX_train = data.loc[data.travel_date < cutoff,selection_columns]
 
-    X_train, X_test = yX_train[available_pre_features], yX_test[available_pre_features]
+    X_train, X_test = yX_train.loc[:,available_pre_features], yX_test.loc[:,available_pre_features]
     y_train = (yX_train["offer_status"] == "TICKETED").astype(int)
     y_test = (yX_test["offer_status"] == "TICKETED").astype(int)
-    return X_train, X_test, y_train, y_test
+
+    yX_test.loc[:,"offer_status"] = "Rejected"
+    yX_test.loc[y_test==1,"offer_status"] = "Accepted"
+
+    yX_test = yX_test.set_index(_GROUPBY_KEY_FEATURES)# + ["current_timestamp"])
+    # yX_test = yX_test.sort_index()
+
+    yX_test["Bid #"] = (
+        yX_test
+        .groupby(level=_GROUPBY_KEY_FEATURES[:-1], observed=True)["id"]
+        .transform(lambda s: pd.factorize(s)[0] + 1)
+        .astype(int)
+        .apply(lambda n: f"Bid {n}")
+    )
+
+    return X_train, X_test, y_train, y_test, yX_test
 
 
 def train_and_log_model(
-    X_train,
-    X_test,
-    y_train,
-    y_test,
+    data,
     feature_config,
     args,
 ):
     cat_features = list(feature_config["cat_features"])
     features = list(feature_config["features"])
+    pre_features = feature_config["pre_features"]
 
     var_args = vars(args)
-
+    testing = var_args.pop("testing")
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+
+    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
+
+
     mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
@@ -129,7 +148,12 @@ def train_and_log_model(
 
         proba = pipeline.predict_proba(X_test)[:, 1]
         y_pred = (proba >= 0.5).astype(int)
+
+        bid_prob_test_results["Acceptance Probability"] = proba
+
         log_classification_metrics(y_test, y_pred)
+        log_classification_metrics_by_time(bid_prob_test_results)
+        log_prob_examples(bid_prob_test_results)
         log_feature_importances(pipeline, X_train, y_train, cat_features)
         log_evaluation_figures(y_test, y_pred, proba)
         log_pipeline_model(pipeline)
@@ -166,15 +190,9 @@ def main():
 
     args = parse_args()
     feature_config = load_feature_config(args.feature_config)
-    pre_features = feature_config["pre_features"]
-    testing = vars(args).pop("testing")
 
-    X_train, X_test, y_train, y_test = prepare_features(data, pre_features, testing)
     train_and_log_model(
-        X_train,
-        X_test,
-        y_train,
-        y_test,
+        data,
         feature_config,
         args,
     )

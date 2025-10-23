@@ -60,7 +60,11 @@ def _parse_feature_spec(values):
             )
 
         normalized = {
-            field: metadata.get(field, default) if field not in _FEATURE_BOOLEAN_FIELDS else bool(metadata.get(field, default))
+            field: (
+                metadata.get(field, default)
+                if field not in _FEATURE_BOOLEAN_FIELDS
+                else bool(metadata.get(field, default))
+            )
             for field, default in _FEATURE_FIELDS.items()
         }
         parsed.append((name, normalized))
@@ -133,9 +137,11 @@ def load_feature_config(config_path=None):
     bins = [
         (name, values["bins"])
         for name, values in feature_entries
-        if values["include_in_model"] and values["categorical"] and (values["bins"] is not None)
+        if values["include_in_model"]
+        and values["categorical"]
+        and (values["bins"] is not None)
     ]
-    
+
     return {
         "pre_features": pre_features,
         "features": selected_features,
@@ -146,6 +152,7 @@ def load_feature_config(config_path=None):
         "outlier": outlier,
         "bins": bins,
     }
+
 
 _DEFAULT_FEATURE_CONFIG = load_feature_config()
 # pre_features = _DEFAULT_FEATURE_CONFIG["pre_features"]

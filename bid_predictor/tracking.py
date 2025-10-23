@@ -9,6 +9,7 @@ from typing import Iterable, Mapping, Sequence
 
 import mlflow
 import pandas as pd
+import numpy as np
 from catboost import Pool
 import matplotlib.pyplot as plt
 from sklearn.metrics import (
@@ -20,6 +21,7 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+from .feature_config import _GROUPBY_KEY_FEATURES
 
 
 class MlflowCallback(object):
@@ -174,7 +176,7 @@ def feature_parameters_for_mlflow(feature_summary: Sequence[Mapping]):
     params = {}
     for item in feature_summary:
         feature_name = item["feature"]
-        prefix = f"feature_{_sanitize_feature_name(feature_name)}"
+        prefix = f"ft_{_sanitize_feature_name(feature_name)}"
 
         transforms = []
         for transform in item["transformations"]:
@@ -193,44 +195,35 @@ def feature_parameters_for_mlflow(feature_summary: Sequence[Mapping]):
                 transforms.append(base_descriptor)
 
         if transforms:
-            params[f"{prefix}__transformations"] = " | ".join(transforms)
-
-        if item.get("derived"):
-            params[f"{prefix}__derived"] = "true"
-
-        params[f"{prefix}__categorical"] = "true" if item.get("categorical") else "false"
+            params[f"{prefix}_transformations"] = " | ".join(transforms)
 
         if item.get("impute_value") is not None:
-            params[f"{prefix}__impute_value"] = str(item["impute_value"])
+            params[f"{prefix}_impute_value"] = str(item["impute_value"])
 
         if item.get("impute_median"):
-            params[f"{prefix}__impute_median"] = "true"
+            params[f"{prefix}_impute_median"] = "true"
 
         outlier = item.get("outlier")
         if outlier:
-            params[f"{prefix}__outlier"] = json.dumps(
-                outlier, sort_keys=True, separators=(",", ":")
-            )
+            for k, v in outlier.items():
+                params[f"{prefix}_outlier_{k}"] = v
 
         bins = item.get("bins")
         if bins:
-            params[f"{prefix}__bins"] = json.dumps(
-                bins, sort_keys=True, separators=(",", ":")
-            )
+            for k, v in bins.items():
+                params[f"{prefix}_bins_{k}"] = v
 
     return params
 
 
-def feature_importance_metrics(
-    importances: Mapping[str, float], prefix: str = "feature_importance"
-):
+def feature_importance_metrics(importances: Mapping[str, float], prefix: str = "fi"):
     """Prepare MLflow metric names for feature importances."""
 
     metrics = {}
     for feature_name, value in importances.items():
         if value is None:
             continue
-        metric_name = f"{_sanitize_feature_name(str(feature_name))}_{prefix}"
+        metric_name = f"{prefix}_{_sanitize_feature_name(str(feature_name))}"
         metrics[metric_name] = float(value)
 
     return metrics
@@ -281,7 +274,8 @@ def log_feature_config_artifacts(feature_config: Mapping[str, Mapping]):
             "feature_fingerprint": fingerprint,
             "feature_count": len(feature_summary),
             "feature_transformations": ";".join(
-                f"{name}:{count}" for name, count in sorted(transformation_counts.items())
+                f"{name}:{count}"
+                for name, count in sorted(transformation_counts.items())
             ),
         }
     )
@@ -384,12 +378,16 @@ def log_evaluation_figures(y_true, y_pred, proba):
     _log_acceptance_probability_histograms(y_true, proba)
 
 
-def log_feature_importances(pipeline, X_train, y_train, categorical_features: Iterable[str]):
+def log_feature_importances(
+    pipeline, X_train, y_train, categorical_features: Iterable[str]
+):
     """Log feature importances and associated plots to MLflow."""
 
     X_train_transformed = pipeline[:-1].transform(X_train)
     active_cat_features = [
-        feature for feature in categorical_features if feature in X_train_transformed.columns
+        feature
+        for feature in categorical_features
+        if feature in X_train_transformed.columns
     ]
     train_pool = Pool(X_train_transformed, y_train, cat_features=active_cat_features)
     fi_vals = pipeline[-1].get_feature_importance(train_pool)
@@ -406,6 +404,178 @@ def log_feature_importances(pipeline, X_train, y_train, categorical_features: It
     fig_fi.tight_layout()
     mlflow.log_figure(fig_fi, "feature_importance.png")
     plt.close(fig_fi)
+
+
+def log_classification_metrics_by_time(df, window_h=1, stride_h=1):
+    # sliding window metrics on test set
+    # adjustable stride (hours) for sliding windows
+    if not isinstance(stride_h, int) or stride_h <= 0:
+        raise ValueError("stride_h must be a positive integer")
+
+    suffix = "departure"
+    suffix = "decision"
+
+    df = df.copy()
+    df["pred"] = (df["Acceptance Probability"] > 0.5).astype(int)
+    df["actual"] = (df["offer_status"] == "Accepted").astype(int)
+    df[f"hours_before_{suffix}"] = (
+        pd.to_datetime(df[f"{suffix}_timestamp"])
+        - pd.to_datetime(df["current_timestamp"])
+    ).dt.total_seconds() / 3600.0
+
+    start_h = int(np.floor(df[f"hours_before_{suffix}"].min()))
+    end_h = int(np.ceil(df[f"hours_before_{suffix}"].max()))
+
+    # ensure at least one window
+    last_start = end_h - window_h
+    starts = range(start_h, last_start + 1) if last_start >= start_h else [start_h]
+
+    rows = []
+    # rebuild starts using the stride
+    starts = (
+        range(start_h, last_start + 1, stride_h) if last_start >= start_h else [start_h]
+    )
+    for s in starts:
+        e = s + window_h
+        sub = df[
+            (df[f"hours_before_{suffix}"] >= s) & (df[f"hours_before_{suffix}"] < e)
+        ]
+        if sub.empty:
+            rows.append(
+                {
+                    "start_hour": s,
+                    "end_hour": e,
+                    "n": 0,
+                    "accuracy": np.nan,
+                    "recall": np.nan,
+                    "precision": np.nan,
+                }
+            )
+            continue
+        y_true = sub["actual"]
+        y_pred = sub["pred"]
+        rows.append(
+            {
+                "start_hour": s,
+                "end_hour": e,
+                "n": len(sub),
+                "accuracy": accuracy_score(y_true, y_pred),
+                "recall": recall_score(y_true, y_pred, zero_division=0),
+                "precision": precision_score(y_true, y_pred, zero_division=0),
+            }
+        )
+
+    metrics = pd.DataFrame(rows)
+    metrics[f"hour_before_{suffix}"] = (metrics.start_hour + metrics.end_hour) / 2
+
+    # metrics = metrics.iloc[:-2]#[(metrics_6h.index<50)&(metrics_6h.index>30)]
+
+    fig_m, ax_m = plt.subplots(2, 2, figsize=(12, 10))
+
+    plt.figure(figsize=(12, 10))
+    metrics.n.plot(ax=ax_m[0][0])
+    ax_m[0][0].set_xlabel("Hours Until Decision")
+    ax_m[0][0].set_title("Number of Active Bids")
+    ax_m[0][0].grid(zorder=0)
+    ax_m[0][0].set_axisbelow(True)
+
+    metrics.accuracy.plot(ax=ax_m[0][1])
+    ax_m[0][1].set_xlabel("Hours Until Decision")
+    ax_m[0][1].set_title("Accuracy")
+    ax_m[0][1].grid(zorder=0)
+    ax_m[0][1].set_axisbelow(True)
+
+    metrics.recall.plot(ax=ax_m[1][0])
+    ax_m[1][0].set_xlabel("Hours Until Decision")
+    ax_m[1][0].set_title("Recall")
+    ax_m[1][0].grid(zorder=0)
+    ax_m[1][0].set_axisbelow(True)
+
+    metrics.precision.plot(ax=ax_m[1][1])
+    ax_m[1][1].set_xlabel("Hours Until Decision")
+    ax_m[1][1].set_title("Precision")
+    ax_m[1][1].grid(zorder=0)
+    ax_m[1][1].set_axisbelow(True)
+    fig_m.tight_layout()
+
+    mlflow.log_figure(fig_m, f"classification_metrics_utill_{suffix}_time.png")
+    plt.close(fig_m)
+
+
+def log_prob_examples(df):
+    bid_attr_cols = [
+        "Bid #",
+        "offer_status",
+        "usd_base_amount",
+        "item_count",
+        "fare_class",
+        "time_until_departure",
+    ]
+
+    df["time_until_departure"] = df.departure_timestamp - df.current_timestamp
+
+    cnts_snap = (
+        df.reset_index()[_GROUPBY_KEY_FEATURES]
+        .drop_duplicates()
+        .groupby(_GROUPBY_KEY_FEATURES[:-1], observed=True)
+        .size()
+    )
+
+    cand = cnts_snap.reset_index(name="n")
+    cand = cand[(cand["n"] >= 5) & (cand["n"] < 10)]
+
+    sampled = (
+        cand.groupby("carrier_code", observed=True)
+        .apply(
+            lambda g: g.sample(n=min(5, len(g)), random_state=10), include_groups=True
+        )
+        .reset_index(drop=True)
+    )
+
+    # create auctions list of tuples (carrier_code, flight_number, travel_date, upgrade_type)
+    auctions = [
+        tuple(x)
+        for x in sampled[
+            ["carrier_code", "flight_number", "travel_date", "upgrade_type"]
+        ].values
+    ]
+
+    for auc in auctions:
+        acc_prob = df.loc[auc, bid_attr_cols + ["Acceptance Probability"]]
+        acc_prob = (
+            acc_prob.reset_index()
+            .set_index(bid_attr_cols)["Acceptance Probability"]
+            .unstack()
+            .T
+        )
+        acc_prob.columns = [" - ".join(map(str, c)) for c in acc_prob.columns]
+        acc_prob.index = acc_prob.index.round("h")
+
+        seats_avail = (
+            df.loc[auc, ["seats_available", "time_until_departure"]]
+            .reset_index()[["time_until_departure", "seats_available"]]
+            .drop_duplicates()
+            .set_index("time_until_departure")
+        )
+        seats_avail.index = seats_avail.index.round("h")
+
+        fig_p, ax_p = plt.subplots(figsize=(10, 8))
+        acc_prob.plot.bar(ax=ax_p, zorder=1, alpha=0.9)
+        ax_s = seats_avail.plot(ax=ax_p, secondary_y=True)
+        # ax_p.set_ylim(0,1)
+        ax_p.legend(loc="upper center", bbox_to_anchor=(0.5, -0.35), ncol=2)
+        ax_s.set_ylabel("Available Seats")
+        # draw grid behind the bars
+        ax_p.set_axisbelow(True)
+        ax_p.grid()
+        ax_p.set_title(auc[0] + auc[1] + ", " + str(auc[2].date()) + ", " + auc[3])
+        fig_p.tight_layout()
+
+        mlflow.log_figure(
+            fig_p,
+            f"bid-acceptance-prob-examples/{'-'.join((auc[0]+auc[1], str(auc[2].date()), auc[3]))}.png",
+        )
+        plt.close(fig_p)
 
 
 def log_pipeline_model(pipeline, artifact_path: str = "pipeline"):
