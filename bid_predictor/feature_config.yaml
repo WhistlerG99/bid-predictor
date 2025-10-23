@@ -22,7 +22,8 @@ features:
     bins: 
       min: 0
       max: 5
-      nsteps: 121
+      nsteps: 76
+      # nsteps: 121
     include_in_model: true
     derived: true
 

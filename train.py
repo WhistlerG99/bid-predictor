@@ -44,10 +44,11 @@ def parse_args():
     p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
+    p.add_argument("--testing", action="store_true")
     return p.parse_args()
 
 
-def prepare_features(data, pre_features):
+def prepare_features(data, pre_features, testing=True):
     data = data[
         data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")
     ]
@@ -61,7 +62,6 @@ def prepare_features(data, pre_features):
     ]
     selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
 
-    testing = True
     if testing:
         cutoff = "2023-08-01"
         yX_test = data[
@@ -167,8 +167,9 @@ def main():
     args = parse_args()
     feature_config = load_feature_config(args.feature_config)
     pre_features = feature_config["pre_features"]
+    testing = vars(args).pop("testing")
 
-    X_train, X_test, y_train, y_test = prepare_features(data, pre_features)
+    X_train, X_test, y_train, y_test = prepare_features(data, pre_features, testing)
     train_and_log_model(
         X_train,
         X_test,
