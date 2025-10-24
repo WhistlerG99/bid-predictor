@@ -409,6 +409,7 @@ def main() -> None:
         "devices": args.devices,
         "random_seed": args.random_state,
         "logging_level": "Silent",
+        "custom_metric": ["AUC"],
     }
 
     records: List[Dict[str, Any]] = []
