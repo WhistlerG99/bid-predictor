@@ -376,10 +376,11 @@ def _cross_validate_with_eval(
         try:
             fold_score = scorer(model, X_val_fold, y_val_fold)
         except ValueError as exc:
+            response_method = getattr(scorer, "_response_method", None)
             if (
-                scorer._response_method == "predict_proba"
-                and hasattr(model, "predict_proba")
+                hasattr(model, "predict_proba")
                 and "response_method=predict_proba" in str(exc)
+                and response_method in {None, "auto", "predict_proba"}
             ):
                 y_pred = model.predict_proba(X_val_fold)
                 if y_pred.ndim == 2 and y_pred.shape[1] == 2:
