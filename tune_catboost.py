@@ -397,6 +397,31 @@ def _split_indices(
     return X_train_fold, X_val_fold, y_train_fold, y_val_fold
 
 
+def _call_prediction_interface(model, method: str, X_val):
+    """Call ``method`` on the fitted estimator while avoiding pipeline warnings."""
+
+    if hasattr(model, "steps"):
+        Xt = X_val
+        for _, transformer in model.steps[:-1]:
+            if transformer in (None, "passthrough"):
+                continue
+            if hasattr(transformer, "transform"):
+                Xt = transformer.transform(Xt)
+            elif callable(transformer):
+                Xt = transformer(Xt)
+            else:
+                raise AttributeError(
+                    "Pipeline step does not expose a transform method"
+                )
+
+        final_estimator = model.steps[-1][1]
+        predictor = getattr(final_estimator, method)
+        return predictor(Xt)
+
+    predictor = getattr(model, method)
+    return predictor(X_val)
+
+
 def _score_fold(model, scorer, X_val_fold, y_val_fold) -> float:
     """Evaluate a fitted estimator on the validation fold.
 
@@ -412,7 +437,7 @@ def _score_fold(model, scorer, X_val_fold, y_val_fold) -> float:
 
     if needs_proba:
         try:
-            y_pred = model.predict_proba(X_val_fold)
+            y_pred = _call_prediction_interface(model, "predict_proba", X_val_fold)
         except AttributeError as exc:
             raise ValueError(
                 "Scorer requires predict_proba but estimator lacks it"
@@ -420,19 +445,19 @@ def _score_fold(model, scorer, X_val_fold, y_val_fold) -> float:
         if y_pred.ndim == 2 and y_pred.shape[1] == 2:
             y_pred = y_pred[:, 1]
     elif needs_threshold:
-        proba = getattr(model, "predict_proba", None)
-        if callable(proba):
-            y_pred = proba(X_val_fold)
+        try:
+            y_pred = _call_prediction_interface(model, "predict_proba", X_val_fold)
             if y_pred.ndim == 2 and y_pred.shape[1] == 2:
                 y_pred = y_pred[:, 1]
-        else:
-            decision = getattr(model, "decision_function", None)
-            if callable(decision):
-                y_pred = decision(X_val_fold)
-            else:
-                y_pred = model.predict(X_val_fold)
+        except AttributeError:
+            try:
+                y_pred = _call_prediction_interface(
+                    model, "decision_function", X_val_fold
+                )
+            except AttributeError:
+                y_pred = _call_prediction_interface(model, "predict", X_val_fold)
     else:
-        y_pred = model.predict(X_val_fold)
+        y_pred = _call_prediction_interface(model, "predict", X_val_fold)
 
     return float(
         scorer._sign * scorer._score_func(y_val_fold, y_pred, **scorer._kwargs)
