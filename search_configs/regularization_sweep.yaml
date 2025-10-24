@@ -6,7 +6,9 @@ catboost:
   bagging_temperature: [0.0, 0.5, 1.0]
   subsample: [0.7, 0.9]
 transform:
-  impute_value:
-    days_to_departure: [0, 1]
   bins:
-    fare_brand: [8, 12]
+    usd_base_amount:
+      - {min: 0, max: 1700, interval: 20}
+      - {min: 0, max: 1700, interval: 40}
+  outlier:
+    num_offers: [{max: 12}, {max: 16}]

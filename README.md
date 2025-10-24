@@ -68,15 +68,19 @@ python tune_catboost.py --feature-config path/to/feature_config.yaml
 Provide a custom search space by passing a YAML or JSON file via
 `--search-config`. Several ready-to-use examples live in `search_configs/`:
 
-- `baseline.yaml`: lightweight sweep over depth, learning rate, and simple
-  outlier handling.
+- `baseline.yaml`: lightweight sweep over depth, learning rate, and basic
+  seat-availability imputation and `item_count` caps.
 - `regularization_sweep.yaml`: emphasizes regularization knobs such as
-  `l2_leaf_reg`, subsampling, and bagging temperature.
-- `feature_transform.yaml`: coordinates feature-engineering overrides (imputation
-  and outlier settings) with CatBoost hyperparameters.
-- `gpu_quickstart.yaml`: slim GPU-friendly grid for rapid experimentation on
-  graphics hardware.
-- `wide_grid.yaml`: broader search including class weighting and border counts.
+  `l2_leaf_reg`, subsampling, and bagging temperature alongside alternative
+  `usd_base_amount` binning and `num_offers` limits.
+- `feature_transform.yaml`: coordinates CatBoost hyperparameters with
+  `seats_available` imputation, plus `item_count`/`num_offers` outlier settings
+  and different bin widths for `usd_base_amount`.
+- `gpu_quickstart.yaml`: slim GPU-friendly grid that experiments with
+  `seats_available` binning for rapid graphics-hardware iterations.
+- `wide_grid.yaml`: broader search including class weighting, border counts, and
+  several feature transformation combinations for `seats_available`,
+  `item_count`, and `num_offers`.
 
 Example invocation using one of the presets and exporting the results to CSV:
 

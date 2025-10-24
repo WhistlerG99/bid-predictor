@@ -6,8 +6,11 @@ catboost:
   random_strength: [0.0, 2.0]
 transform:
   impute_median:
-    historical_load_factor: [true]
-  impute_value:
-    competitor_price_gap: [0.0, 5.0]
+    seats_available: [false, true]
   outlier:
-    bid_price: [{method: 'iqr', factor: 1.2}, {method: 'quantile', lower: 0.01, upper: 0.99}]
+    item_count: [{max: 5}, {max: 7}]
+    num_offers: [{max: 12}, {max: 16}]
+  bins:
+    usd_base_amount:
+      - {min: 0, max: 1700, interval: 20}
+      - {min: 0, max: 1700, interval: 50}

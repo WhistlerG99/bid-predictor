@@ -1,4 +1,4 @@
-# Compact grid exploring learning rate and depth variations.
+# Compact grid exploring learning rate, depth, and basic feature cleanup.
 catboost:
   iterations: [200, 400]
   depth: [6, 8]
@@ -8,4 +8,4 @@ transform:
   impute_median:
     seats_available: [false, true]
   outlier:
-    price_paid: [{method: 'iqr', factor: 1.5}, {method: 'zscore', threshold: 3.0}]
+    item_count: [{max: 5}, {max: 8}]

@@ -7,7 +7,7 @@ catboost:
   learning_rate: [0.1, 0.2]
   rsm: [0.7, 1.0]
 transform:
-  impute_value:
-    seats_available: [0]
   bins:
-    fare_brand: [16]
+    seats_available:
+      - {min: -1, max: 30, interval: 1}
+      - {min: -1, max: 30, interval: 2}

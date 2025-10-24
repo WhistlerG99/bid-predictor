@@ -6,10 +6,15 @@ catboost:
   scale_pos_weight: [1.0, 1.5, 2.0]
   border_count: [128, 254]
 transform:
-  impute_value:
-    price_paid: [0]
-    competitor_price_gap: [0.0]
   impute_median:
-    days_to_departure: [false, true]
+    seats_available: [false, true]
   outlier:
-    bid_price: [{method: 'zscore', threshold: 2.5}]
+    item_count: [{max: 5}, {max: 6}, {max: 8}]
+    num_offers: [{max: 12}, {max: 14}, {max: 16}]
+  bins:
+    seats_available:
+      - {min: -1, max: 30, interval: 1}
+      - {min: -1, max: 30, interval: 2}
+    usd_base_amount:
+      - {min: 0, max: 1700, interval: 10}
+      - {min: 0, max: 1700, interval: 50}
