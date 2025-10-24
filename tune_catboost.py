@@ -398,7 +398,11 @@ def _split_indices(
 
 
 def _call_prediction_interface(model, method: str, X_val):
-    """Call ``method`` on the fitted estimator while avoiding pipeline warnings."""
+    """Invoke the requested prediction interface on a fitted estimator."""
+
+    if hasattr(model, method):
+        predictor = getattr(model, method)
+        return predictor(X_val)
 
     if hasattr(model, "steps"):
         Xt = X_val
