@@ -362,6 +362,42 @@ def _split_indices(
     return X_train_fold, X_val_fold, y_train_fold, y_val_fold
 
 
+def _score_fold(model, scorer, X_val_fold, y_val_fold) -> float:
+    """Evaluate a fitted estimator on the validation fold.
+
+    The helper mirrors scikit-learn's scorer logic but bypasses the internal
+    response-method validation that incorrectly flags the CatBoost pipeline as a
+    regressor. We rely on the scorer's factory arguments to determine the
+    expected prediction interface.
+    """
+
+    factory_args = getattr(scorer, "_factory_args", {})
+    needs_proba = factory_args.get("needs_proba", False)
+    needs_threshold = factory_args.get("needs_threshold", False)
+
+    if needs_proba:
+        if not hasattr(model, "predict_proba"):
+            raise ValueError("Scorer requires predict_proba but estimator lacks it")
+        y_pred = model.predict_proba(X_val_fold)
+        if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+            y_pred = y_pred[:, 1]
+    elif needs_threshold:
+        if hasattr(model, "decision_function"):
+            y_pred = model.decision_function(X_val_fold)
+        elif hasattr(model, "predict_proba"):
+            y_pred = model.predict_proba(X_val_fold)
+            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                y_pred = y_pred[:, 1]
+        else:
+            y_pred = model.predict(X_val_fold)
+    else:
+        y_pred = model.predict(X_val_fold)
+
+    return float(
+        scorer._sign * scorer._score_func(y_val_fold, y_pred, **scorer._kwargs)
+    )
+
+
 def _cross_validate_with_eval(
     estimator, X: Any, y: Any, cv: StratifiedKFold, scoring: str
 ) -> List[float]:
@@ -373,24 +409,8 @@ def _cross_validate_with_eval(
 
         model = clone(estimator)
         model.fit(X_train_fold, y_train_fold, eval_set=(X_val_fold, y_val_fold))
-        try:
-            fold_score = scorer(model, X_val_fold, y_val_fold)
-        except ValueError as exc:
-            response_method = getattr(scorer, "_response_method", None)
-            if (
-                hasattr(model, "predict_proba")
-                and "response_method=predict_proba" in str(exc)
-                and response_method in {None, "auto", "predict_proba"}
-            ):
-                y_pred = model.predict_proba(X_val_fold)
-                if y_pred.ndim == 2 and y_pred.shape[1] == 2:
-                    y_pred = y_pred[:, 1]
-                fold_score = scorer._sign * scorer._score_func(
-                    y_val_fold, y_pred, **scorer._kwargs
-                )
-            else:
-                raise
-        scores.append(float(fold_score))
+        fold_score = _score_fold(model, scorer, X_val_fold, y_val_fold)
+        scores.append(fold_score)
 
     return scores
 
