@@ -1,0 +1,15 @@
+# Wider search across depth, learning rate, and class weights.
+catboost:
+  iterations: [300, 600]
+  depth: [5, 7, 9]
+  learning_rate: [0.03, 0.06, 0.12]
+  scale_pos_weight: [1.0, 1.5, 2.0]
+  border_count: [128, 254]
+transform:
+  impute_value:
+    price_paid: [0]
+    competitor_price_gap: [0.0]
+  impute_median:
+    days_to_departure: [false, true]
+  outlier:
+    bid_price: [{method: 'zscore', threshold: 2.5}]

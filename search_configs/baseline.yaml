@@ -1,0 +1,11 @@
+# Compact grid exploring learning rate and depth variations.
+catboost:
+  iterations: [200, 400]
+  depth: [6, 8]
+  learning_rate: [0.05, 0.1]
+  l2_leaf_reg: [3.0, 5.0]
+transform:
+  impute_median:
+    seats_available: [false, true]
+  outlier:
+    price_paid: [{method: 'iqr', factor: 1.5}, {method: 'zscore', threshold: 3.0}]

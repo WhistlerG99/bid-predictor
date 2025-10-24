@@ -1,0 +1,12 @@
+# Focused grid over regularization-related parameters.
+catboost:
+  iterations: [300]
+  depth: [5, 7]
+  l2_leaf_reg: [1.0, 3.0, 7.0]
+  bagging_temperature: [0.0, 0.5, 1.0]
+  subsample: [0.7, 0.9]
+transform:
+  impute_value:
+    days_to_departure: [0, 1]
+  bins:
+    fare_brand: [8, 12]

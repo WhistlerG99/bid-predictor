@@ -1,0 +1,13 @@
+# Example tuned for fast GPU experiments with shallow trees.
+catboost:
+  task_type: ['GPU']
+  devices: ['0']
+  iterations: [150, 250]
+  depth: [4, 6]
+  learning_rate: [0.1, 0.2]
+  rsm: [0.7, 1.0]
+transform:
+  impute_value:
+    seats_available: [0]
+  bins:
+    fare_brand: [16]

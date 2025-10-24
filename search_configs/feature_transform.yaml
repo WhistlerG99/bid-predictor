@@ -1,0 +1,13 @@
+# Demonstrates toggling feature engineering switches alongside CatBoost params.
+catboost:
+  iterations: [250]
+  depth: [6]
+  learning_rate: [0.08]
+  random_strength: [0.0, 2.0]
+transform:
+  impute_median:
+    historical_load_factor: [true]
+  impute_value:
+    competitor_price_gap: [0.0, 5.0]
+  outlier:
+    bid_price: [{method: 'iqr', factor: 1.2}, {method: 'quantile', lower: 0.01, upper: 0.99}]
