@@ -185,20 +185,22 @@ def add_flight_code(data):
     required = {"carrier_code", "flight_number"}
     if not required.issubset(data.columns):
         return data
-    data["flight_code"] = (
-        data["carrier_code"].astype(str) + data["flight_number"].astype(str)
+    result = data.copy()
+    result.loc[:, "flight_code"] = (
+        result["carrier_code"].astype(str) + result["flight_number"].astype(str)
     ).astype("category")
-    return data
+    return result
 
 
 def add_days_b4_depart(data):
     required = {"departure_timestamp", "current_timestamp"}
     if not required.issubset(data.columns):
         return data
-    data["days_before_departure"] = (
-        data.departure_timestamp - data.current_timestamp
+    result = data.copy()
+    result.loc[:, "days_before_departure"] = (
+        result.departure_timestamp - result.current_timestamp
     ).apply(lambda y: y.total_seconds()) / (60 * 60 * 24)
-    return data
+    return result
 
 
 def add_group_features(data):
@@ -325,21 +327,26 @@ class ColumnReducer(BaseEstimator, TransformerMixin):
     """Selects the configured columns from a pandas DataFrame."""
 
     def __init__(self, selected_features):
-        self.selected_features = list(selected_features)
+        # Store the parameter without modification so the estimator remains
+        # cloneable by scikit-learn utilities such as ``clone`` or
+        # ``cross_validate``. Any derived lists are created lazily in ``fit``.
+        self.selected_features = selected_features
         self._existing_features = None
 
     def fit(self, X, y=None):
+        selected_features = list(self.selected_features)
+
         if isinstance(X, pd.DataFrame):
             self._existing_features = [
-                feature for feature in self.selected_features if feature in X.columns
+                feature for feature in selected_features if feature in X.columns
             ]
             self._existing_features += [
                 feature + "_na"
-                for feature in self.selected_features
+                for feature in selected_features
                 if feature + "_na" in X.columns
             ]
         else:
-            self._existing_features = list(self.selected_features)
+            self._existing_features = selected_features
         return self
 
     def transform(self, X):
@@ -349,7 +356,9 @@ class ColumnReducer(BaseEstimator, TransformerMixin):
         features = self._existing_features
         if features is None:
             features = [
-                feature for feature in self.selected_features if feature in X.columns
+                feature
+                for feature in list(self.selected_features)
+                if feature in X.columns
             ]
         else:
             features = [feature for feature in features if feature in X.columns]
