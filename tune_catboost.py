@@ -15,6 +15,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
 
+try:
+    import mlflow  # type: ignore
+except Exception:  # pragma: no cover - mlflow is optional during import
+    mlflow = None
+
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
@@ -47,6 +52,36 @@ _DEFAULT_SEARCH_CONFIG = {
         "bins": {},
     },
 }
+
+
+def _patch_mlflow_metric_logging() -> None:
+    if mlflow is None:
+        return
+
+    log_metric = getattr(mlflow, "log_metric", None)
+    if log_metric is None:
+        return
+
+    if getattr(log_metric, "_bid_predictor_wrapped", False):
+        return
+
+    permission_state = {"warned": False}
+
+    def safe_log_metric(*args, **kwargs):  # type: ignore[no-untyped-def]
+        try:
+            return log_metric(*args, **kwargs)
+        except PermissionError as exc:  # pragma: no cover - environment specific
+            if not permission_state["warned"]:
+                permission_state["warned"] = True
+                print(
+                    "Warning: Skipping MLflow metric logging due to permission error. "
+                    f"Details: {exc}",
+                    flush=True,
+                )
+            return None
+
+    safe_log_metric._bid_predictor_wrapped = True  # type: ignore[attr-defined]
+    mlflow.log_metric = safe_log_metric  # type: ignore[assignment]
 
 
 def parse_args() -> argparse.Namespace:
@@ -417,6 +452,8 @@ def _cross_validate_with_eval(
 
 def main() -> None:
     args = parse_args()
+
+    _patch_mlflow_metric_logging()
 
     search_cfg = load_search_config(args.search_config)
     param_grid_dict = build_parameter_grid(search_cfg)
