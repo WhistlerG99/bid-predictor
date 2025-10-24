@@ -185,20 +185,22 @@ def add_flight_code(data):
     required = {"carrier_code", "flight_number"}
     if not required.issubset(data.columns):
         return data
-    data["flight_code"] = (
-        data["carrier_code"].astype(str) + data["flight_number"].astype(str)
+    result = data.copy()
+    result.loc[:, "flight_code"] = (
+        result["carrier_code"].astype(str) + result["flight_number"].astype(str)
     ).astype("category")
-    return data
+    return result
 
 
 def add_days_b4_depart(data):
     required = {"departure_timestamp", "current_timestamp"}
     if not required.issubset(data.columns):
         return data
-    data["days_before_departure"] = (
-        data.departure_timestamp - data.current_timestamp
+    result = data.copy()
+    result.loc[:, "days_before_departure"] = (
+        result.departure_timestamp - result.current_timestamp
     ).apply(lambda y: y.total_seconds()) / (60 * 60 * 24)
-    return data
+    return result
 
 
 def add_group_features(data):

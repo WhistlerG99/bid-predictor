@@ -411,20 +411,25 @@ def _score_fold(model, scorer, X_val_fold, y_val_fold) -> float:
     needs_threshold = factory_args.get("needs_threshold", False)
 
     if needs_proba:
-        if not hasattr(model, "predict_proba"):
-            raise ValueError("Scorer requires predict_proba but estimator lacks it")
-        y_pred = model.predict_proba(X_val_fold)
+        try:
+            y_pred = model.predict_proba(X_val_fold)
+        except AttributeError as exc:
+            raise ValueError(
+                "Scorer requires predict_proba but estimator lacks it"
+            ) from exc
         if y_pred.ndim == 2 and y_pred.shape[1] == 2:
             y_pred = y_pred[:, 1]
     elif needs_threshold:
-        if hasattr(model, "decision_function"):
+        try:
             y_pred = model.decision_function(X_val_fold)
-        elif hasattr(model, "predict_proba"):
-            y_pred = model.predict_proba(X_val_fold)
-            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
-                y_pred = y_pred[:, 1]
-        else:
-            y_pred = model.predict(X_val_fold)
+        except AttributeError:
+            try:
+                y_pred = model.predict_proba(X_val_fold)
+            except AttributeError:
+                y_pred = model.predict(X_val_fold)
+            else:
+                if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                    y_pred = y_pred[:, 1]
     else:
         y_pred = model.predict(X_val_fold)
 
