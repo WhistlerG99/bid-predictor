@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.utils.validation import check_is_fitted
 from sklearn.pipeline import Pipeline
 from .transform import (
     ArbitraryOutlierCapperCustom,
@@ -33,6 +34,7 @@ class CBC(BaseEstimator, ClassifierMixin):
         self.cb_params = cb_params
         self.cat_features = cat_features
         self._cb = None
+        self.is_fitted_ = False
 
     # sklearn will route eval_set here if we request it on the instance
     def fit(self, X, y=None, eval_set=None, **fit_kwargs):
@@ -51,17 +53,22 @@ class CBC(BaseEstimator, ClassifierMixin):
             callbacks=self._callbacks,
             **fit_kwargs,
         )
+        self.is_fitted_ = True
+        for attr in ("classes_", "n_classes_", "feature_names_in_", "n_features_in_"):
+            if hasattr(self._cb, attr):
+                setattr(self, attr, getattr(self._cb, attr))
         return self
 
     def __sklearn_is_fitted__(self):
-        if hasattr(self, "_cb") and self._cb is not None:
-            return self._cb.is_fitted()
+        return bool(getattr(self, "_cb", None) is not None and self._cb.is_fitted())
 
     # pass-through predict/predict_proba
     def predict(self, X):
+        check_is_fitted(self, attributes=["is_fitted_"])
         return self._cb.predict(X)
 
     def predict_proba(self, X):
+        check_is_fitted(self, attributes=["is_fitted_"])
         return self._cb.predict_proba(X)
 
     def get_feature_importance(self, *args, **kwargs):
@@ -77,6 +84,8 @@ class CBC(BaseEstimator, ClassifierMixin):
         if "cat_features" in params:
             self.cat_features = params.pop("cat_features")
         self.cb_params.update(params)
+        self._cb = None
+        self.is_fitted_ = False
         return self
 
 
