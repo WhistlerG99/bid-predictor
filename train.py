@@ -2,22 +2,21 @@ import os
 import argparse
 import pandas as pd
 import mlflow
-from catboost import Pool
 import pyarrow.dataset as ds
-import matplotlib.pyplot as plt
 import sklearn
-from sklearn.metrics import (
-    precision_score,
-    recall_score,
-    accuracy_score,
-    confusion_matrix,
-    ConfusionMatrixDisplay,
-    RocCurveDisplay,
-    PrecisionRecallDisplay,
-)
 from bid_predictor.bid_predictor import build_pipeline
-from bid_predictor.feature_config import load_feature_config
-from bid_predictor.tracking import start_catboost_mlflow_stream
+from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
+from bid_predictor.tracking import (
+    log_classification_metrics,
+    log_classification_metrics_by_time,
+    log_prob_examples,
+    log_evaluation_figures,
+    log_feature_config_artifacts,
+    log_feature_importances,
+    log_pipeline_model,
+    log_run_parameters,
+    start_catboost_mlflow_stream,
+)
 from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
 
@@ -47,10 +46,11 @@ def parse_args():
     p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
+    p.add_argument("--testing", action="store_true")
     return p.parse_args()
 
 
-def prepare_features(data, pre_features):
+def prepare_features(data, pre_features, testing=True):
     data = data[
         data.departure_timestamp - data.current_timestamp < pd.to_timedelta("5d")
     ]
@@ -62,9 +62,8 @@ def prepare_features(data, pre_features):
     available_pre_features = [
         feature for feature in pre_features if feature in data.columns
     ]
-    selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status"]))
+    selection_columns = list(dict.fromkeys(available_pre_features + ["offer_status", "id", "decision_timestamp"]))
 
-    testing = True
     if testing:
         cutoff = "2023-08-01"
         yX_test = data[
@@ -72,29 +71,46 @@ def prepare_features(data, pre_features):
         ][selection_columns]
     else:
         cutoff = "2025-05-01"
-        yX_test = data[data.travel_date >= cutoff][selection_columns]
-    yX_train = data[data.travel_date < cutoff][selection_columns]
+        yX_test = data.loc[data.travel_date >= cutoff,selection_columns]
+    yX_train = data.loc[data.travel_date < cutoff,selection_columns]
 
-    X_train, X_test = yX_train[available_pre_features], yX_test[available_pre_features]
+    X_train, X_test = yX_train.loc[:,available_pre_features], yX_test.loc[:,available_pre_features]
     y_train = (yX_train["offer_status"] == "TICKETED").astype(int)
     y_test = (yX_test["offer_status"] == "TICKETED").astype(int)
-    return X_train, X_test, y_train, y_test
+
+    yX_test.loc[:,"offer_status"] = "Rejected"
+    yX_test.loc[y_test==1,"offer_status"] = "Accepted"
+
+    yX_test = yX_test.set_index(_GROUPBY_KEY_FEATURES)# + ["current_timestamp"])
+    # yX_test = yX_test.sort_index()
+
+    yX_test["Bid #"] = (
+        yX_test
+        .groupby(level=_GROUPBY_KEY_FEATURES[:-1], observed=True)["id"]
+        .transform(lambda s: pd.factorize(s)[0] + 1)
+        .astype(int)
+        .apply(lambda n: f"Bid {n}")
+    )
+
+    return X_train, X_test, y_train, y_test, yX_test
 
 
 def train_and_log_model(
-    X_train,
-    X_test,
-    y_train,
-    y_test,
+    data,
     feature_config,
     args,
 ):
     cat_features = list(feature_config["cat_features"])
     features = list(feature_config["features"])
+    pre_features = feature_config["pre_features"]
 
     var_args = vars(args)
-
+    testing = var_args.pop("testing")
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+
+    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
+
+
     mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
@@ -102,12 +118,8 @@ def train_and_log_model(
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
-        mlflow.log_param("n_features", len(features))
-        mlflow.log_param("features", ",".join(features))
-        mlflow.log_param("categorical_features", ",".join(cat_features))
-        mlflow.log_param("train_rows", len(X_train))
-        mlflow.log_param("test_rows", len(X_test))
-        mlflow.log_params(var_args)
+        log_run_parameters(var_args, features, cat_features, len(X_train), len(X_test))
+        log_feature_config_artifacts(feature_config)
 
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)
@@ -136,85 +148,15 @@ def train_and_log_model(
 
         proba = pipeline.predict_proba(X_test)[:, 1]
         y_pred = (proba >= 0.5).astype(int)
-        mlflow.log_metrics(
-            {
-                "precision": float(precision_score(y_test, y_pred)),
-                "recall": float(recall_score(y_test, y_pred)),
-                "accuracy": float(accuracy_score(y_test, y_pred)),
-            }
-        )
 
-        X_train_trns = pipeline[:-1].transform(X_train)
-        active_cat_features = [
-            feature for feature in cat_features if feature in X_train_trns.columns
-        ]
-        train_pool = Pool(X_train_trns, y_train, cat_features=active_cat_features)
-        fi_vals = pipeline[-1].get_feature_importance(train_pool)
-        fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
-        fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
-        fi.plot.barh(ax=ax_fi)
-        ax_fi.set_title("CatBoost Feature Importance")
-        ax_fi.set_xlabel("Importance")
-        ax_fi.grid(zorder=0)
-        ax_fi.set_axisbelow(True)
-        fig_fi.tight_layout()
-        mlflow.log_figure(fig_fi, "feature_importance.png")
-        plt.close(fig_fi)
+        bid_prob_test_results["Acceptance Probability"] = proba
 
-        cm = confusion_matrix(y_test, y_pred)
-        cmn = confusion_matrix(y_test, y_pred, normalize="true")
-
-        fig_cm, ax_cm = plt.subplots(figsize=(5, 5))
-        ConfusionMatrixDisplay(cm).plot(ax=ax_cm)
-        ax_cm.set_title("Confusion Matrix")
-        fig_cm.tight_layout()
-        mlflow.log_figure(fig_cm, "confusion_matrix.png")
-        plt.close(fig_cm)
-
-        fig_cmn, ax_cmn = plt.subplots(figsize=(5, 5))
-        ConfusionMatrixDisplay(cmn).plot(ax=ax_cmn)
-        ax_cmn.set_title("Confusion Matrix (Normalized)")
-        fig_cmn.tight_layout()
-        mlflow.log_figure(fig_cmn, "confusion_matrix_normalized.png")
-        plt.close(fig_cmn)
-
-        fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
-        RocCurveDisplay.from_predictions(
-            y_test, proba, ax=ax_roc, drop_intermediate=True
-        )
-        ax_roc.set_title("ROC Curve")
-        fig_roc.tight_layout()
-        mlflow.log_figure(fig_roc, "roc_curve.png")
-        plt.close(fig_roc)
-
-        fig_pr, ax_pr = plt.subplots(figsize=(6, 5))
-        PrecisionRecallDisplay.from_predictions(y_test, proba, ax=ax_pr)
-        ax_pr.set_title("Precision-Recall Curve")
-        fig_pr.tight_layout()
-        mlflow.log_figure(fig_pr, "precision_recall_curve.png")
-        plt.close(fig_pr)
-
-        fig_ap, ax_ap = plt.subplots(1, 2, figsize=(12, 5))
-        ax_ap[0].hist(proba[y_test == 1], alpha=0.4, label="Ticketed", bins=100)
-        ax_ap[0].hist(proba[y_test == 0], alpha=0.4, label="Expired", bins=100)
-        ax_ap[0].grid(zorder=0)
-        ax_ap[0].set_axisbelow(True)
-        ax_ap[0].legend(loc="best")
-        ax_ap[0].set_xlabel("Acceptence Probability")
-        ax_ap[0].set_title("Linear Scale")
-        ax_ap[1].hist(proba[y_test == 1], alpha=0.4, label="Ticketed", bins=100)
-        ax_ap[1].hist(proba[y_test == 0], alpha=0.4, label="Expired", bins=100)
-        ax_ap[1].set_yscale("log")
-        ax_ap[1].grid(zorder=0)
-        ax_ap[1].set_axisbelow(True)
-        ax_ap[1].legend(loc="best")
-        ax_ap[1].set_xlabel("Acceptence Probability")
-        ax_ap[1].set_title("Log Scale")
-        fig_ap.tight_layout()
-        mlflow.log_figure(fig_ap, "acceptance_probability.png")
-        plt.close(fig_ap)
-
-        mlflow.sklearn.log_model(pipeline, "pipeline")
+        log_classification_metrics(y_test, y_pred)
+        log_classification_metrics_by_time(bid_prob_test_results)
+        log_prob_examples(bid_prob_test_results)
+        log_feature_importances(pipeline, X_train, y_train, cat_features)
+        log_evaluation_figures(y_test, y_pred, proba)
+        log_pipeline_model(pipeline)
 
 
 def main():
@@ -248,14 +190,9 @@ def main():
 
     args = parse_args()
     feature_config = load_feature_config(args.feature_config)
-    pre_features = feature_config["pre_features"]
 
-    X_train, X_test, y_train, y_test = prepare_features(data, pre_features)
     train_and_log_model(
-        X_train,
-        X_test,
-        y_train,
-        y_test,
+        data,
         feature_config,
         args,
     )

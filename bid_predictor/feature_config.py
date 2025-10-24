@@ -1,7 +1,8 @@
 import os
-import yaml
 from functools import lru_cache
 from pathlib import Path
+
+import yaml
 
 _FEATURE_CONFIG_ENV = "BID_PREDICTOR_FEATURE_CONFIG"
 _GROUPBY_KEY_FEATURES = [
@@ -59,7 +60,11 @@ def _parse_feature_spec(values):
             )
 
         normalized = {
-            field: metadata.get(field, default) if field not in _FEATURE_BOOLEAN_FIELDS else bool(metadata.get(field, default))
+            field: (
+                metadata.get(field, default)
+                if field not in _FEATURE_BOOLEAN_FIELDS
+                else bool(metadata.get(field, default))
+            )
             for field, default in _FEATURE_FIELDS.items()
         }
         parsed.append((name, normalized))
@@ -124,17 +129,19 @@ def load_feature_config(config_path=None):
     ]
 
     outlier = [
-        (name,values["outlier"])
+        (name, values["outlier"])
         for name, values in feature_entries
         if values["include_in_model"] and (values["outlier"] is not None)
     ]
 
     bins = [
-        (name,values["bins"])
+        (name, values["bins"])
         for name, values in feature_entries
-        if values["include_in_model"] and values["categorical"] and (values["bins"] is not None)
+        if values["include_in_model"]
+        and values["categorical"]
+        and (values["bins"] is not None)
     ]
-    
+
     return {
         "pre_features": pre_features,
         "features": selected_features,
@@ -152,3 +159,12 @@ _DEFAULT_FEATURE_CONFIG = load_feature_config()
 # features = _DEFAULT_FEATURE_CONFIG["features"]
 # cat_features = _DEFAULT_FEATURE_CONFIG["cat_features"]
 # feature_metadata = _DEFAULT_FEATURE_CONFIG["feature_metadata"]
+
+# Re-export MLflow-related helpers from the tracking module for backwards compatibility.
+from .tracking import (  # noqa: E402
+    feature_config_fingerprint,
+    feature_importance_metrics,
+    feature_parameters_for_mlflow,
+    feature_summary_markdown,
+    summarize_feature_transformations,
+)
