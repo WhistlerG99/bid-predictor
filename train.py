@@ -110,7 +110,6 @@ def train_and_log_model(
 
     X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
 
-
     mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
@@ -130,12 +129,10 @@ def train_and_log_model(
             "sagemaker_notebook",
             "sagemaker_job",
             "sagemaker_terminal",
-        ):  # == "sagemaker_job":
+        ):
             train_dir = pipeline[-1].cb_params.get(
                 "train_dir", "/opt/ml/output/catboost"
             )
-            # train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
-
             # start streaming before fit
             stop_stream = start_catboost_mlflow_stream(train_dir, run.info.run_id)
 

@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 import yaml
+import sklearn
 from sklearn.model_selection import ParameterGrid, StratifiedKFold, cross_validate
 
 from bid_predictor.bid_predictor import build_pipeline
@@ -464,4 +465,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    sklearn.set_config(enable_metadata_routing=True)
     main()
