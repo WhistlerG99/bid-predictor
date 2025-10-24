@@ -7,7 +7,7 @@ catboost:
   border_count: [128, 254]
 transform:
   impute_median:
-    seats_available: [false, true]
+    seats_available: [true]
   outlier:
     item_count: [{max: 5}, {max: 6}, {max: 8}]
     num_offers: [{max: 12}, {max: 14}, {max: 16}]

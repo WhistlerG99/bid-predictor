@@ -6,7 +6,7 @@ catboost:
   random_strength: [0.0, 2.0]
 transform:
   impute_median:
-    seats_available: [false, true]
+    seats_available: [true]
   outlier:
     item_count: [{max: 5}, {max: 7}]
     num_offers: [{max: 12}, {max: 16}]

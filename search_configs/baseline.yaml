@@ -6,6 +6,6 @@ catboost:
   l2_leaf_reg: [3.0, 5.0]
 transform:
   impute_median:
-    seats_available: [false, true]
+    seats_available: [true]
   outlier:
     item_count: [{max: 5}, {max: 8}]
