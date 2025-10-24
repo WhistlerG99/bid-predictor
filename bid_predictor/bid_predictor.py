@@ -113,7 +113,7 @@ def build_pipeline(feature_config=None, **kw):
             )
 
     if "impute_value" in feature_config:
-        imputer_dict={}
+        imputer_dict = {}
         for feature, value in feature_config.get("impute_value", []):
             imputer_dict[feature] = value
 
@@ -130,7 +130,7 @@ def build_pipeline(feature_config=None, **kw):
         variables = []
         for feature in feature_config.get("impute_median", []):
             variables.append(feature)
-        
+
         if variables:
             steps.append(
                 (
@@ -144,7 +144,7 @@ def build_pipeline(feature_config=None, **kw):
 
     if "outlier" in feature_config:
         min_capping_dict, max_capping_dict = {}, {}
-        for feature, outlier in feature_config.get("outlier",[]):
+        for feature, outlier in feature_config.get("outlier", []):
             if "max" in outlier:
                 max_capping_dict[feature] = outlier["max"]
             if "min" in outlier:
@@ -165,7 +165,7 @@ def build_pipeline(feature_config=None, **kw):
                     ),
                 )
             )
-    
+
     steps.append(("quantile", quantiles_transformer))
 
     if "bins" in feature_config:
