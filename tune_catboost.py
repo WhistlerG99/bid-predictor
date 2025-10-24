@@ -373,7 +373,22 @@ def _cross_validate_with_eval(
 
         model = clone(estimator)
         model.fit(X_train_fold, y_train_fold, eval_set=(X_val_fold, y_val_fold))
-        fold_score = scorer(model, X_val_fold, y_val_fold)
+        try:
+            fold_score = scorer(model, X_val_fold, y_val_fold)
+        except ValueError as exc:
+            if (
+                scorer._response_method == "predict_proba"
+                and hasattr(model, "predict_proba")
+                and "response_method=predict_proba" in str(exc)
+            ):
+                y_pred = model.predict_proba(X_val_fold)
+                if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                    y_pred = y_pred[:, 1]
+                fold_score = scorer._sign * scorer._score_func(
+                    y_val_fold, y_pred, **scorer._kwargs
+                )
+            else:
+                raise
         scores.append(float(fold_score))
 
     return scores
