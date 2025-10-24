@@ -31,7 +31,7 @@ class CBC(BaseEstimator, ClassifierMixin):
         else:
             self._callbacks = [MlflowCallback()]
         self.cb_params = cb_params
-        self.cat_features = list(cat_features)
+        self.cat_features = cat_features
         self._cb = None
 
     # sklearn will route eval_set here if we request it on the instance
@@ -75,7 +75,7 @@ class CBC(BaseEstimator, ClassifierMixin):
 
     def set_params(self, **params):
         if "cat_features" in params:
-            self.cat_features = list(params.pop("cat_features"))
+            self.cat_features = params.pop("cat_features")
         self.cb_params.update(params)
         return self
 
