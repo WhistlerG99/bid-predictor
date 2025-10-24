@@ -420,16 +420,17 @@ def _score_fold(model, scorer, X_val_fold, y_val_fold) -> float:
         if y_pred.ndim == 2 and y_pred.shape[1] == 2:
             y_pred = y_pred[:, 1]
     elif needs_threshold:
-        try:
-            y_pred = model.decision_function(X_val_fold)
-        except AttributeError:
-            try:
-                y_pred = model.predict_proba(X_val_fold)
-            except AttributeError:
-                y_pred = model.predict(X_val_fold)
+        proba = getattr(model, "predict_proba", None)
+        if callable(proba):
+            y_pred = proba(X_val_fold)
+            if y_pred.ndim == 2 and y_pred.shape[1] == 2:
+                y_pred = y_pred[:, 1]
+        else:
+            decision = getattr(model, "decision_function", None)
+            if callable(decision):
+                y_pred = decision(X_val_fold)
             else:
-                if y_pred.ndim == 2 and y_pred.shape[1] == 2:
-                    y_pred = y_pred[:, 1]
+                y_pred = model.predict(X_val_fold)
     else:
         y_pred = model.predict(X_val_fold)
 
