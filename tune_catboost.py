@@ -20,7 +20,9 @@ import pandas as pd
 import pyarrow.dataset as ds
 import yaml
 from sklearn import set_config
-from sklearn.model_selection import ParameterGrid, StratifiedKFold, cross_validate
+from sklearn.base import clone
+from sklearn.metrics import get_scorer
+from sklearn.model_selection import ParameterGrid, StratifiedKFold
 
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.feature_config import _ensure_groupby_keys, load_feature_config
@@ -338,6 +340,45 @@ def summarize_transform_params(overrides: Mapping[str, Dict[str, Any]]) -> Dict[
     return summary
 
 
+def _split_indices(
+    X: Any, y: Any, indices: Tuple[np.ndarray, np.ndarray]
+) -> Tuple[Any, Any, Any, Any]:
+    train_idx, val_idx = indices
+
+    if hasattr(X, "iloc"):
+        X_train_fold = X.iloc[train_idx]
+        X_val_fold = X.iloc[val_idx]
+    else:
+        X_train_fold = X[train_idx]
+        X_val_fold = X[val_idx]
+
+    if hasattr(y, "iloc"):
+        y_train_fold = y.iloc[train_idx]
+        y_val_fold = y.iloc[val_idx]
+    else:
+        y_train_fold = y[train_idx]
+        y_val_fold = y[val_idx]
+
+    return X_train_fold, X_val_fold, y_train_fold, y_val_fold
+
+
+def _cross_validate_with_eval(
+    estimator, X: Any, y: Any, cv: StratifiedKFold, scoring: str
+) -> List[float]:
+    scorer = get_scorer(scoring)
+    scores: List[float] = []
+
+    for split in cv.split(X, y):
+        X_train_fold, X_val_fold, y_train_fold, y_val_fold = _split_indices(X, y, split)
+
+        model = clone(estimator)
+        model.fit(X_train_fold, y_train_fold, eval_set=(X_val_fold, y_val_fold))
+        fold_score = scorer(model, X_val_fold, y_val_fold)
+        scores.append(float(fold_score))
+
+    return scores
+
+
 def main() -> None:
     args = parse_args()
 
@@ -390,24 +431,9 @@ def main() -> None:
             **{**static_cat_params, **cat_params},
         )
 
-        scores = cross_validate(
-            pipeline,
-            X_train,
-            y_train,
-            scoring=args.scoring,
-            cv=cv,
-            n_jobs=1,
-            return_train_score=False,
-        )
-        score_key = f"test_{args.scoring}"
-        if score_key not in scores:
-            available = ", ".join(sorted(scores.keys()))
-            raise KeyError(
-                f"Scoring key '{score_key}' not returned by cross_validate. Available: {available}"
-            )
-
-        mean_score = float(np.mean(scores[score_key]))
-        std_score = float(np.std(scores[score_key]))
+        fold_scores = _cross_validate_with_eval(pipeline, X_train, y_train, cv, args.scoring)
+        mean_score = float(np.mean(fold_scores))
+        std_score = float(np.std(fold_scores))
 
         record: Dict[str, Any] = {
             "mean_score": mean_score,
