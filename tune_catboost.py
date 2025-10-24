@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import warnings
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, MutableMapping, Optional, Tuple
@@ -36,6 +37,16 @@ from train import prepare_features
 
 
 set_config(enable_metadata_routing=True)
+
+warnings.filterwarnings(
+    "ignore",
+    message=(
+        "This Pipeline instance is not fitted yet. Call 'fit' with appropriate arguments "
+        "before using other methods such as transform, predict, etc. This will raise an "
+        "error in 1.8 instead of the current warning."
+    ),
+    category=FutureWarning,
+)
 
 
 _DEFAULT_SEARCH_CONFIG = {
