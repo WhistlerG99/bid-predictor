@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import warnings
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -172,12 +173,27 @@ def parse_args() -> argparse.Namespace:
         help="Optional path to write a CSV summary of all evaluated configurations.",
     )
     parser.add_argument(
+        "--results-json",
+        type=str,
+        default=None,
+        help="Optional path to write the best configuration summary as JSON.",
+    )
+    parser.add_argument(
         "--best-config-out",
         type=str,
         default=None,
         help=(
             "Optional path to write the feature configuration (YAML) for the best "
             "observed score."
+        ),
+    )
+    parser.add_argument(
+        "--mlflow-experiment",
+        type=str,
+        default=None,
+        help=(
+            "Optional MLflow experiment name to use when logging tuning metrics. "
+            "Ignored when MLflow is unavailable."
         ),
     )
     return parser.parse_args()
@@ -187,6 +203,23 @@ def main() -> None:
     args = parse_args()
 
     _patch_mlflow_metric_logging()
+
+    mlflow_context = nullcontext()
+    mlflow_enabled = False
+    if mlflow is not None:
+        try:
+            if args.mlflow_experiment:
+                mlflow.set_experiment(args.mlflow_experiment)
+            mlflow_context = mlflow.start_run(run_name="catboost_tuning")
+            mlflow_enabled = True
+        except Exception as exc:  # pragma: no cover - depends on MLflow availability
+            print(
+                "Warning: Failed to initialise MLflow logging. "
+                f"Continuing without MLflow. Details: {exc}",
+                flush=True,
+            )
+            mlflow_context = nullcontext()
+            mlflow_enabled = False
 
     search_cfg = load_search_config(args.search_config)
     search_dimensions = build_search_space(search_cfg)
@@ -230,99 +263,152 @@ def main() -> None:
         "custom_metric": ["AUC"],
     }
 
-    records: List[Dict[str, Any]] = []
-    best_score = float("-inf")
-    best_result: Optional[Dict[str, Any]] = None
-    best_feature_config: Optional[Dict[str, Any]] = None
+    with mlflow_context:
+        records: List[Dict[str, Any]] = []
+        best_score = float("-inf")
+        best_result: Optional[Dict[str, Any]] = None
+        best_feature_config: Optional[Dict[str, Any]] = None
 
-    def _normalize_value(value: Any) -> Any:
-        if isinstance(value, (np.floating,)):
-            return float(value)
-        if isinstance(value, (np.integer,)):
-            return int(value)
-        return value
+        if mlflow_enabled:
+            mlflow.log_param("scoring", args.scoring)
+            mlflow.log_param("cv_splits", args.cv_splits)
+            mlflow.log_param("task_type", args.task_type)
+            mlflow.log_param("devices", args.devices)
+            mlflow.log_param("random_state", args.random_state)
+            mlflow.log_param("total_iterations", total_combinations)
 
-    for idx in range(total_combinations):
-        suggestion = optimizer.ask()
-        combination = {
-            name: _normalize_value(value)
-            for name, value in zip(param_names, suggestion)
-        }
+        def _normalize_value(value: Any) -> Any:
+            if isinstance(value, (np.floating,)):
+                return float(value)
+            if isinstance(value, (np.integer,)):
+                return int(value)
+            return value
 
-        cat_params, transform_overrides = split_combination(combination)
-        cat_params = {key: _normalize_value(value) for key, value in cat_params.items()}
+        def _stringify(value: Any) -> Any:
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value
+            return json.dumps(value, sort_keys=True)
 
-        metadata = clone_feature_metadata(base_metadata)
-        apply_transform_overrides(metadata, transform_overrides)
-        tuned_config = rebuild_feature_config(metadata)
-
-        pipeline = build_pipeline(
-            feature_config=tuned_config,
-            **{**static_cat_params, **cat_params},
-        )
-
-        fold_scores = cross_validate_with_eval(pipeline, X_train, y_train, cv, args.scoring)
-        mean_score = float(np.mean(fold_scores))
-        std_score = float(np.std(fold_scores))
-
-        record: Dict[str, Any] = {
-            "mean_score": mean_score,
-            "std_score": std_score,
-        }
-        for param, value in cat_params.items():
-            record[f"catboost.{param}"] = value
-        record.update(summarize_transform_params(transform_overrides))
-        records.append(record)
-
-        print(
-            f"[{idx + 1}/{total_combinations}] score={mean_score:.4f} ± {std_score:.4f} "
-            f"catboost={cat_params} transforms={transform_overrides}",
-            flush=True,
-        )
-
-        optimizer.tell(suggestion, -mean_score)
-
-        if mean_score > best_score:
-            best_score = mean_score
-            best_result = {
-                "score": mean_score,
-                "std": std_score,
-                "catboost": {**static_cat_params, **cat_params},
-                "transforms": transform_overrides,
+        for idx in range(total_combinations):
+            suggestion = optimizer.ask()
+            combination = {
+                name: _normalize_value(value)
+                for name, value in zip(param_names, suggestion)
             }
-            best_feature_config = tuned_config
 
-    if not records:
-        raise RuntimeError("No parameter combinations were evaluated.")
+            cat_params, transform_overrides = split_combination(combination)
+            cat_params = {key: _normalize_value(value) for key, value in cat_params.items()}
 
-    results_df = pd.DataFrame(records)
-    results_df.sort_values("mean_score", ascending=False, inplace=True)
+            metadata = clone_feature_metadata(base_metadata)
+            apply_transform_overrides(metadata, transform_overrides)
+            tuned_config = rebuild_feature_config(metadata)
 
-    print("\nTop configurations:")
-    print(results_df.head(min(10, len(results_df))).to_string(index=False))
+            pipeline = build_pipeline(
+                feature_config=tuned_config,
+                **{**static_cat_params, **cat_params},
+            )
 
-    if args.output_csv:
-        output_path = Path(args.output_csv)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        results_df.to_csv(output_path, index=False)
-        print(f"Saved results to {output_path}")
+            fold_scores = cross_validate_with_eval(
+                pipeline, X_train, y_train, cv, args.scoring
+            )
+            mean_score = float(np.mean(fold_scores))
+            std_score = float(np.std(fold_scores))
 
-    if args.best_config_out and best_feature_config is not None:
-        config_path = Path(args.best_config_out)
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-        features_yaml = {
-            "features": {
-                name: dict(values)
-                for name, values in best_feature_config["feature_metadata"].items()
+            record: Dict[str, Any] = {
+                "mean_score": mean_score,
+                "std_score": std_score,
             }
-        }
-        with config_path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(features_yaml, fh, sort_keys=True)
-        print(f"Saved best feature configuration to {config_path}")
+            for param, value in cat_params.items():
+                record[f"catboost.{param}"] = value
+            record.update(summarize_transform_params(transform_overrides))
+            records.append(record)
 
-    if best_result is not None:
-        print("\nBest result:")
-        print(json.dumps(best_result, indent=2, sort_keys=True))
+            print(
+                f"[{idx + 1}/{total_combinations}] score={mean_score:.4f} ± {std_score:.4f} "
+                f"catboost={cat_params} transforms={transform_overrides}",
+                flush=True,
+            )
+
+            if mlflow_enabled:
+                mlflow.log_metric("cv_mean_score", mean_score, step=idx)
+                mlflow.log_metric("cv_std_score", std_score, step=idx)
+
+            optimizer.tell(suggestion, -mean_score)
+
+            if mean_score > best_score:
+                best_score = mean_score
+                best_result = {
+                    "score": mean_score,
+                    "std": std_score,
+                    "catboost": {**static_cat_params, **cat_params},
+                    "transforms": transform_overrides,
+                }
+                best_feature_config = tuned_config
+
+        if not records:
+            raise RuntimeError("No parameter combinations were evaluated.")
+
+        results_df = pd.DataFrame(records)
+        results_df.sort_values("mean_score", ascending=False, inplace=True)
+
+        print("\nTop configurations:")
+        print(results_df.head(min(10, len(results_df))).to_string(index=False))
+
+        if args.output_csv:
+            output_path = Path(args.output_csv)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            results_df.to_csv(output_path, index=False)
+            print(f"Saved results to {output_path}")
+            if mlflow_enabled:
+                mlflow.log_artifact(str(output_path))
+
+        if args.best_config_out and best_feature_config is not None:
+            config_path = Path(args.best_config_out)
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            features_yaml = {
+                "features": {
+                    name: dict(values)
+                    for name, values in best_feature_config["feature_metadata"].items()
+                }
+            }
+            with config_path.open("w", encoding="utf-8") as fh:
+                yaml.safe_dump(features_yaml, fh, sort_keys=True)
+            print(f"Saved best feature configuration to {config_path}")
+            if mlflow_enabled:
+                mlflow.log_artifact(str(config_path))
+
+        if best_result is not None:
+            if mlflow_enabled:
+                mlflow.log_metric("best_score", best_result["score"])
+                mlflow.log_metric("best_std", best_result["std"])
+                flat_params = {
+                    f"best.{key}": _stringify(value)
+                    for key, value in {
+                        **{
+                            f"catboost.{param}": val
+                            for param, val in best_result["catboost"].items()
+                        },
+                        **{
+                            key: val for key, val in summarize_transform_params(
+                                best_result["transforms"]
+                            ).items()
+                        },
+                    }.items()
+                }
+                for param, value in flat_params.items():
+                    mlflow.log_param(param, value)
+
+            if args.results_json:
+                json_path = Path(args.results_json)
+                json_path.parent.mkdir(parents=True, exist_ok=True)
+                with json_path.open("w", encoding="utf-8") as fh:
+                    json.dump(best_result, fh, indent=2, sort_keys=True)
+                print(f"Saved best result summary to {json_path}")
+                if mlflow_enabled:
+                    mlflow.log_artifact(str(json_path))
+
+            print("\nBest result:")
+            print(json.dumps(best_result, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
