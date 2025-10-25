@@ -1,13 +1,23 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import StratifiedKFold
 
 skopt = pytest.importorskip("skopt")
 from skopt.space import Categorical, Integer, Real  # type: ignore  # noqa: E402
 
-from bid_predictor.tuning import cross_validation, data_access, feature_tuning, search_config, search_grid
+from bid_predictor.tuning import (
+    cross_validation,
+    data_access,
+    feature_tuning,
+    result_writing,
+    search_config,
+    search_grid,
+)
 from tune_catboost import _normalize_structure, normalize_search_value, stringify_param_value
 
 
@@ -200,3 +210,25 @@ def test_load_training_data_uses_pyarrow(monkeypatch):
     monkeypatch.setattr(data_access.ds, "dataset", lambda path, format: DummyDataset(path, format))
     df = data_access.load_training_data("dummy")
     assert list(df.columns) == ["carrier_code", "fare_class", "seats_available"]
+
+
+def test_result_writing_helpers(tmp_path):
+    df = pd.DataFrame({"mean_score": [0.9], "std_score": [0.01]})
+    csv_path = tmp_path / "results" / "scores.csv"
+    saved_csv = result_writing.write_results_csv(csv_path, df)
+    assert saved_csv.exists()
+
+    feature_config = {
+        "feature_metadata": {"feature": {"include_in_model": True, "derived": False}},
+    }
+    yaml_path = tmp_path / "results" / "best.yaml"
+    saved_yaml = result_writing.write_best_feature_config(yaml_path, feature_config)
+    assert saved_yaml.exists()
+    content = yaml.safe_load(saved_yaml.read_text())
+    assert "features" in content and "feature" in content["features"]
+
+    payload = {"score": 0.9}
+    json_path = tmp_path / "results" / "best.json"
+    saved_json = result_writing.write_best_result_json(json_path, payload)
+    assert saved_json.exists()
+    assert json.loads(saved_json.read_text())["score"] == 0.9

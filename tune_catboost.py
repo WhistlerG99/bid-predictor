@@ -11,14 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import warnings
-from contextlib import nullcontext
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
-
-try:
-    import mlflow  # type: ignore
-except Exception:  # pragma: no cover - mlflow is optional during import
-    mlflow = None
 
 import numpy as np
 import pandas as pd
@@ -40,6 +33,12 @@ from bid_predictor.tuning.feature_tuning import (
 )
 from bid_predictor.tuning.search_config import load_search_config
 from bid_predictor.tuning.search_grid import build_search_space, unwrap_search_value
+from bid_predictor.tuning.mlflow_logging import mlflow_run
+from bid_predictor.tuning.result_writing import (
+    write_best_feature_config,
+    write_best_result_json,
+    write_results_csv,
+)
 from train import prepare_features
 
 
@@ -99,36 +98,6 @@ def stringify_param_value(value: Any) -> Any:
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
     return json.dumps(value, sort_keys=True)
-
-
-def _patch_mlflow_metric_logging() -> None:
-    if mlflow is None:
-        return
-
-    log_metric = getattr(mlflow, "log_metric", None)
-    if log_metric is None:
-        return
-
-    if getattr(log_metric, "_bid_predictor_wrapped", False):
-        return
-
-    permission_state = {"warned": False}
-
-    def safe_log_metric(*args, **kwargs):  # type: ignore[no-untyped-def]
-        try:
-            return log_metric(*args, **kwargs)
-        except PermissionError as exc:  # pragma: no cover - environment specific
-            if not permission_state["warned"]:
-                permission_state["warned"] = True
-                print(
-                    "Warning: Skipping MLflow metric logging due to permission error. "
-                    f"Details: {exc}",
-                    flush=True,
-                )
-            return None
-
-    safe_log_metric._bid_predictor_wrapped = True  # type: ignore[attr-defined]
-    mlflow.log_metric = safe_log_metric  # type: ignore[assignment]
 
 
 def parse_args() -> argparse.Namespace:
@@ -247,25 +216,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
-    _patch_mlflow_metric_logging()
-
-    mlflow_context = nullcontext()
-    mlflow_enabled = False
-    if mlflow is not None:
-        try:
-            if args.mlflow_experiment:
-                mlflow.set_experiment(args.mlflow_experiment)
-            mlflow_context = mlflow.start_run(run_name="catboost_tuning")
-            mlflow_enabled = True
-        except Exception as exc:  # pragma: no cover - depends on MLflow availability
-            print(
-                "Warning: Failed to initialise MLflow logging. "
-                f"Continuing without MLflow. Details: {exc}",
-                flush=True,
-            )
-            mlflow_context = nullcontext()
-            mlflow_enabled = False
-
     search_cfg = load_search_config(args.search_config)
     search_dimensions = build_search_space(search_cfg)
     param_names: Sequence[str] = [name for name, _ in search_dimensions]
@@ -308,19 +258,23 @@ def main() -> None:
         "custom_metric": ["AUC"],
     }
 
-    with mlflow_context:
+    with mlflow_run(args.mlflow_experiment) as mlflow_logger:
         records: List[Dict[str, Any]] = []
         best_score = float("-inf")
         best_result: Optional[Dict[str, Any]] = None
         best_feature_config: Optional[Dict[str, Any]] = None
 
-        if mlflow_enabled:
-            mlflow.log_param("scoring", args.scoring)
-            mlflow.log_param("cv_splits", args.cv_splits)
-            mlflow.log_param("task_type", args.task_type)
-            mlflow.log_param("devices", args.devices)
-            mlflow.log_param("random_state", args.random_state)
-            mlflow.log_param("total_iterations", total_combinations)
+        if mlflow_logger.enabled:
+            mlflow_logger.log_params(
+                {
+                    "scoring": args.scoring,
+                    "cv_splits": args.cv_splits,
+                    "task_type": args.task_type,
+                    "devices": args.devices,
+                    "random_state": args.random_state,
+                    "total_iterations": total_combinations,
+                }
+            )
 
         for idx in range(total_combinations):
             suggestion = optimizer.ask()
@@ -364,9 +318,9 @@ def main() -> None:
                 flush=True,
             )
 
-            if mlflow_enabled:
-                mlflow.log_metric("cv_mean_score", mean_score, step=idx)
-                mlflow.log_metric("cv_std_score", std_score, step=idx)
+            if mlflow_logger.enabled:
+                mlflow_logger.log_metric("cv_mean_score", mean_score, step=idx)
+                mlflow_logger.log_metric("cv_std_score", std_score, step=idx)
 
             optimizer.tell(suggestion, -mean_score)
 
@@ -392,32 +346,21 @@ def main() -> None:
         print(results_df.head(min(10, len(results_df))).to_string(index=False))
 
         if args.output_csv:
-            output_path = Path(args.output_csv)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            results_df.to_csv(output_path, index=False)
+            output_path = write_results_csv(args.output_csv, results_df)
             print(f"Saved results to {output_path}")
-            if mlflow_enabled:
-                mlflow.log_artifact(str(output_path))
+            if mlflow_logger.enabled:
+                mlflow_logger.log_artifact(str(output_path))
 
         if args.best_config_out and best_feature_config is not None:
-            config_path = Path(args.best_config_out)
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            features_yaml = {
-                "features": {
-                    name: dict(values)
-                    for name, values in best_feature_config["feature_metadata"].items()
-                }
-            }
-            with config_path.open("w", encoding="utf-8") as fh:
-                yaml.safe_dump(features_yaml, fh, sort_keys=True)
+            config_path = write_best_feature_config(args.best_config_out, best_feature_config)
             print(f"Saved best feature configuration to {config_path}")
-            if mlflow_enabled:
-                mlflow.log_artifact(str(config_path))
+            if mlflow_logger.enabled:
+                mlflow_logger.log_artifact(str(config_path))
 
         if best_result is not None:
-            if mlflow_enabled:
-                mlflow.log_metric("best_score", best_result["score"])
-                mlflow.log_metric("best_std", best_result["std"])
+            if mlflow_logger.enabled:
+                mlflow_logger.log_metric("best_score", best_result["score"])
+                mlflow_logger.log_metric("best_std", best_result["std"])
                 flat_params = {
                     f"best.{key}": stringify_param_value(value)
                     for key, value in {
@@ -433,19 +376,15 @@ def main() -> None:
                         },
                     }.items()
                 }
-                for param, value in flat_params.items():
-                    mlflow.log_param(param, value)
+                mlflow_logger.log_params(flat_params)
 
             json_ready_result = _normalize_structure(best_result)
 
             if args.results_json:
-                json_path = Path(args.results_json)
-                json_path.parent.mkdir(parents=True, exist_ok=True)
-                with json_path.open("w", encoding="utf-8") as fh:
-                    json.dump(json_ready_result, fh, indent=2, sort_keys=True)
+                json_path = write_best_result_json(args.results_json, json_ready_result)
                 print(f"Saved best result summary to {json_path}")
-                if mlflow_enabled:
-                    mlflow.log_artifact(str(json_path))
+                if mlflow_logger.enabled:
+                    mlflow_logger.log_artifact(str(json_path))
 
             print("\nBest result:")
             print(json.dumps(json_ready_result, indent=2, sort_keys=True))
