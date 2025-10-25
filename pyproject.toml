@@ -36,3 +36,8 @@ dependencies = { file = ["requirements.txt"] }
 # If you ship non-.py files inside bid_predictor/, uncomment:
 [tool.setuptools]
 include-package-data = true
+
+[tool.pytest.ini_options]
+markers = [
+  "integration: Integration tests exercising the end-to-end training and tuning workflows."
+]
