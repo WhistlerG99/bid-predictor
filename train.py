@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import warnings
+import inspect
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Set
 
@@ -24,6 +25,7 @@ from bid_predictor.tracking import (
     start_catboost_mlflow_stream,
 )
 from bid_predictor.utils import detect_execution_environment
+from catboost import CatBoostClassifier
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -48,13 +50,43 @@ if detect_execution_environment()[0] in (
 
 DEFAULT_EXP_NAME = "tests"
 
-CATBOOST_PARAM_NAMES = ("iterations", "depth", "learning_rate", "l2_leaf_reg")
+
+def _introspect_catboost_defaults() -> Dict[str, Any]:
+    signature = inspect.signature(CatBoostClassifier.__init__)
+    defaults: Dict[str, Any] = {}
+    for name, param in signature.parameters.items():
+        if name == "self" or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        defaults[name] = None if param.default is inspect._empty else param.default
+    return defaults
+
+
+_CATBOOST_PARAM_DEFAULTS = _introspect_catboost_defaults()
+CATBOOST_PARAM_NAMES = tuple(_CATBOOST_PARAM_DEFAULTS.keys())
 CATBOOST_FLAG_MAP = {
-    "iterations": "--iterations",
-    "depth": "--depth",
-    "learning_rate": "--learning-rate",
-    "l2_leaf_reg": "--l2-leaf-reg",
+    name: f"--{name.replace('_', '-')}" for name in CATBOOST_PARAM_NAMES
 }
+
+
+def _parse_catboost_cli_value(raw: str | None) -> Any:
+    if raw is None:
+        return None
+    try:
+        value = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return raw
+    return value
+
+
+def _register_catboost_arguments(parser: argparse.ArgumentParser) -> None:
+    for name in CATBOOST_PARAM_NAMES:
+        flag = CATBOOST_FLAG_MAP[name]
+        parser.add_argument(
+            flag,
+            dest=name,
+            type=_parse_catboost_cli_value,
+            default=_CATBOOST_PARAM_DEFAULTS[name],
+        )
 
 
 def _detect_explicit_flags(argv: Iterable[str]) -> Set[str]:
@@ -94,8 +126,6 @@ def _merge_catboost_params(
 ) -> Dict[str, Any]:
     merged = dict(cli_params)
     for key, value in config_params.items():
-        if key not in merged:
-            continue
         if key in explicit_flags:
             continue
         merged[key] = value
@@ -104,16 +134,20 @@ def _merge_catboost_params(
 
 def parse_args():
     p = argparse.ArgumentParser()
-    # CatBoost knobs
-    p.add_argument("--task-type", type=str, default="CPU")  # "GPU" to use GPU
-    p.add_argument("--devices", type=str, default="0")  # "0", "0,1", etc.
-    p.add_argument("--iterations", type=int, default=200)
-    p.add_argument("--depth", type=int, default=6)
-    p.add_argument("--learning-rate", type=float, default=None)
-    p.add_argument("--l2-leaf-reg", type=float, default=3.0)
+    _register_catboost_arguments(p)
+    p.set_defaults(
+        task_type="CPU",
+        devices="0",
+        iterations=200,
+        depth=6,
+        learning_rate=None,
+        l2_leaf_reg=3.0,
+        loss_function="Logloss",
+        auto_class_weights="Balanced",
+        eval_metric="AUC",
+        random_state=42,
+    )
     # your own toggles
-    p.add_argument("--eval-metric", type=str, default="AUC")
-    p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
     p.add_argument("--testing", action="store_true")
