@@ -8,7 +8,7 @@ skopt = pytest.importorskip("skopt")
 from skopt.space import Categorical, Integer, Real  # type: ignore  # noqa: E402
 
 from bid_predictor.tuning import cross_validation, data_access, feature_tuning, search_config, search_grid
-from tune_catboost import normalize_search_value, stringify_param_value
+from tune_catboost import _normalize_structure, normalize_search_value, stringify_param_value
 
 
 class SimpleEstimator(BaseEstimator):
@@ -98,9 +98,13 @@ def test_rebuild_feature_config_respects_overrides():
 
 
 def test_summarize_transform_params_serializes_dicts():
-    overrides = {"outlier": {"feature": {"min": 0, "max": 1}}}
+    overrides = {
+        "outlier": {"feature": {"min": 0, "max": 1}},
+        "impute_median": {"feature": np.bool_(True)},
+    }
     summary = feature_tuning.summarize_transform_params(overrides)
     assert summary["outlier.feature"] == "{\"max\": 1, \"min\": 0}"
+    assert summary["impute_median.feature"] is True
 
 
 def test_normalize_and_stringify_handle_numpy_bool():
@@ -112,6 +116,21 @@ def test_normalize_and_stringify_handle_numpy_bool():
     stringified = stringify_param_value(np.bool_(False))
     assert isinstance(stringified, bool)
     assert stringified is False
+
+
+def test_normalize_structure_recurses_through_collections():
+    payload = {
+        "a": np.int64(5),
+        "b": [np.float32(1.2), {"flag": np.bool_(True)}],
+        "c": {np.int64(1), np.int64(2)},
+    }
+
+    normalized = _normalize_structure(payload)
+
+    assert normalized["a"] == 5 and isinstance(normalized["a"], int)
+    assert isinstance(normalized["b"][0], float)
+    assert normalized["b"][1]["flag"] is True
+    assert normalized["c"] == [1, 2]
 
 
 def test_load_search_config_defaults(tmp_path):

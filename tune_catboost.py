@@ -56,20 +56,44 @@ warnings.filterwarnings(
 )
 
 
-def normalize_search_value(value: Any) -> Any:
-    """Convert optimizer suggestions into plain Python scalars."""
+def _normalize_structure(value: Any) -> Any:
+    """Recursively convert numpy/scientific scalars to built-in Python types."""
+
     value = unwrap_search_value(value)
+
+    if isinstance(value, dict):
+        return {key: _normalize_structure(sub_value) for key, sub_value in value.items()}
+
+    if isinstance(value, list):
+        return [_normalize_structure(item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_normalize_structure(item) for item in value)
+
+    if isinstance(value, set):
+        return sorted(_normalize_structure(item) for item in value)
+
     if isinstance(value, (np.floating,)):
         return float(value)
+
     if isinstance(value, (np.integer,)):
         return int(value)
+
     if isinstance(value, (np.bool_,)):
         return bool(value)
+
     return value
+
+
+def normalize_search_value(value: Any) -> Any:
+    """Convert optimizer suggestions into plain Python scalars."""
+
+    return _normalize_structure(value)
 
 
 def stringify_param_value(value: Any) -> Any:
     """Prepare parameter values for MLflow logging."""
+    value = _normalize_structure(value)
     if isinstance(value, (np.bool_,)):
         value = bool(value)
     if isinstance(value, (str, int, float, bool)) or value is None:
@@ -330,7 +354,7 @@ def main() -> None:
                 "std_score": std_score,
             }
             for param, value in cat_params.items():
-                record[f"catboost.{param}"] = value
+                record[f"catboost.{param}"] = _normalize_structure(value)
             record.update(summarize_transform_params(transform_overrides))
             records.append(record)
 
@@ -348,12 +372,14 @@ def main() -> None:
 
             if mean_score > best_score:
                 best_score = mean_score
-                best_result = {
-                    "score": mean_score,
-                    "std": std_score,
-                    "catboost": {**static_cat_params, **cat_params},
-                    "transforms": transform_overrides,
-                }
+                best_result = _normalize_structure(
+                    {
+                        "score": mean_score,
+                        "std": std_score,
+                        "catboost": {**static_cat_params, **cat_params},
+                        "transforms": transform_overrides,
+                    }
+                )
                 best_feature_config = tuned_config
 
         if not records:
@@ -410,17 +436,19 @@ def main() -> None:
                 for param, value in flat_params.items():
                     mlflow.log_param(param, value)
 
+            json_ready_result = _normalize_structure(best_result)
+
             if args.results_json:
                 json_path = Path(args.results_json)
                 json_path.parent.mkdir(parents=True, exist_ok=True)
                 with json_path.open("w", encoding="utf-8") as fh:
-                    json.dump(best_result, fh, indent=2, sort_keys=True)
+                    json.dump(json_ready_result, fh, indent=2, sort_keys=True)
                 print(f"Saved best result summary to {json_path}")
                 if mlflow_enabled:
                     mlflow.log_artifact(str(json_path))
 
             print("\nBest result:")
-            print(json.dumps(best_result, indent=2, sort_keys=True))
+            print(json.dumps(json_ready_result, indent=2, sort_keys=True))
 
 
 if __name__ == "__main__":
