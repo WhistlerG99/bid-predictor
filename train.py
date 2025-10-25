@@ -1,10 +1,15 @@
 import os
 import argparse
 import warnings
+import inspect
+from ast import literal_eval
+
 import pandas as pd
 import mlflow
 import pyarrow.dataset as ds
 import sklearn
+from catboost import CatBoostClassifier
+
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
 from bid_predictor.tracking import (
@@ -44,18 +49,53 @@ if detect_execution_environment()[0] in (
 DEFAULT_EXP_NAME = "tests"
 
 
+_CATBOOST_DEFAULTS = {
+    "task_type": "CPU",
+    "devices": "0",
+    "iterations": 200,
+    "depth": 6,
+    "learning_rate": None,
+    "l2_leaf_reg": 3.0,
+    "eval_metric": "AUC",
+    "random_state": 42,
+}
+
+
+def _parse_catboost_arg(value):
+    if isinstance(value, str) and value.lower() == "none":
+        return None
+    try:
+        return literal_eval(value)
+    except (ValueError, SyntaxError):
+        return value
+
+
+def _catboost_param_names():
+    signature = inspect.signature(CatBoostClassifier.__init__)
+    return [
+        name
+        for name in signature.parameters
+        if name != "self"
+    ]
+
+
+CATBOOST_PARAM_NAMES = _catboost_param_names()
+
+
 def parse_args():
     p = argparse.ArgumentParser()
-    # CatBoost knobs
-    p.add_argument("--task-type", type=str, default="CPU")  # "GPU" to use GPU
-    p.add_argument("--devices", type=str, default="0")  # "0", "0,1", etc.
-    p.add_argument("--iterations", type=int, default=200)
-    p.add_argument("--depth", type=int, default=6)
-    p.add_argument("--learning-rate", type=float, default=None)
-    p.add_argument("--l2-leaf-reg", type=float, default=3.0)
+    catboost_group = p.add_argument_group("CatBoost hyperparameters")
+    for param_name in CATBOOST_PARAM_NAMES:
+        option_name = f"--{param_name.replace('_', '-')}"
+        default = _CATBOOST_DEFAULTS.get(param_name, None)
+        catboost_group.add_argument(
+            option_name,
+            dest=param_name,
+            type=_parse_catboost_arg,
+            default=default,
+            help=f"Override CatBoost parameter '{param_name}'.",
+        )
     # your own toggles
-    p.add_argument("--eval-metric", type=str, default="AUC")
-    p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
     p.add_argument("--testing", action="store_true")
@@ -116,12 +156,30 @@ def train_and_log_model(
     features = list(feature_config["features"])
     pre_features = feature_config["pre_features"]
 
-    var_args = vars(args)
-    testing = var_args.pop("testing")
-    experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+    args_dict = vars(args).copy()
+    testing = args_dict.pop("testing")
+    experiment_name = args_dict.pop("experiment_name", DEFAULT_EXP_NAME)
+    feature_config_path = args_dict.pop("feature_config", None)
 
-    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
+    catboost_kwargs = {
+        key: value
+        for key, value in args_dict.items()
+        if key in CATBOOST_PARAM_NAMES and value is not None
+    }
 
+    remaining_args = {
+        key: value
+        for key, value in args_dict.items()
+        if key not in CATBOOST_PARAM_NAMES and value is not None
+    }
+    if feature_config_path is not None:
+        remaining_args["feature_config"] = feature_config_path
+    remaining_args["testing"] = testing
+    remaining_args["experiment_name"] = experiment_name
+
+    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(
+        data, pre_features, testing
+    )
 
     mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
@@ -130,11 +188,17 @@ def train_and_log_model(
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
-        log_run_parameters(var_args, features, cat_features, len(X_train), len(X_test))
+        log_run_parameters(
+            {
+                **{k: v for k, v in catboost_kwargs.items() if v is not None},
+                **remaining_args,
+            },
+            features,
+            cat_features,
+            len(X_train),
+            len(X_test),
+        )
         log_feature_config_artifacts(feature_config)
-
-        catboost_kwargs = var_args.copy()
-        catboost_kwargs.pop("feature_config", None)
 
         pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
 
