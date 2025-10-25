@@ -35,6 +35,7 @@ from bid_predictor.tuning.search_config import load_search_config
 from bid_predictor.tuning.search_grid import build_search_space, unwrap_search_value
 from bid_predictor.tuning.mlflow_logging import mlflow_run
 from bid_predictor.tuning.result_writing import (
+    write_best_catboost_params,
     write_best_feature_config,
     write_best_result_json,
     write_results_csv,
@@ -202,6 +203,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--best-catboost-out",
+        type=str,
+        default=None,
+        help=(
+            "Optional path to write the CatBoost hyperparameters (YAML) corresponding "
+            "to the best observed score. Only parameters defined in the search config "
+            "are included."
+        ),
+    )
+    parser.add_argument(
         "--mlflow-experiment",
         type=str,
         default=None,
@@ -218,6 +229,7 @@ def main() -> None:
 
     search_cfg = load_search_config(args.search_config)
     search_dimensions = build_search_space(search_cfg)
+    search_catboost_keys: Sequence[str] = tuple(search_cfg.get("catboost", {}).keys())
     param_names: Sequence[str] = [name for name, _ in search_dimensions]
     dimensions = [dim for _, dim in search_dimensions]
 
@@ -263,6 +275,7 @@ def main() -> None:
         best_score = float("-inf")
         best_result: Optional[Dict[str, Any]] = None
         best_feature_config: Optional[Dict[str, Any]] = None
+        best_catboost_params: Optional[Dict[str, Any]] = None
 
         if mlflow_logger.enabled:
             mlflow_logger.log_params(
@@ -335,6 +348,11 @@ def main() -> None:
                     }
                 )
                 best_feature_config = tuned_config
+                best_catboost_params = {
+                    key: _normalize_structure(cat_params[key])
+                    for key in search_catboost_keys
+                    if key in cat_params
+                }
 
         if not records:
             raise RuntimeError("No parameter combinations were evaluated.")
@@ -356,6 +374,12 @@ def main() -> None:
             print(f"Saved best feature configuration to {config_path}")
             if mlflow_logger.enabled:
                 mlflow_logger.log_artifact(str(config_path))
+
+        if args.best_catboost_out and best_catboost_params is not None:
+            catboost_path = write_best_catboost_params(args.best_catboost_out, best_catboost_params)
+            print(f"Saved best CatBoost parameters to {catboost_path}")
+            if mlflow_logger.enabled:
+                mlflow_logger.log_artifact(str(catboost_path))
 
         if best_result is not None:
             if mlflow_logger.enabled:

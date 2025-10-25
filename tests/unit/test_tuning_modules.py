@@ -183,6 +183,18 @@ def test_build_search_space_infers_dimensions():
     assert search_grid.unwrap_search_value(outlier_categories[0]) == {"max": 5}
 
 
+def test_write_best_catboost_params(tmp_path):
+    path = tmp_path / "params.yaml"
+    params = {"iterations": 120, "learning_rate": 0.15}
+
+    written = result_writing.write_best_catboost_params(path, params)
+    assert written == path
+
+    loaded = yaml.safe_load(path.read_text())
+    assert loaded["catboost"]["iterations"] == 120
+    assert pytest.approx(loaded["catboost"]["learning_rate"], rel=1e-6) == 0.15
+
+
 def test_resolve_train_file_uses_environment(monkeypatch):
     monkeypatch.setenv("S3_BUCKET_DATA", "s3://bucket")
     monkeypatch.setattr(data_access, "detect_execution_environment", lambda: ("sagemaker_notebook", ""))

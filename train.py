@@ -1,7 +1,12 @@
 import os
+import sys
 import argparse
 import warnings
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, Set
+
 import pandas as pd
+import yaml
 import mlflow
 import pyarrow.dataset as ds
 import sklearn
@@ -43,6 +48,59 @@ if detect_execution_environment()[0] in (
 
 DEFAULT_EXP_NAME = "tests"
 
+CATBOOST_PARAM_NAMES = ("iterations", "depth", "learning_rate", "l2_leaf_reg")
+CATBOOST_FLAG_MAP = {
+    "iterations": "--iterations",
+    "depth": "--depth",
+    "learning_rate": "--learning-rate",
+    "l2_leaf_reg": "--l2-leaf-reg",
+}
+
+
+def _detect_explicit_flags(argv: Iterable[str]) -> Set[str]:
+    explicit: Set[str] = set()
+    for name, flag in CATBOOST_FLAG_MAP.items():
+        for arg in argv:
+            if arg == flag or arg.startswith(f"{flag}="):
+                explicit.add(name)
+                break
+    return explicit
+
+
+def _load_catboost_config(path: str | None) -> Dict[str, Any]:
+    if not path:
+        return {}
+
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"CatBoost configuration file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+
+    if isinstance(payload, Mapping) and "catboost" in payload:
+        payload = payload["catboost"]
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("CatBoost configuration must be a mapping of parameter names to values")
+
+    return {str(key): value for key, value in payload.items()}
+
+
+def _merge_catboost_params(
+    cli_params: Mapping[str, Any],
+    config_params: Mapping[str, Any],
+    explicit_flags: Set[str],
+) -> Dict[str, Any]:
+    merged = dict(cli_params)
+    for key, value in config_params.items():
+        if key not in merged:
+            continue
+        if key in explicit_flags:
+            continue
+        merged[key] = value
+    return merged
+
 
 def parse_args():
     p = argparse.ArgumentParser()
@@ -59,7 +117,19 @@ def parse_args():
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
     p.add_argument("--testing", action="store_true")
-    return p.parse_args()
+    p.add_argument(
+        "--catboost-config",
+        type=str,
+        default=None,
+        help=(
+            "Optional YAML file containing CatBoost hyperparameters exported from the "
+            "tuning script. Command-line arguments override values from this file."
+        ),
+    )
+
+    args = p.parse_args()
+    setattr(args, "_explicit_flags", _detect_explicit_flags(sys.argv[1:]))
+    return args
 
 
 def prepare_features(data, pre_features, testing=True):
@@ -119,6 +189,8 @@ def train_and_log_model(
     var_args = vars(args)
     testing = var_args.pop("testing")
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+    explicit_flags = set(var_args.pop("_explicit_flags", set()))
+    catboost_config_path = var_args.pop("catboost_config", None)
 
     X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
 
@@ -130,6 +202,13 @@ def train_and_log_model(
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
+        catboost_file_params = _load_catboost_config(catboost_config_path)
+        cli_catboost_params = {name: var_args.get(name) for name in CATBOOST_PARAM_NAMES if name in var_args}
+        merged_catboost_params = _merge_catboost_params(cli_catboost_params, catboost_file_params, explicit_flags)
+
+        for key, value in merged_catboost_params.items():
+            var_args[key] = value
+
         log_run_parameters(var_args, features, cat_features, len(X_train), len(X_test))
         log_feature_config_artifacts(feature_config)
 

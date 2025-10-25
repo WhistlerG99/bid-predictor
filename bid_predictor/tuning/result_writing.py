@@ -34,6 +34,16 @@ def write_best_feature_config(path: str | Path, feature_config: Mapping[str, Any
     return output_path
 
 
+def write_best_catboost_params(path: str | Path, params: Mapping[str, Any]) -> Path:
+    """Persist the best CatBoost hyperparameters explored by the tuner."""
+
+    output_path = _ensure_parent(Path(path))
+    payload = {"catboost": dict(params)}
+    with output_path.open("w", encoding="utf-8") as handle:
+        yaml.safe_dump(payload, handle, sort_keys=True)
+    return output_path
+
+
 def write_best_result_json(path: str | Path, payload: Any) -> Path:
     """Persist the best result summary as a JSON document."""
 
