@@ -8,6 +8,7 @@ skopt = pytest.importorskip("skopt")
 from skopt.space import Categorical, Integer, Real  # type: ignore  # noqa: E402
 
 from bid_predictor.tuning import cross_validation, data_access, feature_tuning, search_config, search_grid
+from tune_catboost import normalize_search_value, stringify_param_value
 
 
 class SimpleEstimator(BaseEstimator):
@@ -100,6 +101,17 @@ def test_summarize_transform_params_serializes_dicts():
     overrides = {"outlier": {"feature": {"min": 0, "max": 1}}}
     summary = feature_tuning.summarize_transform_params(overrides)
     assert summary["outlier.feature"] == "{\"max\": 1, \"min\": 0}"
+
+
+def test_normalize_and_stringify_handle_numpy_bool():
+    raw = np.bool_(True)
+    normalized = normalize_search_value(raw)
+    assert isinstance(normalized, bool)
+    assert normalized is True
+
+    stringified = stringify_param_value(np.bool_(False))
+    assert isinstance(stringified, bool)
+    assert stringified is False
 
 
 def test_load_search_config_defaults(tmp_path):

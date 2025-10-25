@@ -56,6 +56,27 @@ warnings.filterwarnings(
 )
 
 
+def normalize_search_value(value: Any) -> Any:
+    """Convert optimizer suggestions into plain Python scalars."""
+    value = unwrap_search_value(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
+
+
+def stringify_param_value(value: Any) -> Any:
+    """Prepare parameter values for MLflow logging."""
+    if isinstance(value, (np.bool_,)):
+        value = bool(value)
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return json.dumps(value, sort_keys=True)
+
+
 def _patch_mlflow_metric_logging() -> None:
     if mlflow is None:
         return
@@ -277,28 +298,17 @@ def main() -> None:
             mlflow.log_param("random_state", args.random_state)
             mlflow.log_param("total_iterations", total_combinations)
 
-        def _normalize_value(value: Any) -> Any:
-            value = unwrap_search_value(value)
-            if isinstance(value, (np.floating,)):
-                return float(value)
-            if isinstance(value, (np.integer,)):
-                return int(value)
-            return value
-
-        def _stringify(value: Any) -> Any:
-            if isinstance(value, (str, int, float, bool)) or value is None:
-                return value
-            return json.dumps(value, sort_keys=True)
-
         for idx in range(total_combinations):
             suggestion = optimizer.ask()
             combination = {
-                name: _normalize_value(value)
+                name: normalize_search_value(value)
                 for name, value in zip(param_names, suggestion)
             }
 
             cat_params, transform_overrides = split_combination(combination)
-            cat_params = {key: _normalize_value(value) for key, value in cat_params.items()}
+            cat_params = {
+                key: normalize_search_value(value) for key, value in cat_params.items()
+            }
 
             metadata = clone_feature_metadata(base_metadata)
             apply_transform_overrides(metadata, transform_overrides)
@@ -383,14 +393,15 @@ def main() -> None:
                 mlflow.log_metric("best_score", best_result["score"])
                 mlflow.log_metric("best_std", best_result["std"])
                 flat_params = {
-                    f"best.{key}": _stringify(value)
+                    f"best.{key}": stringify_param_value(value)
                     for key, value in {
                         **{
                             f"catboost.{param}": val
                             for param, val in best_result["catboost"].items()
                         },
                         **{
-                            key: val for key, val in summarize_transform_params(
+                            key: val
+                            for key, val in summarize_transform_params(
                                 best_result["transforms"]
                             ).items()
                         },
