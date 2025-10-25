@@ -4,6 +4,8 @@ import pytest
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import StratifiedKFold
 
+from skopt.space import Categorical, Integer, Real
+
 from bid_predictor.tuning import cross_validation, data_access, feature_tuning, search_config, search_grid
 
 
@@ -113,6 +115,27 @@ def test_build_parameter_grid_handles_empty_sections():
     cfg = {"catboost": {"iterations": [10]}, "transform": {}}
     grid = search_grid.build_parameter_grid(cfg)
     assert grid["catboost__iterations"] == [10]
+
+
+def test_build_search_space_infers_dimensions():
+    cfg = {
+        "catboost": {
+            "iterations": [50, 100],
+            "learning_rate": [0.01, 0.1],
+            "depth": [6],
+            "bootstrap_type": ["Bernoulli", "Bayesian"],
+        },
+        "transform": {"outlier": {"feature": [{"max": 5}, {"max": 8}]}}
+    }
+    dimensions = search_grid.build_search_space(cfg)
+    dim_map = {name: dim for name, dim in dimensions}
+
+    assert isinstance(dim_map["catboost__iterations"], Integer)
+    assert isinstance(dim_map["catboost__learning_rate"], Real)
+    assert isinstance(dim_map["catboost__depth"], Categorical)
+    assert dim_map["catboost__depth"].is_constant
+    assert isinstance(dim_map["catboost__bootstrap_type"], Categorical)
+    assert isinstance(dim_map["transform__outlier__feature"], Categorical)
 
 
 def test_resolve_train_file_uses_environment(monkeypatch):

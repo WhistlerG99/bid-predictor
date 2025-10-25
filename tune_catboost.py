@@ -12,7 +12,7 @@ import argparse
 import json
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 try:
     import mlflow  # type: ignore
@@ -23,7 +23,8 @@ import numpy as np
 import pandas as pd
 import yaml
 from sklearn import set_config
-from sklearn.model_selection import ParameterGrid, StratifiedKFold
+from sklearn.model_selection import StratifiedKFold
+from skopt import Optimizer
 
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.tuning.cross_validation import cross_validate_with_eval
@@ -37,7 +38,7 @@ from bid_predictor.tuning.feature_tuning import (
     summarize_transform_params,
 )
 from bid_predictor.tuning.search_config import load_search_config
-from bid_predictor.tuning.search_grid import build_parameter_grid
+from bid_predictor.tuning.search_grid import build_search_space
 from train import prepare_features
 
 
@@ -158,7 +159,11 @@ def parse_args() -> argparse.Namespace:
         "--max-combinations",
         type=int,
         default=None,
-        help="Optional hard limit on the number of parameter combinations to evaluate.",
+        help=(
+            "Maximum number of Bayesian optimization iterations to evaluate. "
+            "If omitted, a default of 25 iterations is used unless the search "
+            "space is constant."
+        ),
     )
     parser.add_argument(
         "--output-csv",
@@ -184,12 +189,24 @@ def main() -> None:
     _patch_mlflow_metric_logging()
 
     search_cfg = load_search_config(args.search_config)
-    param_grid_dict = build_parameter_grid(search_cfg)
-    param_grid = list(ParameterGrid(param_grid_dict))
-    total_combinations = len(param_grid)
+    search_dimensions = build_search_space(search_cfg)
+    param_names: Sequence[str] = [name for name, _ in search_dimensions]
+    dimensions = [dim for _, dim in search_dimensions]
 
-    if args.max_combinations is not None:
-        total_combinations = min(total_combinations, args.max_combinations)
+    all_constant = all(getattr(dim, "is_constant", False) for dim in dimensions)
+
+    requested_iterations = args.max_combinations if args.max_combinations is not None else 25
+    total_combinations = 1 if all_constant else max(1, requested_iterations)
+
+    n_initial_points = min(total_combinations, max(1, min(10, len(dimensions) * 2)))
+    optimizer = Optimizer(
+        dimensions,
+        base_estimator="GP",
+        acq_func="EI",
+        n_initial_points=n_initial_points,
+        initial_point_generator="lhs",
+        random_state=args.random_state,
+    )
 
     feature_config = load_feature_config(args.feature_config)
     base_metadata = clone_feature_metadata(feature_config["feature_metadata"])
@@ -218,11 +235,22 @@ def main() -> None:
     best_result: Optional[Dict[str, Any]] = None
     best_feature_config: Optional[Dict[str, Any]] = None
 
-    for idx, combination in enumerate(param_grid):
-        if args.max_combinations is not None and idx >= args.max_combinations:
-            break
+    def _normalize_value(value: Any) -> Any:
+        if isinstance(value, (np.floating,)):
+            return float(value)
+        if isinstance(value, (np.integer,)):
+            return int(value)
+        return value
+
+    for idx in range(total_combinations):
+        suggestion = optimizer.ask()
+        combination = {
+            name: _normalize_value(value)
+            for name, value in zip(param_names, suggestion)
+        }
 
         cat_params, transform_overrides = split_combination(combination)
+        cat_params = {key: _normalize_value(value) for key, value in cat_params.items()}
 
         metadata = clone_feature_metadata(base_metadata)
         apply_transform_overrides(metadata, transform_overrides)
@@ -251,6 +279,8 @@ def main() -> None:
             f"catboost={cat_params} transforms={transform_overrides}",
             flush=True,
         )
+
+        optimizer.tell(suggestion, -mean_score)
 
         if mean_score > best_score:
             best_score = mean_score
