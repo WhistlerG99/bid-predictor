@@ -1,5 +1,6 @@
 import os
 import argparse
+import warnings
 import pandas as pd
 import mlflow
 import pyarrow.dataset as ds
@@ -21,6 +22,17 @@ from bid_predictor.utils import detect_execution_environment
 from dotenv import load_dotenv
 
 load_dotenv()
+
+warnings.filterwarnings(
+    "ignore",
+    message=(
+        "This Pipeline instance is not fitted yet. Call 'fit' with appropriate arguments "
+        "before using other methods such as transform, predict, etc. This will raise an "
+        "error in 1.8 instead of the current warning."
+    ),
+    category=FutureWarning,
+)
+
 if detect_execution_environment()[0] in (
     "sagemaker_notebook",
     "sagemaker_job",
