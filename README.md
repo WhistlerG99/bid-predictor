@@ -96,3 +96,22 @@ python tune_catboost.py \
 The tuner respects additional options such as `--task-type`, `--devices`, and
 `--testing`, mirroring the behaviour of `train.py`. Results can also be tracked
 with MLflow if the service is configured in the environment.
+
+## Running the tests
+
+The project uses `pytest` for both unit and integration coverage. After
+installing the package in a virtual environment, install the test dependencies
+from `requirements.txt` (they include the stubs used by the suites) and then run
+pytest from the repository root:
+
+```bash
+pip install -r requirements.txt
+pytest
+```
+
+To run only the integration scenarios—for example, to verify the deterministic
+outputs of `train.py` and `tune_catboost.py`—use the dedicated marker:
+
+```bash
+pytest -m integration
+```
