@@ -75,7 +75,7 @@ def test_log_classification_metrics_records_metrics(stub_mlflow):
     assert stub_mlflow.calls.metrics
 
 
-def test_log_classification_metrics_by_time_requires_positive_stride():
+def test_log_classification_metrics_by_time_requires_positive_stride(stub_mlflow):
     df = pd.DataFrame(
         {
             "Acceptance Probability": np.linspace(0, 1, 5),
