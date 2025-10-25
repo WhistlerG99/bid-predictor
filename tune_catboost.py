@@ -39,7 +39,7 @@ from bid_predictor.tuning.feature_tuning import (
     summarize_transform_params,
 )
 from bid_predictor.tuning.search_config import load_search_config
-from bid_predictor.tuning.search_grid import build_search_space
+from bid_predictor.tuning.search_grid import build_search_space, unwrap_search_value
 from train import prepare_features
 
 
@@ -278,6 +278,7 @@ def main() -> None:
             mlflow.log_param("total_iterations", total_combinations)
 
         def _normalize_value(value: Any) -> Any:
+            value = unwrap_search_value(value)
             if isinstance(value, (np.floating,)):
                 return float(value)
             if isinstance(value, (np.integer,)):

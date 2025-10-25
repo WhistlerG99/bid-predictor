@@ -4,7 +4,8 @@ import pytest
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import StratifiedKFold
 
-from skopt.space import Categorical, Integer, Real
+skopt = pytest.importorskip("skopt")
+from skopt.space import Categorical, Integer, Real  # type: ignore  # noqa: E402
 
 from bid_predictor.tuning import cross_validation, data_access, feature_tuning, search_config, search_grid
 
@@ -136,6 +137,9 @@ def test_build_search_space_infers_dimensions():
     assert dim_map["catboost__depth"].is_constant
     assert isinstance(dim_map["catboost__bootstrap_type"], Categorical)
     assert isinstance(dim_map["transform__outlier__feature"], Categorical)
+    outlier_categories = dim_map["transform__outlier__feature"].categories
+    assert all(isinstance(cat, search_grid.FrozenSearchValue) for cat in outlier_categories)
+    assert search_grid.unwrap_search_value(outlier_categories[0]) == {"max": 5}
 
 
 def test_resolve_train_file_uses_environment(monkeypatch):

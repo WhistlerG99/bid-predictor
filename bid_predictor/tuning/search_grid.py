@@ -78,6 +78,61 @@ def _values_are_reals(values: List[Any]) -> bool:
     return all(isinstance(value, numbers.Real) and not isinstance(value, bool) for value in values)
 
 
+def _freeze_value(value: Any) -> Any:
+    """Recursively convert potentially unhashable values into hashable forms."""
+
+    if isinstance(value, dict):
+        return tuple(
+            sorted((key, _freeze_value(sub_value)) for key, sub_value in value.items())
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, set):
+        return tuple(sorted(_freeze_value(item) for item in value))
+    return value
+
+
+class FrozenSearchValue:
+    """Hashable wrapper that preserves the original search value."""
+
+    __slots__ = ("value", "_frozen")
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+        self._frozen = _freeze_value(value)
+
+    def __hash__(self) -> int:  # pragma: no cover - trivial hashing behaviour
+        return hash(self._frozen)
+
+    def __eq__(self, other: object) -> bool:  # pragma: no cover - structural compare
+        if not isinstance(other, FrozenSearchValue):
+            return False
+        return self._frozen == other._frozen
+
+    def __repr__(self) -> str:  # pragma: no cover - helpful for debugging
+        return f"FrozenSearchValue({self.value!r})"
+
+
+def _ensure_hashable(values: List[Any]) -> List[Any]:
+    wrapped: List[Any] = []
+    for value in values:
+        try:
+            hash(value)
+        except TypeError:
+            wrapped.append(FrozenSearchValue(value))
+        else:
+            wrapped.append(value)
+    return wrapped
+
+
+def unwrap_search_value(value: Any) -> Any:
+    """Return the original search value when a FrozenSearchValue is provided."""
+
+    if isinstance(value, FrozenSearchValue):
+        return value.value
+    return value
+
+
 def _make_dimension(values: List[Any]) -> Dimension:
     if not values:
         raise ValueError("Values must be non-empty to create a search dimension")
@@ -100,9 +155,9 @@ def _make_dimension(values: List[Any]) -> Dimension:
         return Real(min_val, max_val)
 
     if len(values) == 1:
-        return Categorical(values)
+        return Categorical(_ensure_hashable(values))
 
-    return Categorical(values)
+    return Categorical(_ensure_hashable(values))
 
 
 def build_search_space(search_cfg: Mapping[str, Any]) -> List[Tuple[str, Dimension]]:
