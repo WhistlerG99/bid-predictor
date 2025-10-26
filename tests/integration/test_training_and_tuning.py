@@ -1,13 +1,15 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 from pandas.testing import assert_series_equal
-from sklearn.model_selection import StratifiedKFold
-
 import train
 from bid_predictor.bid_predictor import build_pipeline
-from bid_predictor.tuning.cross_validation import cross_validate_with_eval
+from bid_predictor.tuning.cross_validation import (
+    RandomDateSplitter,
+    cross_validate_with_eval,
+)
 
 
 @pytest.mark.integration
@@ -61,9 +63,25 @@ def test_cross_validation_scores_are_reproducible(sample_training_dataframe, sam
         devices="0",
         custom_metric=["AUC"],
     )
-    cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    travel_dates = pd.to_datetime(
+        sample_training_dataframe.loc[X_train.index, "travel_date"]
+    ).reset_index(drop=True)
+    X_train = X_train.reset_index(drop=True)
+    y_train = y_train.reset_index(drop=True)
 
-    scores_first = cross_validate_with_eval(pipeline, X_train, y_train, cv, "roc_auc")
-    scores_second = cross_validate_with_eval(pipeline, X_train, y_train, cv, "roc_auc")
+    splitter = RandomDateSplitter(
+        travel_dates=travel_dates,
+        n_splits=3,
+        random_state=42,
+        eval_ratio=1.0,
+        total_size=None,
+    )
+
+    scores_first = cross_validate_with_eval(
+        pipeline, X_train, y_train, splitter, "roc_auc"
+    )
+    scores_second = cross_validate_with_eval(
+        pipeline, X_train, y_train, splitter, "roc_auc"
+    )
 
     np.testing.assert_allclose(scores_first, scores_second)
