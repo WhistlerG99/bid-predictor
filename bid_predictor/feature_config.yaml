@@ -1,18 +1,18 @@
 features:
   carrier_code:
     categorical: true
-    include_in_model: false
+    include_in_model: true
   flight_number:
     categorical: true
     include_in_model: false
   flight_code:
     derived: true
     categorical: true
-    include_in_model: false
+    include_in_model: true
 
 
   travel_date:
-    include_in_model: false
+    include_in_model: true
   departure_timestamp:
     include_in_model: false
   current_timestamp:
@@ -24,7 +24,7 @@ features:
       max: 5
       nsteps: 76
       # nsteps: 121
-    include_in_model: false
+    include_in_model: true
     derived: true
 
   seats_available:
@@ -58,22 +58,22 @@ features:
       min: 0
       max: 30
       interval: 1  
-    include_in_model: false
+    include_in_model: true
   multiplier_fare_class:
     impute_value: 1.0
-    include_in_model: false
+    include_in_model: true
   multiplier_loyalty:
     impute_value: 1.0
-    include_in_model: false
+    include_in_model: true
   multiplier_success_history:
     impute_value: 1.0
-    include_in_model: false
+    include_in_model: true
   multiplier_payment_type:
     impute_value: 1.0
-    include_in_model: false
+    include_in_model: true
   upgrade_type:
     categorical: true
-    include_in_model: false
+    include_in_model: true
 
   snapshot_num:
     include_in_model: false

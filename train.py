@@ -248,6 +248,7 @@ def train_and_log_model(
 
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)
+        catboost_kwargs.pop("cat_features", None)
 
         pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
 
