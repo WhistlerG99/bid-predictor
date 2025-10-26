@@ -17,11 +17,13 @@ import numpy as np
 import pandas as pd
 import yaml
 from sklearn import set_config
-from sklearn.model_selection import StratifiedKFold
 from skopt import Optimizer
 
 from bid_predictor.bid_predictor import build_pipeline
-from bid_predictor.tuning.cross_validation import cross_validate_with_eval
+from bid_predictor.tuning.cross_validation import (
+    RandomDateSplitter,
+    cross_validate_with_eval,
+)
 from bid_predictor.tuning.data_access import load_training_data, resolve_train_file
 from bid_predictor.feature_config import load_feature_config
 from bid_predictor.tuning.feature_tuning import (
@@ -137,7 +139,27 @@ def parse_args() -> argparse.Namespace:
         "--cv-splits",
         type=int,
         default=3,
-        help="Number of cross-validation folds (default: 3).",
+        help=(
+            "Number of random date-based splits to evaluate (default: 3)."
+        ),
+    )
+    parser.add_argument(
+        "--split-sample-size",
+        type=int,
+        default=None,
+        help=(
+            "Approximate number of rows to include across the sampled training "
+            "and evaluation windows. Defaults to the full dataset."
+        ),
+    )
+    parser.add_argument(
+        "--eval-train-ratio",
+        type=float,
+        default=1.0,
+        help=(
+            "Target ratio of evaluation rows to training rows when sampling "
+            "date windows (default: 1.0)."
+        ),
     )
     parser.add_argument(
         "--scoring",
@@ -258,8 +280,19 @@ def main() -> None:
         data, feature_config["pre_features"], testing=args.testing
     )
 
-    cv = StratifiedKFold(
-        n_splits=args.cv_splits, shuffle=True, random_state=args.random_state
+    train_indices = X_train.index
+    travel_dates = pd.to_datetime(
+        data.loc[train_indices, "travel_date"]
+    ).reset_index(drop=True)
+    X_train = X_train.reset_index(drop=True)
+    y_train = y_train.reset_index(drop=True)
+
+    cv = RandomDateSplitter(
+        travel_dates=travel_dates,
+        n_splits=args.cv_splits,
+        total_size=args.split_sample_size,
+        eval_ratio=args.eval_train_ratio,
+        random_state=args.random_state,
     )
 
     static_cat_params = {
@@ -286,6 +319,8 @@ def main() -> None:
                     "devices": args.devices,
                     "random_state": args.random_state,
                     "total_iterations": total_combinations,
+                    "split_sample_size": args.split_sample_size,
+                    "eval_train_ratio": args.eval_train_ratio,
                 }
             )
 

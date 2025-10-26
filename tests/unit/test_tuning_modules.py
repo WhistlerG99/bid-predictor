@@ -18,6 +18,7 @@ from bid_predictor.tuning import (
     search_config,
     search_grid,
 )
+from bid_predictor.tuning.cross_validation import RandomDateSplitter
 from tune_catboost import _normalize_structure, normalize_search_value, stringify_param_value
 
 
@@ -69,7 +70,8 @@ def test_score_fold_uses_predict_proba(simple_data):
 
 def test_cross_validate_with_eval(simple_data):
     X, y = simple_data
-    cv = StratifiedKFold(n_splits=2, shuffle=True, random_state=0)
+    travel_dates = pd.Series(pd.date_range("2024-01-01", periods=len(X)))
+    cv = RandomDateSplitter(travel_dates=travel_dates, n_splits=2, random_state=0)
     estimator = SimpleEstimator()
     scores = cross_validation.cross_validate_with_eval(estimator, X, y, cv, "roc_auc")
     assert len(scores) == 2
