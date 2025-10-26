@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Mapping, MutableMapping, Tuple
 
+import numpy as np
+
 from bid_predictor.feature_config import _ensure_groupby_keys
 
 
@@ -112,6 +114,24 @@ def apply_transform_overrides(
                 metadata[feature][section] = value
 
 
+def _normalize_override_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_override_value(sub_value) for key, sub_value in value.items()}
+    if isinstance(value, list):
+        return [_normalize_override_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_normalize_override_value(item) for item in value)
+    if isinstance(value, set):
+        return sorted(_normalize_override_value(item) for item in value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
+
+
 def summarize_transform_params(overrides: Mapping[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Flatten the transformation overrides for reporting purposes."""
 
@@ -119,8 +139,9 @@ def summarize_transform_params(overrides: Mapping[str, Dict[str, Any]]) -> Dict[
     for section, feature_map in overrides.items():
         for feature, value in feature_map.items():
             key = f"{section}.{feature}"
-            if isinstance(value, (dict, list)):
-                summary[key] = json.dumps(value, sort_keys=True)
+            normalized = _normalize_override_value(value)
+            if isinstance(normalized, (dict, list, tuple)):
+                summary[key] = json.dumps(normalized, sort_keys=True)
             else:
-                summary[key] = value
+                summary[key] = normalized
     return summary

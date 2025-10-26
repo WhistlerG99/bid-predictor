@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bayesian Hyperparameter Tuning Overview</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        line-height: 1.6;
+        font-size: 16px;
+      }
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--background, #f9fbfd);
+        color: var(--foreground, #1f2d3d);
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 3rem 1.5rem 4rem;
+      }
+      h1,
+      h2,
+      h3 {
+        line-height: 1.25;
+        margin-top: 2.5rem;
+        color: #0f172a;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: clamp(2.25rem, 3vw, 2.875rem);
+      }
+      h2 {
+        font-size: clamp(1.5rem, 2.6vw, 2rem);
+      }
+      h3 {
+        font-size: clamp(1.25rem, 2.2vw, 1.6rem);
+      }
+      p {
+        margin: 1rem 0;
+      }
+      code {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        background: rgba(15, 23, 42, 0.08);
+        padding: 0.15rem 0.35rem;
+        border-radius: 0.35rem;
+        font-size: 0.95em;
+      }
+      pre {
+        background: rgba(15, 23, 42, 0.08);
+        border-radius: 0.5rem;
+        padding: 1rem 1.25rem;
+        overflow-x: auto;
+        font-size: 0.95em;
+      }
+      pre code {
+        background: none;
+        padding: 0;
+      }
+      a {
+        color: #2563eb;
+        text-decoration: none;
+      }
+      a:hover,
+      a:focus {
+        text-decoration: underline;
+      }
+      ul,
+      ol {
+        padding-left: 1.5rem;
+      }
+      header {
+        margin-bottom: 2rem;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+        padding-bottom: 1rem;
+      }
+      footer {
+        margin-top: 3rem;
+        font-size: 0.9rem;
+        color: rgba(15, 23, 42, 0.6);
+        text-align: center;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 1.5rem;
+        margin: 2rem 0 3rem;
+      }
+      .card {
+        background: rgba(148, 163, 184, 0.15);
+        border-radius: 0.75rem;
+        padding: 1.25rem 1.5rem;
+        box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+      }
+      .card h3 {
+        margin-top: 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 1.5rem 0;
+        font-size: 0.95em;
+      }
+      th,
+      td {
+        text-align: left;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.1);
+        padding: 0.75rem 0.5rem;
+      }
+      th {
+        font-weight: 600;
+        color: #0f172a;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0.15rem 0.55rem;
+        border-radius: 999px;
+        background: rgba(37, 99, 235, 0.12);
+        color: #1d4ed8;
+        font-weight: 600;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      blockquote {
+        border-left: 4px solid rgba(37, 99, 235, 0.35);
+        padding-left: 1rem;
+        color: rgba(15, 23, 42, 0.7);
+        background: rgba(148, 163, 184, 0.12);
+        border-radius: 0 0.5rem 0.5rem 0;
+        margin: 1.5rem 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="badge">Guide</span>
+        <h1>Bayesian Hyperparameter Tuning in the Bid Predictor</h1>
+        <p>
+          This guide explains how the <code>tune_catboost.py</code> utility performs
+          Bayesian hyperparameter optimization for the CatBoost-based bid predictor.
+          It covers the objective function, scoring process, optimization loop, and
+          the configuration files that define the search space.
+        </p>
+      </header>
+
+      <section>
+        <h2>High-Level Workflow</h2>
+        <div class="card-grid">
+          <article class="card">
+            <h3>1. Load Search Space</h3>
+            <p>
+              <code>tune_catboost.py</code> reads a YAML or JSON configuration and
+              converts it into optimization dimensions for CatBoost hyperparameters
+              and feature transformation overrides using
+              <code>build_search_space</code>.
+            </p>
+          </article>
+          <article class="card">
+            <h3>2. Prepare Data</h3>
+            <p>
+              Training features and labels are extracted with
+              <code>prepare_features</code>, mirroring the production data
+              preparation pipeline. Cross-validation folds are generated with
+              <code>StratifiedKFold</code>.
+            </p>
+          </article>
+          <article class="card">
+            <h3>3. Iterate with Bayesian Optimization</h3>
+            <p>
+              A <code>skopt.Optimizer</code> proposes parameter combinations.
+              Each candidate is evaluated via cross-validation and reported back to
+              the optimizer, which refines subsequent suggestions.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Objective Function and Scoring</h2>
+        <p>
+          The optimizer is tasked with maximizing the mean cross-validated score
+          returned by scikit-learn's scoring API. The default scoring metric is
+          <code>roc_auc</code>, but any scorer name accepted by
+          <code>sklearn.metrics.get_scorer</code> can be supplied via the
+          <code>--scoring</code> flag.
+        </p>
+        <p>
+          For each suggested configuration, the script builds a pipeline with the
+          selected CatBoost parameters and feature overrides. It then calls
+          <code>cross_validate_with_eval</code>, which:
+        </p>
+        <ul>
+          <li>Clones the pipeline for each fold.</li>
+          <li>Fits the model with CatBoost evaluation sets for early stopping.</li>
+          <li>Computes the requested score using the appropriate prediction interface.</li>
+        </ul>
+        <p>
+          The fold scores are averaged to produce the objective value. To express a
+          maximization problem to <code>skopt.Optimizer</code>, the script reports the
+          negative mean score when calling <code>optimizer.tell</code>. The best result
+          is tracked along with the standard deviation across folds to quantify
+          variability.
+        </p>
+        <blockquote>
+          The objective function is effectively:
+          <code>maximize mean_cv_score(params)</code>, where
+          <code>mean_cv_score</code> aggregates the selected scorer across stratified
+          folds.
+        </blockquote>
+      </section>
+
+      <section>
+        <h2>Optimization Loop Details</h2>
+        <p>
+          The optimization loop in <code>tune_catboost.py</code> uses a Gaussian Process
+          surrogate model with Expected Improvement as the acquisition function. Key
+          characteristics include:
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>base_estimator="GP"</code></td>
+              <td>Gaussian Process regression models the objective surface.</td>
+            </tr>
+            <tr>
+              <td><code>acq_func="EI"</code></td>
+              <td>Expected Improvement balances exploration and exploitation.</td>
+            </tr>
+            <tr>
+              <td><code>n_initial_points</code></td>
+              <td>
+                Latin Hypercube samples warm-start the search with a diverse set of
+                evaluations (up to twice the number of dimensions, capped at 10).
+              </td>
+            </tr>
+            <tr>
+              <td><code>max_combinations</code></td>
+              <td>
+                Controls the total iterations of Bayesian updates. When omitted, the
+                script defaults to 25 evaluations unless the search space is constant.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Each evaluation records the candidate parameters, mean score, and score
+          standard deviation. At the end of the run the script prints a leaderboard,
+          optionally exports the full history to CSV, and can emit the feature
+          configuration corresponding to the best score.
+        </p>
+      </section>
+
+      <section>
+        <h2>Search Configuration Files</h2>
+        <p>
+          Search spaces are described with two top-level sections: <code>catboost</code>
+          for estimator parameters and <code>transform</code> for feature-level options.
+          <code>build_search_space</code> converts each entry into an optimization
+          dimension that the Bayesian optimizer can explore.
+        </p>
+        <h3>Default Configuration</h3>
+        <pre><code class="language-yaml">catboost:
+  iterations: [200, 400]
+  depth: [6, 8]
+  learning_rate: [0.05, 0.1]
+  l2_leaf_reg: [3.0, 5.0]
+transform:
+  impute_median: {}
+  impute_value: {}
+  outlier: {}
+  bins: {}
+</code></pre>
+        <p>
+          If no search file is supplied, this default is used. Each list becomes a
+          continuous or categorical optimization domain, depending on the value types.
+        </p>
+        <h3>Custom Example</h3>
+        <pre><code class="language-yaml">catboost:
+  iterations: [300, 600, 900]
+  depth: [5, 7, 9]
+  learning_rate: [0.03, 0.06]
+  subsample: [0.6, 0.8, 1.0]
+transform:
+  impute_median:
+    rfm_score: [true, false]
+  impute_value:
+    user_segment: ["retail", "b2b"]
+  outlier:
+    spend_ratio: [null, 8.0]
+  bins:
+    transaction_count: [10, 20, 30]
+</code></pre>
+        <p>
+          In this configuration:
+        </p>
+        <ul>
+          <li>
+            Boolean and categorical options become <code>Categorical</code> dimensions.
+          </li>
+          <li>
+            Numeric ranges are translated into <code>Integer</code> or <code>Real</code>
+            spaces that allow the optimizer to interpolate between values.
+          </li>
+          <li>
+            Per-feature overrides let you explore different imputation strategies,
+            outlier caps, or binning levels alongside model hyperparameters.
+          </li>
+        </ul>
+      </section>
+
+      <section>
+        <h2>Executing the Tuning Script</h2>
+        <p>
+          Run the tuner from the repository root. Provide a training dataset and
+          optional search configuration:
+        </p>
+        <pre><code class="language-bash">python tune_catboost.py \&nbsp;
+  --train-file data/train.parquet \&nbsp;
+  --feature-config configs/features.yaml \&nbsp;
+  --search-config search_configs/catboost.yaml \&nbsp;
+  --cv-splits 5 \&nbsp;
+  --scoring roc_auc \&nbsp;
+  --max-combinations 40
+</code></pre>
+        <p>
+          The script prints progress for each evaluation and summarizes the top
+          configurations when it finishes. Use <code>--output-csv</code> to persist the
+          evaluation history and <code>--best-config-out</code> to export the feature
+          metadata for the leading run.
+        </p>
+      </section>
+
+      <footer>
+        <p>
+          For implementation details, refer to
+          <code>tune_catboost.py</code> and the modules under
+          <code>bid_predictor/tuning/</code>.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>

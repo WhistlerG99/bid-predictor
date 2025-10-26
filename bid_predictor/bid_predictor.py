@@ -211,8 +211,6 @@ def build_pipeline(feature_config=None, **kw):
 
     # CatBoostClassifier integrates with sklearn API
     clf = CBC(
-        loss_function="Logloss",
-        auto_class_weights="Balanced",
         cat_features=categorical_features,
         **kw,
     ).set_fit_request(eval_set=True)

@@ -1,7 +1,13 @@
 import os
+import sys
 import argparse
 import warnings
+import inspect
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, Set
+
 import pandas as pd
+import yaml
 import mlflow
 import pyarrow.dataset as ds
 import sklearn
@@ -19,6 +25,7 @@ from bid_predictor.tracking import (
     start_catboost_mlflow_stream,
 )
 from bid_predictor.utils import detect_execution_environment
+from catboost import CatBoostClassifier
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -44,22 +51,119 @@ if detect_execution_environment()[0] in (
 DEFAULT_EXP_NAME = "tests"
 
 
+def _introspect_catboost_defaults() -> Dict[str, Any]:
+    signature = inspect.signature(CatBoostClassifier.__init__)
+    defaults: Dict[str, Any] = {}
+    for name, param in signature.parameters.items():
+        if name == "self" or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        defaults[name] = None if param.default is inspect._empty else param.default
+    return defaults
+
+
+_CATBOOST_PARAM_DEFAULTS = _introspect_catboost_defaults()
+CATBOOST_PARAM_NAMES = tuple(_CATBOOST_PARAM_DEFAULTS.keys())
+CATBOOST_FLAG_MAP = {
+    name: f"--{name.replace('_', '-')}" for name in CATBOOST_PARAM_NAMES
+}
+
+
+def _parse_catboost_cli_value(raw: str | None) -> Any:
+    if raw is None:
+        return None
+    try:
+        value = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return raw
+    return value
+
+
+def _register_catboost_arguments(parser: argparse.ArgumentParser) -> None:
+    for name in CATBOOST_PARAM_NAMES:
+        flag = CATBOOST_FLAG_MAP[name]
+        parser.add_argument(
+            flag,
+            dest=name,
+            type=_parse_catboost_cli_value,
+            default=_CATBOOST_PARAM_DEFAULTS[name],
+        )
+
+
+def _detect_explicit_flags(argv: Iterable[str]) -> Set[str]:
+    explicit: Set[str] = set()
+    for name, flag in CATBOOST_FLAG_MAP.items():
+        for arg in argv:
+            if arg == flag or arg.startswith(f"{flag}="):
+                explicit.add(name)
+                break
+    return explicit
+
+
+def _load_catboost_config(path: str | None) -> Dict[str, Any]:
+    if not path:
+        return {}
+
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"CatBoost configuration file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+
+    if isinstance(payload, Mapping) and "catboost" in payload:
+        payload = payload["catboost"]
+
+    if not isinstance(payload, Mapping):
+        raise ValueError("CatBoost configuration must be a mapping of parameter names to values")
+
+    return {str(key): value for key, value in payload.items()}
+
+
+def _merge_catboost_params(
+    cli_params: Mapping[str, Any],
+    config_params: Mapping[str, Any],
+    explicit_flags: Set[str],
+) -> Dict[str, Any]:
+    merged = dict(cli_params)
+    for key, value in config_params.items():
+        if key in explicit_flags:
+            continue
+        merged[key] = value
+    return merged
+
+
 def parse_args():
     p = argparse.ArgumentParser()
-    # CatBoost knobs
-    p.add_argument("--task-type", type=str, default="CPU")  # "GPU" to use GPU
-    p.add_argument("--devices", type=str, default="0")  # "0", "0,1", etc.
-    p.add_argument("--iterations", type=int, default=200)
-    p.add_argument("--depth", type=int, default=6)
-    p.add_argument("--learning-rate", type=float, default=None)
-    p.add_argument("--l2-leaf-reg", type=float, default=3.0)
+    _register_catboost_arguments(p)
+    p.set_defaults(
+        task_type="CPU",
+        devices="0",
+        iterations=200,
+        depth=6,
+        learning_rate=None,
+        l2_leaf_reg=3.0,
+        loss_function="Logloss",
+        auto_class_weights="Balanced",
+        eval_metric="AUC",
+        random_state=42,
+    )
     # your own toggles
-    p.add_argument("--eval-metric", type=str, default="AUC")
-    p.add_argument("--random-state", type=int, default=42)
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
     p.add_argument("--testing", action="store_true")
-    return p.parse_args()
+    p.add_argument(
+        "--catboost-config",
+        type=str,
+        default=None,
+        help=(
+            "Optional YAML file containing CatBoost hyperparameters exported from the "
+            "tuning script. Command-line arguments override values from this file."
+        ),
+    )
+
+    args = p.parse_args()
+    setattr(args, "_explicit_flags", _detect_explicit_flags(sys.argv[1:]))
+    return args
 
 
 def prepare_features(data, pre_features, testing=True):
@@ -119,6 +223,8 @@ def train_and_log_model(
     var_args = vars(args)
     testing = var_args.pop("testing")
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+    explicit_flags = set(var_args.pop("_explicit_flags", set()))
+    catboost_config_path = var_args.pop("catboost_config", None)
 
     X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
 
@@ -130,11 +236,19 @@ def train_and_log_model(
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
+        catboost_file_params = _load_catboost_config(catboost_config_path)
+        cli_catboost_params = {name: var_args.get(name) for name in CATBOOST_PARAM_NAMES if name in var_args}
+        merged_catboost_params = _merge_catboost_params(cli_catboost_params, catboost_file_params, explicit_flags)
+
+        for key, value in merged_catboost_params.items():
+            var_args[key] = value
+
         log_run_parameters(var_args, features, cat_features, len(X_train), len(X_test))
         log_feature_config_artifacts(feature_config)
 
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)
+        catboost_kwargs.pop("cat_features", None)
 
         pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
 

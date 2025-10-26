@@ -1,10 +1,24 @@
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from sklearn.base import BaseEstimator
 from sklearn.model_selection import StratifiedKFold
 
-from bid_predictor.tuning import cross_validation, data_access, feature_tuning, search_config, search_grid
+skopt = pytest.importorskip("skopt")
+from skopt.space import Categorical, Integer, Real  # type: ignore  # noqa: E402
+
+from bid_predictor.tuning import (
+    cross_validation,
+    data_access,
+    feature_tuning,
+    result_writing,
+    search_config,
+    search_grid,
+)
+from tune_catboost import _normalize_structure, normalize_search_value, stringify_param_value
 
 
 class SimpleEstimator(BaseEstimator):
@@ -94,9 +108,39 @@ def test_rebuild_feature_config_respects_overrides():
 
 
 def test_summarize_transform_params_serializes_dicts():
-    overrides = {"outlier": {"feature": {"min": 0, "max": 1}}}
+    overrides = {
+        "outlier": {"feature": {"min": 0, "max": 1}},
+        "impute_median": {"feature": np.bool_(True)},
+    }
     summary = feature_tuning.summarize_transform_params(overrides)
     assert summary["outlier.feature"] == "{\"max\": 1, \"min\": 0}"
+    assert summary["impute_median.feature"] is True
+
+
+def test_normalize_and_stringify_handle_numpy_bool():
+    raw = np.bool_(True)
+    normalized = normalize_search_value(raw)
+    assert isinstance(normalized, bool)
+    assert normalized is True
+
+    stringified = stringify_param_value(np.bool_(False))
+    assert isinstance(stringified, bool)
+    assert stringified is False
+
+
+def test_normalize_structure_recurses_through_collections():
+    payload = {
+        "a": np.int64(5),
+        "b": [np.float32(1.2), {"flag": np.bool_(True)}],
+        "c": {np.int64(1), np.int64(2)},
+    }
+
+    normalized = _normalize_structure(payload)
+
+    assert normalized["a"] == 5 and isinstance(normalized["a"], int)
+    assert isinstance(normalized["b"][0], float)
+    assert normalized["b"][1]["flag"] is True
+    assert normalized["c"] == [1, 2]
 
 
 def test_load_search_config_defaults(tmp_path):
@@ -113,6 +157,42 @@ def test_build_parameter_grid_handles_empty_sections():
     cfg = {"catboost": {"iterations": [10]}, "transform": {}}
     grid = search_grid.build_parameter_grid(cfg)
     assert grid["catboost__iterations"] == [10]
+
+
+def test_build_search_space_infers_dimensions():
+    cfg = {
+        "catboost": {
+            "iterations": [50, 100],
+            "learning_rate": [0.01, 0.1],
+            "depth": [6],
+            "bootstrap_type": ["Bernoulli", "Bayesian"],
+        },
+        "transform": {"outlier": {"feature": [{"max": 5}, {"max": 8}]}}
+    }
+    dimensions = search_grid.build_search_space(cfg)
+    dim_map = {name: dim for name, dim in dimensions}
+
+    assert isinstance(dim_map["catboost__iterations"], Integer)
+    assert isinstance(dim_map["catboost__learning_rate"], Real)
+    assert isinstance(dim_map["catboost__depth"], Categorical)
+    assert dim_map["catboost__depth"].is_constant
+    assert isinstance(dim_map["catboost__bootstrap_type"], Categorical)
+    assert isinstance(dim_map["transform__outlier__feature"], Categorical)
+    outlier_categories = dim_map["transform__outlier__feature"].categories
+    assert all(isinstance(cat, search_grid.FrozenSearchValue) for cat in outlier_categories)
+    assert search_grid.unwrap_search_value(outlier_categories[0]) == {"max": 5}
+
+
+def test_write_best_catboost_params(tmp_path):
+    path = tmp_path / "params.yaml"
+    params = {"iterations": 120, "learning_rate": 0.15}
+
+    written = result_writing.write_best_catboost_params(path, params)
+    assert written == path
+
+    loaded = yaml.safe_load(path.read_text())
+    assert loaded["catboost"]["iterations"] == 120
+    assert pytest.approx(loaded["catboost"]["learning_rate"], rel=1e-6) == 0.15
 
 
 def test_resolve_train_file_uses_environment(monkeypatch):
@@ -142,3 +222,25 @@ def test_load_training_data_uses_pyarrow(monkeypatch):
     monkeypatch.setattr(data_access.ds, "dataset", lambda path, format: DummyDataset(path, format))
     df = data_access.load_training_data("dummy")
     assert list(df.columns) == ["carrier_code", "fare_class", "seats_available"]
+
+
+def test_result_writing_helpers(tmp_path):
+    df = pd.DataFrame({"mean_score": [0.9], "std_score": [0.01]})
+    csv_path = tmp_path / "results" / "scores.csv"
+    saved_csv = result_writing.write_results_csv(csv_path, df)
+    assert saved_csv.exists()
+
+    feature_config = {
+        "feature_metadata": {"feature": {"include_in_model": True, "derived": False}},
+    }
+    yaml_path = tmp_path / "results" / "best.yaml"
+    saved_yaml = result_writing.write_best_feature_config(yaml_path, feature_config)
+    assert saved_yaml.exists()
+    content = yaml.safe_load(saved_yaml.read_text())
+    assert "features" in content and "feature" in content["features"]
+
+    payload = {"score": 0.9}
+    json_path = tmp_path / "results" / "best.json"
+    saved_json = result_writing.write_best_result_json(json_path, payload)
+    assert saved_json.exists()
+    assert json.loads(saved_json.read_text())["score"] == 0.9
