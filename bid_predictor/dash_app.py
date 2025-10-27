@@ -333,20 +333,30 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         marker_color = _BAR_COLOR_SEQUENCE[color_index % len(_BAR_COLOR_SEQUENCE)]
         border_color = status_palette.get(str(status).lower(), "#1b4965")
         snapshot_data = None
+        hover_template_parts = []
+        custom_columns = []
         if "snapshot_num" in grp_sorted.columns:
             snapshot_data = grp_sorted["snapshot_num"].astype(str)
-        hover_template = "Time: %{x}<br>Probability: %{y:.4f}%"
-        if snapshot_data is not None:
-            hover_template = "Snapshot: %{customdata[0]}<br>" + hover_template
+            custom_columns.append(snapshot_data)
+            hover_template_parts.append("Snapshot: %{customdata[0]}<br>")
+        bid_custom_index = len(custom_columns)
+        custom_columns.append(grp_sorted["Bid #"].astype(str))
+        hover_template_parts.append(
+            f"Bid #: %{{customdata[{bid_custom_index}]}}<br>"
+        )
+        hover_template_parts.append("Time: %{x}<br>Probability: %{y:.4f}%")
+        hover_template = "".join(hover_template_parts)
+        custom_data_values = None
+        if custom_columns:
+            combined = pd.concat(custom_columns, axis=1)
+            custom_data_values = combined.to_numpy()
         fig.add_trace(
             go.Bar(
                 x=grp_sorted["time_until_departure_hours"],
                 y=grp_sorted["Acceptance Probability"],
                 name=label,
                 marker=dict(color=marker_color, line=dict(color=border_color, width=1.5)),
-                customdata=None
-                if snapshot_data is None
-                else snapshot_data.to_numpy().reshape(-1, 1),
+                customdata=custom_data_values,
                 hovertemplate=hover_template + "<extra></extra>",
             )
         )
@@ -362,9 +372,26 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
                 x=seats["time_until_departure_hours"],
                 y=seats["seats_available"],
                 name="Seats available",
+                mode="lines",
+                yaxis="y2",
+                line=dict(color="#FF5733", dash="dash"),
+                connectgaps=True,
+                showlegend=False,
+                hoverinfo="skip",
+                legendgroup="seats-available",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=seats["time_until_departure_hours"],
+                y=seats["seats_available"],
+                name="Seats available",
                 mode="lines+markers",
                 yaxis="y2",
                 line=dict(color="#FF5733"),
+                connectgaps=False,
+                legendgroup="seats-available",
+                hovertemplate="Time: %{x}<br>Seats available: %{y}<extra></extra>",
             )
         )
 
@@ -387,6 +414,7 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         ),
         margin=dict(r=220),
         height=760,
+        uirevision="prediction-graph",
     )
     if "seats_available" in work.columns:
         fig.update_layout(yaxis2=dict(title="Seats available", overlaying="y", side="right"))
