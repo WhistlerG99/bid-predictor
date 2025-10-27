@@ -97,6 +97,37 @@ The tuner respects additional options such as `--task-type`, `--devices`, and
 `--testing`, mirroring the behaviour of `train.py`. Results can also be tracked
 with MLflow if the service is configured in the environment.
 
+## Using the Dash bid prediction playground
+
+An interactive Dash UI ships with the package to help explore model
+predictions for individual flights and bids. After installing the optional
+dependencies from `requirements.txt`, launch the app with:
+
+```bash
+python -m bid_predictor.dash_app
+```
+
+Open http://127.0.0.1:8050/ in your browser. The interface guides you through
+the following steps:
+
+1. **Load a dataset snapshot.** Enter the path to the parquet snapshots file
+   (the default resolves to the same location used by the training scripts) and
+   click **Load dataset**. This populates the flight dropdown with all available
+   flight keys.
+2. **Load an MLflow model.** Provide the tracking URI for the MLflow server, the
+   registered model name, and the stage or version to score. Press **Load
+   model** to cache the model locally.
+3. **Select and edit bids.** Choose a flight from the dropdown to display every
+   snapshot for that itinerary. You can tweak feature values directly in the
+   table to simulate alternative scenarios.
+4. **Review predictions.** When a model is loaded, the table of bids updates
+   with acceptance probabilities and the accompanying chart mirrors the
+   `log_prob_examples` visualization from `bid_predictor/tracking.py`, including
+   the seats-available trend when present.
+
+Any changes you make in the bid table automatically refresh both the prediction
+grid and the plot so you can iterate quickly on counterfactual inputs.
+
 ## Running the tests
 
 The project uses `pytest` for both unit and integration coverage. After
