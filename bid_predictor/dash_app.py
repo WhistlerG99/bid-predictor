@@ -3,12 +3,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Tuple
+from uuid import uuid4
 
 import mlflow
 import pandas as pd
 from dash import Dash, Input, Output, State, callback_context, dash_table, dcc, html, no_update
 from mlflow.exceptions import MlflowException
 import plotly.graph_objects as go
+from plotly import colors as plotly_colors
 
 from .feature_config import _GROUPBY_KEY_FEATURES, load_feature_config
 from .tuning.data_access import load_training_data, resolve_train_file
@@ -67,6 +69,65 @@ DISPLAY_FEATURE_ROWS = [
     "usd_base_amount_75%",
     "Acceptance Probability",
 ]
+
+_USD_PERCENT_COLUMNS = {
+    "usd_base_amount_25%": 0.25,
+    "usd_base_amount_50%": 0.50,
+    "usd_base_amount_75%": 0.75,
+}
+
+_BAR_COLOR_SEQUENCE = (
+    getattr(plotly_colors.qualitative, "G10", None)
+    or getattr(plotly_colors.qualitative, "Plotly", None)
+    or [
+        "#006d77",
+        "#ff7f50",
+        "#6a4c93",
+        "#4361ee",
+        "#f4a261",
+        "#2a9d8f",
+        "#e63946",
+        "#8338ec",
+        "#ffbe0b",
+        "#3a86ff",
+    ]
+)
+
+
+def _safe_float(value: object) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(result):
+        return None
+    return result
+
+
+def _normalize_offer_time(record: Dict[str, object]) -> None:
+    offer_value = _safe_float(record.get("offer_time"))
+    if offer_value is None:
+        return
+    record["offer_time"] = round(offer_value, 4)
+
+
+def _refresh_usd_quantiles(record: Dict[str, object]) -> None:
+    base_amount = _safe_float(record.get("usd_base_amount"))
+    if base_amount is None:
+        return
+    record["usd_base_amount"] = base_amount
+    for column, fraction in _USD_PERCENT_COLUMNS.items():
+        record[column] = round(base_amount * fraction, 2)
+
+
+def _prepare_bid_record(record: Dict[str, object]) -> Dict[str, object]:
+    prepared = dict(record)
+    prepared.pop("Acceptance Probability", None)
+    _normalize_offer_time(prepared)
+    _refresh_usd_quantiles(prepared)
+    return prepared
 
 
 def _prepare_prediction_dataframe(table_records: Iterable[Dict[str, str]]) -> pd.DataFrame:
@@ -130,15 +191,16 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         "unknown": "#5e60ce",
     }
 
-    for bid_id, grp in work.groupby("Bid #"):
+    for color_index, (bid_id, grp) in enumerate(work.groupby("Bid #")):
         grp_sorted = grp.sort_values("time_until_departure_hours")
         status = grp_sorted["offer_status"].iloc[-1]
         label = f"Bid {bid_id} - {status}"
-        marker_color = status_palette.get(str(status).lower(), "#1b4965")
+        marker_color = _BAR_COLOR_SEQUENCE[color_index % len(_BAR_COLOR_SEQUENCE)]
+        border_color = status_palette.get(str(status).lower(), "#1b4965")
         snapshot_data = None
         if "snapshot_num" in grp_sorted.columns:
             snapshot_data = grp_sorted["snapshot_num"].astype(str)
-        hover_template = "Time: %{x}<br>Probability: %{y:.3f}"
+        hover_template = "Time: %{x}<br>Probability: %{y:.4f}%"
         if snapshot_data is not None:
             hover_template = "Snapshot: %{customdata[0]}<br>" + hover_template
         fig.add_trace(
@@ -146,7 +208,7 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
                 x=grp_sorted["time_until_departure_hours"],
                 y=grp_sorted["Acceptance Probability"],
                 name=label,
-                marker=dict(color=marker_color),
+                marker=dict(color=marker_color, line=dict(color=border_color, width=1.5)),
                 customdata=None
                 if snapshot_data is None
                 else snapshot_data.to_numpy().reshape(-1, 1),
@@ -176,7 +238,7 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         barmode="group",
         title="Acceptance probability by snapshot",
         xaxis_title="Time until departure (hours or snapshot)",
-        yaxis=dict(title="Acceptance probability", rangemode="tozero"),
+        yaxis=dict(title="Acceptance probability (%)", rangemode="tozero"),
         legend=dict(
             title="Bid and status",
             orientation="v",
@@ -240,13 +302,15 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
 
     predictions = model.predict_proba(feature_df)
     if isinstance(predictions, pd.DataFrame) and "Acceptance Probability" in predictions.columns:
-        df["Acceptance Probability"] = predictions["Acceptance Probability"].values
+        acceptance = predictions["Acceptance Probability"].astype(float).to_numpy()
     else:
         # mlflow.pyfunc returns numpy array; expect probability in second column
         if predictions.ndim == 2 and predictions.shape[1] > 1:
-            df["Acceptance Probability"] = predictions[:, 1]
+            acceptance = predictions[:, 1]
         else:
-            df["Acceptance Probability"] = predictions
+            acceptance = predictions
+    acceptance_series = pd.Series(acceptance, index=df.index, dtype="float64") * 100.0
+    df["Acceptance Probability"] = acceptance_series.round(4)
     if model_warning:
         df.attrs["model_warning"] = model_warning
     return df
@@ -367,6 +431,7 @@ def create_app() -> Dash:
             dcc.Store(id="bid-records-store"),
             dcc.Store(id="snapshot-meta-store"),
             dcc.Store(id="prediction-store"),
+            dcc.Store(id="removed-bids-store"),
             html.Div(
                 [
                     html.Div(
@@ -604,6 +669,20 @@ def create_app() -> Dash:
                                                     "boxShadow": "0 2px 6px rgba(231, 29, 54, 0.4)",
                                                 },
                                             ),
+                                            html.Button(
+                                                "Restore bids",
+                                                id="restore-bid",
+                                                n_clicks=0,
+                                                style={
+                                                    "backgroundColor": "#1b4965",
+                                                    "color": "white",
+                                                    "border": "none",
+                                                    "padding": "0.5rem 1rem",
+                                                    "borderRadius": "6px",
+                                                    "marginLeft": "0.5rem",
+                                                    "boxShadow": "0 2px 6px rgba(27, 73, 101, 0.35)",
+                                                },
+                                            ),
                                         ],
                                         style={"marginBottom": "0.75rem"},
                                     ),
@@ -613,6 +692,17 @@ def create_app() -> Dash:
                                         value=[],
                                         multi=True,
                                         placeholder="Select bids to delete",
+                                        style={
+                                            "marginBottom": "0.75rem",
+                                            "backgroundColor": "#ffffff",
+                                        },
+                                    ),
+                                    dcc.Dropdown(
+                                        id="bid-restore-selector",
+                                        options=[],
+                                        value=[],
+                                        multi=True,
+                                        placeholder="Select removed bids to restore",
                                         style={
                                             "marginBottom": "0.75rem",
                                             "backgroundColor": "#ffffff",
@@ -874,34 +964,42 @@ def create_app() -> Dash:
         Output("snapshot-feedback", "children"),
         Output("snapshot-meta-store", "data"),
         Output("bid-records-store", "data"),
+        Output("removed-bids-store", "data"),
         Input("snapshot-dropdown", "value"),
         Input("add-bid", "n_clicks"),
         Input("delete-bid", "n_clicks"),
+        Input("restore-bid", "n_clicks"),
         State("bid-records-store", "data"),
         State("bid-table", "selected_columns"),
         State("bid-delete-selector", "value"),
+        State("bid-restore-selector", "value"),
         State("carrier-dropdown", "value"),
         State("flight-number-dropdown", "value"),
         State("travel-date-dropdown", "value"),
         State("upgrade-dropdown", "value"),
         State("dataset-path-store", "data"),
         State("snapshot-meta-store", "data"),
+        State("removed-bids-store", "data"),
     )
     def update_snapshot_view(
         snapshot_value: Optional[str],
         add_clicks: int,
         delete_clicks: int,
+        restore_clicks: int,
         existing_records: Optional[List[Dict[str, str]]],
         selected_columns: Optional[List[str]],
         delete_selector: Optional[List[int]],
+        restore_selector: Optional[List[str]],
         carrier: Optional[str],
         flight_number: Optional[str],
         travel_date: Optional[str],
         upgrade_type: Optional[str],
         dataset_path: Optional[str],
         snapshot_meta: Optional[Dict[str, str]],
+        removed_store: Optional[List[Dict[str, object]]],
     ):
         triggered = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
+        existing_removed = list(removed_store or [])
 
         if not dataset_path:
             return (
@@ -909,6 +1007,7 @@ def create_app() -> Dash:
                 "",
                 None,
                 None,
+                existing_removed,
             )
 
         dataset = _load_dataset_cached(dataset_path)
@@ -919,6 +1018,7 @@ def create_app() -> Dash:
                 "",
                 snapshot_meta,
                 existing_records,
+                existing_removed,
             )
 
         travel_date_dt = pd.to_datetime(travel_date).date()
@@ -952,10 +1052,32 @@ def create_app() -> Dash:
                     next_bid = len(existing_records) + 1
             new_bid["Bid #"] = next_bid
             new_bid.setdefault("offer_status", "pending")
-            new_data = existing_records + [new_bid]
+            prepared_bid = _prepare_bid_record(new_bid)
+            new_data = existing_records + [prepared_bid]
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
-            return summary_block, "", new_meta, new_data
+            return summary_block, "", new_meta, new_data, existing_removed
+
+        if triggered == "restore-bid":
+            working_records = list(existing_records or [])
+            if not restore_selector:
+                return summary_block, "Select removed bids to restore.", snapshot_meta, working_records, existing_removed
+            restore_ids = set(restore_selector)
+            restored_records: List[Dict[str, object]] = []
+            remaining_removed: List[Dict[str, object]] = []
+            for item in existing_removed:
+                if item.get("id") in restore_ids:
+                    restored_records.append(_prepare_bid_record(item.get("record", {})))
+                else:
+                    remaining_removed.append(item)
+            if not restored_records:
+                return summary_block, "No matching removed bids found.", snapshot_meta, working_records, existing_removed
+            working = working_records + restored_records
+            for pos, record in enumerate(working, start=1):
+                record["Bid #"] = pos
+            new_meta = dict(snapshot_meta or {})
+            new_meta["num_offers"] = len(working)
+            return summary_block, "", new_meta, working, remaining_removed
 
         if triggered == "delete-bid" and existing_records:
             selections = set()
@@ -969,19 +1091,28 @@ def create_app() -> Dash:
                 selections.update(int(idx) for idx in delete_selector)
             indices_to_remove = sorted(selections, reverse=True)
             if not indices_to_remove:
-                return summary_block, "Select bids to delete.", snapshot_meta, existing_records
+                return summary_block, "Select bids to delete.", snapshot_meta, existing_records, existing_removed
             working = list(existing_records)
+            removed_entries: List[Dict[str, object]] = []
             for idx in indices_to_remove:
                 if 0 <= idx < len(working):
-                    working.pop(idx)
+                    removed_record = working.pop(idx)
+                    removed_entries.append(
+                        {
+                            "id": str(uuid4()),
+                            "label": f"Bid {removed_record.get('Bid #') or idx + 1}",
+                            "record": removed_record,
+                        }
+                    )
             for pos, record in enumerate(working, start=1):
                 record["Bid #"] = pos
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
-            return summary_block, "", new_meta, working
+            updated_removed = existing_removed + removed_entries
+            return summary_block, "", new_meta, working, updated_removed
 
         if triggered != "snapshot-dropdown":
-            return summary_block, "", snapshot_meta, existing_records
+            return summary_block, "", snapshot_meta, existing_records, existing_removed
 
         mask = (
             (dataset["carrier_code"] == carrier)
@@ -997,6 +1128,7 @@ def create_app() -> Dash:
                 "No rows found for the selected flight.",
                 None,
                 None,
+                [],
             )
 
         if "snapshot_num" not in subset.columns:
@@ -1005,6 +1137,7 @@ def create_app() -> Dash:
                 "Snapshot information is unavailable in this dataset.",
                 None,
                 None,
+                [],
             )
 
         snapshot_df = subset.loc[
@@ -1017,6 +1150,7 @@ def create_app() -> Dash:
                 "No rows found for the selected snapshot.",
                 None,
                 None,
+                [],
             )
 
         if "Bid #" not in snapshot_df.columns:
@@ -1053,7 +1187,7 @@ def create_app() -> Dash:
             delta = departure_ts - current_ts
             delta_hours = max(delta.total_seconds() / 3600, 0)
 
-        base_data = snapshot_df.to_dict("records")
+        base_data = [_prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
 
         snapshot_meta = {
             "carrier": carrier,
@@ -1068,7 +1202,7 @@ def create_app() -> Dash:
             "time_before_departure_hours": delta_hours,
         }
 
-        return summary_block, "", snapshot_meta, base_data
+        return summary_block, "", snapshot_meta, base_data, []
 
     @app.callback(
         Output("seats-available-input", "value"),
@@ -1131,6 +1265,9 @@ def create_app() -> Dash:
             current_len = len(updated_records)
             if offers_value == current_len:
                 updated_meta["num_offers"] = offers_value
+                for record in updated_records:
+                    _normalize_offer_time(record)
+                    _refresh_usd_quantiles(record)
                 return updated_records, updated_meta
             if offers_value > current_len and current_len > 0:
                 template = updated_records[0]
@@ -1138,11 +1275,13 @@ def create_app() -> Dash:
                     new_bid = dict(template)
                     new_bid["Bid #"] = len(updated_records) + 1
                     new_bid.setdefault("offer_status", "pending")
-                    updated_records.append(new_bid)
+                    updated_records.append(_prepare_bid_record(new_bid))
             elif offers_value < current_len:
                 updated_records = updated_records[: offers_value]
             for pos, record in enumerate(updated_records, start=1):
                 record["Bid #"] = pos
+                _normalize_offer_time(record)
+                _refresh_usd_quantiles(record)
             updated_meta["num_offers"] = len(updated_records)
             return updated_records, updated_meta
 
@@ -1199,9 +1338,36 @@ def create_app() -> Dash:
             for idx, record in enumerate(records):
                 column_id = f"bid_{idx}"
                 if feature == "Acceptance Probability":
-                    row[column_id] = prediction_map.get(column_id)
+                    value = prediction_map.get(column_id)
+                    if value is None:
+                        row[column_id] = value
+                    else:
+                        try:
+                            row[column_id] = round(float(value), 4)
+                        except (TypeError, ValueError):
+                            row[column_id] = value
+                    continue
+                value = record.get(feature)
+                if feature == "fare_class":
+                    row[column_id] = value
+                elif feature == "item_count":
+                    numeric = _safe_float(value)
+                    row[column_id] = int(numeric) if numeric is not None else value
+                elif feature == "offer_time":
+                    numeric = _safe_float(value)
+                    row[column_id] = round(numeric, 4) if numeric is not None else value
+                elif feature == "usd_base_amount":
+                    numeric = _safe_float(value)
+                    row[column_id] = round(numeric, 2) if numeric is not None else value
+                elif feature in _USD_PERCENT_COLUMNS:
+                    numeric = _safe_float(value)
+                    row[column_id] = round(numeric, 2) if numeric is not None else value
+                elif feature.startswith("multiplier"):
+                    numeric = _safe_float(value)
+                    row[column_id] = round(numeric, 4) if numeric is not None else value
                 else:
-                    row[column_id] = record.get(feature)
+                    numeric = _safe_float(value)
+                    row[column_id] = numeric if numeric is not None else value
             data_rows.append(row)
 
         style_rules.append(
@@ -1212,6 +1378,15 @@ def create_app() -> Dash:
                 "pointerEvents": "none",
             }
         )
+
+        for percent_column in _USD_PERCENT_COLUMNS:
+            style_rules.append(
+                {
+                    "if": {"filter_query": f'{{Feature}} = "{percent_column}"'},
+                    "backgroundColor": "#f8fafc",
+                    "pointerEvents": "none",
+                }
+            )
 
         return columns, data_rows, style_rules
 
@@ -1229,6 +1404,21 @@ def create_app() -> Dash:
                 "value": idx,
             }
             for idx, record in enumerate(records)
+        ]
+        return options, []
+
+    @app.callback(
+        Output("bid-restore-selector", "options"),
+        Output("bid-restore-selector", "value"),
+        Input("removed-bids-store", "data"),
+    )
+    def sync_restore_selector(removed: Optional[List[Dict[str, object]]]):
+        if not removed:
+            return [], []
+        options = [
+            {"label": item.get("label") or f"Removed bid {idx + 1}", "value": item.get("id")}
+            for idx, item in enumerate(removed)
+            if item.get("id") is not None
         ]
         return options, []
 
@@ -1263,7 +1453,29 @@ def create_app() -> Dash:
                     continue
                 value_row = feature_map.get(feature)
                 if value_row is not None and column_id in value_row:
-                    record[feature] = value_row[column_id]
+                    value = value_row[column_id]
+                    if feature == "fare_class":
+                        record[feature] = value
+                    elif feature == "item_count":
+                        numeric = _safe_float(value)
+                        record[feature] = int(numeric) if numeric is not None else value
+                    elif feature == "offer_time":
+                        numeric = _safe_float(value)
+                        record[feature] = round(numeric, 4) if numeric is not None else value
+                    elif feature == "usd_base_amount":
+                        numeric = _safe_float(value)
+                        record[feature] = numeric if numeric is not None else value
+                    elif feature in _USD_PERCENT_COLUMNS:
+                        # recomputed from usd_base_amount after loop
+                        continue
+                    elif feature.startswith("multiplier"):
+                        numeric = _safe_float(value)
+                        record[feature] = round(numeric, 4) if numeric is not None else value
+                    else:
+                        numeric = _safe_float(value)
+                        record[feature] = numeric if numeric is not None else value
+            _normalize_offer_time(record)
+            _refresh_usd_quantiles(record)
         return updated_records
 
     @app.callback(
@@ -1349,11 +1561,17 @@ def create_app() -> Dash:
         predictions = {}
         for idx, _ in enumerate(records):
             column_id = f"bid_{idx}"
-            predictions[column_id] = (
-                table_pred_df.iloc[idx].get("Acceptance Probability")
-                if idx < len(table_pred_df)
-                else None
-            )
+            if idx < len(table_pred_df):
+                value = table_pred_df.iloc[idx].get("Acceptance Probability")
+                if value is None or pd.isna(value):
+                    predictions[column_id] = None
+                else:
+                    try:
+                        predictions[column_id] = round(float(value), 4)
+                    except (TypeError, ValueError):
+                        predictions[column_id] = value
+            else:
+                predictions[column_id] = None
 
         return figure, predictions, warning
     return app
