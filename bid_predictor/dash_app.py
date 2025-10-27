@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Tuple
 from uuid import uuid4
@@ -568,6 +569,7 @@ def create_app() -> Dash:
             dcc.Store(id="removed-bids-store"),
             dcc.Store(id="baseline-bid-records-store"),
             dcc.Store(id="baseline-snapshot-meta-store"),
+            dcc.Store(id="snapshot-history-store"),
             html.Div(
                 [
                     html.Div(
@@ -1117,6 +1119,7 @@ def create_app() -> Dash:
         Output("removed-bids-store", "data"),
         Output("baseline-bid-records-store", "data"),
         Output("baseline-snapshot-meta-store", "data"),
+        Output("snapshot-history-store", "data"),
         Input("snapshot-dropdown", "value"),
         Input("add-bid", "n_clicks"),
         Input("delete-bid", "n_clicks"),
@@ -1135,6 +1138,7 @@ def create_app() -> Dash:
         State("removed-bids-store", "data"),
         State("baseline-bid-records-store", "data"),
         State("baseline-snapshot-meta-store", "data"),
+        State("snapshot-history-store", "data"),
     )
     def update_snapshot_view(
         snapshot_value: Optional[str],
@@ -1155,6 +1159,7 @@ def create_app() -> Dash:
         removed_store: Optional[List[Dict[str, object]]],
         baseline_records_store: Optional[List[Dict[str, object]]],
         baseline_meta_store: Optional[Dict[str, object]],
+        snapshot_history_store: Optional[Dict[str, object]],
     ):
         triggered = (
             callback_context.triggered[0]["prop_id"].split(".")[0]
@@ -1164,6 +1169,50 @@ def create_app() -> Dash:
         existing_removed = list(removed_store or [])
         baseline_records = [dict(record) for record in baseline_records_store or []]
         baseline_meta = dict(baseline_meta_store or {})
+        snapshot_state = deepcopy(snapshot_history_store or {})
+
+        def update_snapshot_state_entry(
+            snapshot_key: Optional[str],
+            records: Optional[List[Dict[str, object]]],
+            meta: Optional[Dict[str, object]],
+            removed: Optional[List[Dict[str, object]]],
+            baseline_records_entry: Optional[List[Dict[str, object]]] = None,
+            baseline_meta_entry: Optional[Dict[str, object]] = None,
+        ) -> None:
+            if snapshot_key is None:
+                return
+            entry = snapshot_state.get(str(snapshot_key), {})
+            entry["records"] = [dict(record) for record in records or []]
+            entry["meta"] = dict(meta) if meta else None
+            entry["removed"] = [dict(item) for item in removed or []]
+            if baseline_records_entry is not None:
+                entry["baseline_records"] = [
+                    dict(record) for record in baseline_records_entry or []
+                ]
+            elif "baseline_records" not in entry:
+                entry["baseline_records"] = []
+            if baseline_meta_entry is not None:
+                entry["baseline_meta"] = (
+                    dict(baseline_meta_entry) if baseline_meta_entry else None
+                )
+            elif "baseline_meta" not in entry:
+                entry["baseline_meta"] = None
+            snapshot_state[str(snapshot_key)] = entry
+
+        def get_snapshot_state_entry(snapshot_key: Optional[str]):
+            if snapshot_key is None:
+                return None
+            return snapshot_state.get(str(snapshot_key))
+
+        current_snapshot = snapshot_meta.get("snapshot") if snapshot_meta else None
+        update_snapshot_state_entry(
+            current_snapshot,
+            existing_records,
+            snapshot_meta,
+            existing_removed,
+            baseline_records if baseline_records_store is not None else None,
+            baseline_meta if baseline_meta_store is not None else None,
+        )
 
         if not dataset_path:
             return (
@@ -1174,6 +1223,7 @@ def create_app() -> Dash:
                 existing_removed,
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         dataset = _load_dataset_cached(dataset_path)
@@ -1187,6 +1237,7 @@ def create_app() -> Dash:
                 existing_removed,
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         travel_date_dt = pd.to_datetime(travel_date).date()
@@ -1211,11 +1262,20 @@ def create_app() -> Dash:
                     existing_removed,
                     no_update,
                     no_update,
+                    snapshot_state,
                 )
             restored_records = [dict(record) for record in baseline_records]
             restored_meta = dict(baseline_meta) if baseline_meta else dict(snapshot_meta or {})
             restored_meta["num_offers"] = len(restored_records)
             _recompute_usd_metrics(restored_records)
+            update_snapshot_state_entry(
+                restored_meta.get("snapshot", current_snapshot),
+                restored_records,
+                restored_meta,
+                [],
+                baseline_records,
+                baseline_meta or baseline_meta_store,
+            )
             return (
                 summary_block,
                 "Restored snapshot to original values.",
@@ -1224,6 +1284,7 @@ def create_app() -> Dash:
                 [],
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         if triggered == "add-bid" and existing_records:
@@ -1242,7 +1303,24 @@ def create_app() -> Dash:
             _recompute_usd_metrics(new_data)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
-            return summary_block, "", new_meta, new_data, existing_removed, no_update, no_update
+            update_snapshot_state_entry(
+                new_meta.get("snapshot", current_snapshot),
+                new_data,
+                new_meta,
+                existing_removed,
+                baseline_records if baseline_records_store is not None else None,
+                baseline_meta if baseline_meta_store is not None else None,
+            )
+            return (
+                summary_block,
+                "",
+                new_meta,
+                new_data,
+                existing_removed,
+                no_update,
+                no_update,
+                snapshot_state,
+            )
 
         if triggered == "restore-bid":
             working_records = list(existing_records or [])
@@ -1255,6 +1333,7 @@ def create_app() -> Dash:
                     existing_removed,
                     no_update,
                     no_update,
+                    snapshot_state,
                 )
             restore_ids = set(restore_selector)
             restored_records: List[Dict[str, object]] = []
@@ -1273,12 +1352,30 @@ def create_app() -> Dash:
                     existing_removed,
                     no_update,
                     no_update,
+                    snapshot_state,
                 )
             working = _sort_records_by_bid(working_records + restored_records)
             _recompute_usd_metrics(working)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
-            return summary_block, "", new_meta, working, remaining_removed, no_update, no_update
+            update_snapshot_state_entry(
+                new_meta.get("snapshot", current_snapshot),
+                working,
+                new_meta,
+                remaining_removed,
+                baseline_records if baseline_records_store is not None else None,
+                baseline_meta if baseline_meta_store is not None else None,
+            )
+            return (
+                summary_block,
+                "",
+                new_meta,
+                working,
+                remaining_removed,
+                no_update,
+                no_update,
+                snapshot_state,
+            )
 
         if triggered == "delete-bid" and existing_records:
             selections = set()
@@ -1300,6 +1397,7 @@ def create_app() -> Dash:
                     existing_removed,
                     no_update,
                     no_update,
+                    snapshot_state,
                 )
             working = list(existing_records)
             removed_entries: List[Dict[str, object]] = []
@@ -1318,6 +1416,14 @@ def create_app() -> Dash:
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             updated_removed = existing_removed + removed_entries
+            update_snapshot_state_entry(
+                new_meta.get("snapshot", current_snapshot),
+                working,
+                new_meta,
+                updated_removed,
+                baseline_records if baseline_records_store is not None else None,
+                baseline_meta if baseline_meta_store is not None else None,
+            )
             return (
                 summary_block,
                 "",
@@ -1326,6 +1432,7 @@ def create_app() -> Dash:
                 updated_removed,
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         if triggered != "snapshot-dropdown":
@@ -1337,6 +1444,7 @@ def create_app() -> Dash:
                 existing_removed,
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         if snapshot_value is None:
@@ -1348,6 +1456,7 @@ def create_app() -> Dash:
                 existing_removed,
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         mask = (
@@ -1359,6 +1468,14 @@ def create_app() -> Dash:
         subset = dataset.loc[mask].copy()
 
         if subset.empty:
+            update_snapshot_state_entry(
+                snapshot_value,
+                [],
+                None,
+                [],
+                [],
+                None,
+            )
             return (
                 summary_block,
                 "No rows found for the selected flight.",
@@ -1367,9 +1484,18 @@ def create_app() -> Dash:
                 [],
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         if "snapshot_num" not in subset.columns:
+            update_snapshot_state_entry(
+                snapshot_value,
+                [],
+                None,
+                [],
+                [],
+                None,
+            )
             return (
                 summary_block,
                 "Snapshot information is unavailable in this dataset.",
@@ -1378,6 +1504,51 @@ def create_app() -> Dash:
                 [],
                 no_update,
                 no_update,
+                snapshot_state,
+            )
+
+        stored_entry = get_snapshot_state_entry(snapshot_value)
+        if stored_entry is not None and (
+            stored_entry.get("records") is not None
+            or stored_entry.get("meta") is not None
+            or stored_entry.get("removed")
+        ):
+            stored_records = [dict(record) for record in stored_entry.get("records") or []]
+            stored_meta = dict(stored_entry.get("meta") or {})
+            if stored_meta:
+                stored_meta.setdefault("snapshot", snapshot_value)
+            else:
+                stored_meta = {"snapshot": snapshot_value}
+            stored_removed = [dict(item) for item in stored_entry.get("removed") or []]
+            baseline_records_entry = stored_entry.get("baseline_records")
+            baseline_meta_entry = stored_entry.get("baseline_meta")
+            baseline_records_out = (
+                [dict(record) for record in baseline_records_entry]
+                if baseline_records_entry is not None
+                else None
+            )
+            baseline_meta_out = (
+                dict(baseline_meta_entry)
+                if baseline_meta_entry is not None
+                else dict(stored_meta)
+            )
+            update_snapshot_state_entry(
+                snapshot_value,
+                stored_records,
+                stored_meta,
+                stored_removed,
+                baseline_records_out,
+                baseline_meta_out,
+            )
+            return (
+                summary_block,
+                "",
+                stored_meta,
+                stored_records,
+                stored_removed,
+                baseline_records_out,
+                baseline_meta_out,
+                snapshot_state,
             )
 
         label_map, label_column = _compute_bid_label_map(subset)
@@ -1386,6 +1557,14 @@ def create_app() -> Dash:
         ].copy()
 
         if snapshot_df.empty:
+            update_snapshot_state_entry(
+                snapshot_value,
+                [],
+                None,
+                [],
+                [],
+                None,
+            )
             return (
                 summary_block,
                 "No rows found for the selected snapshot.",
@@ -1394,6 +1573,7 @@ def create_app() -> Dash:
                 [],
                 no_update,
                 no_update,
+                snapshot_state,
             )
 
         snapshot_df = _apply_bid_labels(snapshot_df, label_map, label_column)
@@ -1450,6 +1630,14 @@ def create_app() -> Dash:
 
         baseline_records = [dict(record) for record in base_data]
         baseline_meta = dict(snapshot_meta)
+        update_snapshot_state_entry(
+            snapshot_value,
+            base_data,
+            snapshot_meta,
+            [],
+            baseline_records,
+            baseline_meta,
+        )
         return (
             summary_block,
             "",
@@ -1458,6 +1646,7 @@ def create_app() -> Dash:
             [],
             baseline_records,
             baseline_meta,
+            snapshot_state,
         )
 
     @app.callback(
@@ -1483,12 +1672,14 @@ def create_app() -> Dash:
     @app.callback(
         Output("bid-records-store", "data", allow_duplicate=True),
         Output("snapshot-meta-store", "data", allow_duplicate=True),
+        Output("snapshot-history-store", "data", allow_duplicate=True),
         Input("seats-available-input", "value"),
         Input("offers-input", "value"),
         Input("time-before-days-input", "value"),
         Input("time-before-hours-input", "value"),
         State("bid-records-store", "data"),
         State("snapshot-meta-store", "data"),
+        State("snapshot-history-store", "data"),
         prevent_initial_call=True,
     )
     def apply_summary_overrides(
@@ -1498,26 +1689,49 @@ def create_app() -> Dash:
         hours_value: Optional[int],
         records: Optional[List[Dict[str, str]]],
         meta: Optional[Dict[str, str]],
+        snapshot_history_store: Optional[Dict[str, object]],
     ):
         if records is None or meta is None:
-            return no_update, no_update
+            return no_update, no_update, no_update
 
         triggered = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
 
         updated_records = [dict(record) for record in records]
         updated_meta = dict(meta)
 
+        snapshot_state = deepcopy(snapshot_history_store or {})
+        snapshot_key = meta.get("snapshot") if meta else None
+
+        def persist_state(records_payload, meta_payload):
+            if snapshot_key is None:
+                return snapshot_state
+            entry = snapshot_state.get(str(snapshot_key), {})
+            removed = entry.get("removed", [])
+            baseline_records_entry = entry.get("baseline_records")
+            baseline_meta_entry = entry.get("baseline_meta")
+            entry["records"] = [dict(item) for item in records_payload or []]
+            entry["meta"] = dict(meta_payload) if meta_payload else None
+            if baseline_records_entry is not None:
+                entry["baseline_records"] = [
+                    dict(item) for item in baseline_records_entry or []
+                ]
+            if baseline_meta_entry is not None:
+                entry["baseline_meta"] = dict(baseline_meta_entry)
+            entry["removed"] = [dict(item) for item in removed]
+            snapshot_state[str(snapshot_key)] = entry
+            return snapshot_state
+
         if triggered == "seats-available-input":
             if seats_value is None:
-                return no_update, no_update
+                return no_update, no_update, no_update
             for record in updated_records:
                 record["seats_available"] = seats_value
             updated_meta["seats_available"] = seats_value
-            return updated_records, updated_meta
+            return updated_records, updated_meta, persist_state(updated_records, updated_meta)
 
         if triggered == "offers-input":
             if offers_value is None or offers_value < 0:
-                return no_update, no_update
+                return no_update, no_update, no_update
             updated_records = _sort_records_by_bid(updated_records)
             current_len = len(updated_records)
             if offers_value == current_len:
@@ -1525,7 +1739,11 @@ def create_app() -> Dash:
                 for record in updated_records:
                     _normalize_offer_time(record)
                 _recompute_usd_metrics(updated_records)
-                return updated_records, updated_meta
+                return (
+                    updated_records,
+                    updated_meta,
+                    persist_state(updated_records, updated_meta),
+                )
             if offers_value > current_len and current_len > 0:
                 template = updated_records[0]
                 for _ in range(offers_value - current_len):
@@ -1543,11 +1761,15 @@ def create_app() -> Dash:
                 _normalize_offer_time(record)
             _recompute_usd_metrics(updated_records)
             updated_meta["num_offers"] = len(updated_records)
-            return updated_records, updated_meta
+            return (
+                updated_records,
+                updated_meta,
+                persist_state(updated_records, updated_meta),
+            )
 
         if triggered in {"time-before-days-input", "time-before-hours-input"}:
             if days_value is None and hours_value is None:
-                return no_update, no_update
+                return no_update, no_update, no_update
             hours_value = hours_value or 0
             days_value = days_value or 0
             total_hours = max(days_value * 24 + hours_value, 0)
@@ -1559,9 +1781,13 @@ def create_app() -> Dash:
                     record["current_timestamp"] = new_current.isoformat()
                 updated_meta["current_timestamp"] = new_current.isoformat()
             updated_meta["time_before_departure_hours"] = total_hours
-            return updated_records, updated_meta
+            return (
+                updated_records,
+                updated_meta,
+                persist_state(updated_records, updated_meta),
+            )
 
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     @app.callback(
         Output("bid-table", "columns"),
@@ -1695,10 +1921,13 @@ def create_app() -> Dash:
 
     @app.callback(
         Output("bid-records-store", "data", allow_duplicate=True),
+        Output("snapshot-history-store", "data", allow_duplicate=True),
         Input("bid-table", "data_timestamp"),
         State("bid-table", "data"),
         State("bid-table", "columns"),
         State("bid-records-store", "data"),
+        State("snapshot-meta-store", "data"),
+        State("snapshot-history-store", "data"),
         prevent_initial_call=True,
     )
     def persist_table_edits(
@@ -1706,9 +1935,11 @@ def create_app() -> Dash:
         table_data: Optional[List[Dict[str, object]]],
         columns: Optional[List[Dict[str, object]]],
         records: Optional[List[Dict[str, object]]],
+        snapshot_meta: Optional[Dict[str, object]],
+        snapshot_history_store: Optional[Dict[str, object]],
     ):
         if not data_timestamp or not table_data or not columns or not records:
-            return no_update
+            return no_update, no_update
 
         updated_records = [dict(record) for record in records]
         feature_map = {row.get("Feature"): row for row in table_data}
@@ -1749,7 +1980,24 @@ def create_app() -> Dash:
                         record[feature] = numeric if numeric is not None else value
             _normalize_offer_time(record)
         _recompute_usd_metrics(updated_records)
-        return updated_records
+        snapshot_state = deepcopy(snapshot_history_store or {})
+        snapshot_key = snapshot_meta.get("snapshot") if snapshot_meta else None
+        if snapshot_key is not None:
+            entry = snapshot_state.get(str(snapshot_key), {})
+            removed = entry.get("removed", [])
+            baseline_records_entry = entry.get("baseline_records")
+            baseline_meta_entry = entry.get("baseline_meta")
+            entry["records"] = [dict(item) for item in updated_records]
+            entry["meta"] = dict(snapshot_meta) if snapshot_meta else None
+            if baseline_records_entry is not None:
+                entry["baseline_records"] = [
+                    dict(item) for item in baseline_records_entry or []
+                ]
+            if baseline_meta_entry is not None:
+                entry["baseline_meta"] = dict(baseline_meta_entry)
+            entry["removed"] = [dict(item) for item in removed]
+            snapshot_state[str(snapshot_key)] = entry
+        return updated_records, snapshot_state
 
     @app.callback(
         Output("prediction-graph", "figure"),
