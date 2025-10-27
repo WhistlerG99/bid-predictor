@@ -83,6 +83,13 @@ _USD_MAX_COLUMN = "usd_base_amount_max"
 
 _BID_IDENTIFIER_COLUMNS = ("id", "bid_id", "bid_number")
 
+_FLIGHT_GROUP_COLUMNS = [
+    "carrier_code",
+    "flight_number",
+    "travel_date",
+    "upgrade_type",
+]
+
 _BAR_COLOR_SEQUENCE = (
     getattr(plotly_colors.qualitative, "G10", None)
     or getattr(plotly_colors.qualitative, "Plotly", None)
@@ -168,6 +175,81 @@ def _recompute_usd_metrics(records: List[Dict[str, object]]) -> None:
             if max_amount is not None and not pd.isna(max_amount)
             else None
         )
+
+
+def _normalize_threshold(value: Optional[object]) -> Optional[int]:
+    """Convert user-specified numeric inputs into non-negative integers."""
+
+    if value in (None, ""):
+        return None
+    try:
+        normalized = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return max(normalized, 0)
+
+
+def _resolve_bid_identifier_column(df: pd.DataFrame) -> Optional[str]:
+    for column in _BID_IDENTIFIER_COLUMNS:
+        if column in df.columns:
+            return column
+    return None
+
+
+def _filter_dataset_by_combo_counts(
+    dataset: pd.DataFrame,
+    min_unique_bids: Optional[int],
+    min_snapshot_count: Optional[int],
+) -> pd.DataFrame:
+    """Limit the dataset to flight/upgrade combos that satisfy count filters."""
+
+    if dataset.empty:
+        return dataset
+
+    require_bids = bool(min_unique_bids) and min_unique_bids > 0
+    require_snapshots = bool(min_snapshot_count) and min_snapshot_count > 0
+    if not (require_bids or require_snapshots):
+        return dataset
+
+    missing_keys = [key for key in _FLIGHT_GROUP_COLUMNS if key not in dataset.columns]
+    if missing_keys:
+        return dataset
+
+    working = dataset.copy()
+    group_index = pd.MultiIndex.from_frame(working[_FLIGHT_GROUP_COLUMNS])
+
+    summary = pd.DataFrame(index=group_index.unique())
+    summary.index.names = _FLIGHT_GROUP_COLUMNS
+
+    if require_bids:
+        bid_column = _resolve_bid_identifier_column(working)
+        if bid_column is None:
+            return dataset
+        summary["unique_bids"] = (
+            working.groupby(_FLIGHT_GROUP_COLUMNS, dropna=False)[bid_column]
+            .nunique(dropna=True)
+            .reindex(summary.index, fill_value=0)
+        )
+
+    if require_snapshots:
+        if "snapshot_num" not in working.columns:
+            return dataset
+        summary["snapshot_count"] = (
+            working.groupby(_FLIGHT_GROUP_COLUMNS, dropna=False)["snapshot_num"]
+            .nunique(dropna=True)
+            .reindex(summary.index, fill_value=0)
+        )
+
+    if require_bids:
+        summary = summary[summary["unique_bids"] >= int(min_unique_bids)]
+    if require_snapshots:
+        summary = summary[summary["snapshot_count"] >= int(min_snapshot_count)]
+
+    if summary.empty:
+        return working.iloc[0:0]
+
+    mask = pd.MultiIndex.from_frame(working[_FLIGHT_GROUP_COLUMNS]).isin(summary.index)
+    return working.loc[mask].copy()
 
 
 def _compute_bid_label_map(df: pd.DataFrame) -> Tuple[Dict[object, int], Optional[str]]:
@@ -604,6 +686,57 @@ def create_app() -> Dash:
                         [
                             html.Div(
                                 [
+                                    html.H4(
+                                        "Flight filters",
+                                        style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
+                                    ),
+                                    html.Label(
+                                        "Minimum unique bids",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="min-bid-filter",
+                                        type="number",
+                                        min=0,
+                                        step=1,
+                                        placeholder="e.g. 5",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.75rem",
+                                            "borderRadius": "6px",
+                                            "border": "1px solid #cbd5e1",
+                                            "padding": "0.4rem",
+                                        },
+                                    ),
+                                    html.Label(
+                                        "Minimum snapshots",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="min-snapshot-filter",
+                                        type="number",
+                                        min=0,
+                                        step=1,
+                                        placeholder="e.g. 3",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "1rem",
+                                            "borderRadius": "6px",
+                                            "border": "1px solid #cbd5e1",
+                                            "padding": "0.4rem",
+                                        },
+                                    ),
+                                ],
+                                style={
+                                    "backgroundColor": "#edf6f9",
+                                    "borderRadius": "10px",
+                                    "padding": "0.75rem",
+                                    "boxShadow": "inset 0 0 0 1px rgba(27, 73, 101, 0.08)",
+                                    "marginBottom": "0.75rem",
+                                },
+                            ),
+                            html.Div(
+                                [
                                     html.Label("Carrier", style={"fontWeight": "600"}),
                                     dcc.Dropdown(
                                         id="carrier-dropdown",
@@ -994,14 +1127,23 @@ def create_app() -> Dash:
         Output("carrier-dropdown", "options"),
         Output("carrier-dropdown", "value"),
         Input("dataset-path-store", "data"),
+        Input("min-bid-filter", "value"),
+        Input("min-snapshot-filter", "value"),
     )
-    def populate_carriers(dataset_path: Optional[str]):
+    def populate_carriers(
+        dataset_path: Optional[str],
+        min_bids_value: Optional[object],
+        min_snapshot_value: Optional[object],
+    ):
         if not dataset_path:
             return [], None
 
         dataset = _load_dataset_cached(dataset_path)
+        min_bids = _normalize_threshold(min_bids_value)
+        min_snapshots = _normalize_threshold(min_snapshot_value)
+        filtered = _filter_dataset_by_combo_counts(dataset, min_bids, min_snapshots)
         carriers = (
-            dataset["carrier_code"].dropna().drop_duplicates().sort_values()
+            filtered["carrier_code"].dropna().drop_duplicates().sort_values()
             if "carrier_code" in dataset.columns
             else pd.Series(dtype=str)
         )
@@ -1013,9 +1155,16 @@ def create_app() -> Dash:
         Output("flight-number-dropdown", "options"),
         Output("flight-number-dropdown", "value"),
         Input("carrier-dropdown", "value"),
+        Input("min-bid-filter", "value"),
+        Input("min-snapshot-filter", "value"),
         State("dataset-path-store", "data"),
     )
-    def populate_flight_numbers(carrier: Optional[str], dataset_path: Optional[str]):
+    def populate_flight_numbers(
+        carrier: Optional[str],
+        min_bids_value: Optional[object],
+        min_snapshot_value: Optional[object],
+        dataset_path: Optional[str],
+    ):
         if not dataset_path or not carrier:
             return [], None
 
@@ -1023,8 +1172,11 @@ def create_app() -> Dash:
         if "carrier_code" not in dataset.columns or "flight_number" not in dataset.columns:
             return [], None
 
+        min_bids = _normalize_threshold(min_bids_value)
+        min_snapshots = _normalize_threshold(min_snapshot_value)
+        filtered = _filter_dataset_by_combo_counts(dataset, min_bids, min_snapshots)
         flights = (
-            dataset.loc[dataset["carrier_code"] == carrier, "flight_number"]
+            filtered.loc[filtered["carrier_code"] == carrier, "flight_number"]
             .dropna()
             .drop_duplicates()
             .sort_values()
@@ -1037,11 +1189,17 @@ def create_app() -> Dash:
         Output("travel-date-dropdown", "options"),
         Output("travel-date-dropdown", "value"),
         Input("flight-number-dropdown", "value"),
+        Input("min-bid-filter", "value"),
+        Input("min-snapshot-filter", "value"),
         State("carrier-dropdown", "value"),
         State("dataset-path-store", "data"),
     )
     def populate_travel_dates(
-        flight_number: Optional[str], carrier: Optional[str], dataset_path: Optional[str]
+        flight_number: Optional[str],
+        min_bids_value: Optional[object],
+        min_snapshot_value: Optional[object],
+        carrier: Optional[str],
+        dataset_path: Optional[str],
     ):
         if not dataset_path or not carrier or not flight_number:
             return [], None
@@ -1050,11 +1208,14 @@ def create_app() -> Dash:
         if "travel_date" not in dataset.columns:
             return [], None
 
-        mask = (dataset["carrier_code"] == carrier) & (
-            dataset["flight_number"].astype(str) == str(flight_number)
+        min_bids = _normalize_threshold(min_bids_value)
+        min_snapshots = _normalize_threshold(min_snapshot_value)
+        filtered = _filter_dataset_by_combo_counts(dataset, min_bids, min_snapshots)
+        mask = (filtered["carrier_code"] == carrier) & (
+            filtered["flight_number"].astype(str) == str(flight_number)
         )
         dates = (
-            pd.to_datetime(dataset.loc[mask, "travel_date"])
+            pd.to_datetime(filtered.loc[mask, "travel_date"])
             .dropna()
             .drop_duplicates()
             .sort_values()
@@ -1069,12 +1230,16 @@ def create_app() -> Dash:
         Output("upgrade-dropdown", "options"),
         Output("upgrade-dropdown", "value"),
         Input("travel-date-dropdown", "value"),
+        Input("min-bid-filter", "value"),
+        Input("min-snapshot-filter", "value"),
         State("carrier-dropdown", "value"),
         State("flight-number-dropdown", "value"),
         State("dataset-path-store", "data"),
     )
     def populate_upgrade_types(
         travel_date: Optional[str],
+        min_bids_value: Optional[object],
+        min_snapshot_value: Optional[object],
         carrier: Optional[str],
         flight_number: Optional[str],
         dataset_path: Optional[str],
@@ -1087,13 +1252,16 @@ def create_app() -> Dash:
             return [], None
 
         travel_date_dt = pd.to_datetime(travel_date).date()
+        min_bids = _normalize_threshold(min_bids_value)
+        min_snapshots = _normalize_threshold(min_snapshot_value)
+        filtered = _filter_dataset_by_combo_counts(dataset, min_bids, min_snapshots)
         mask = (
-            (dataset["carrier_code"] == carrier)
-            & (dataset["flight_number"].astype(str) == str(flight_number))
-            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
+            (filtered["carrier_code"] == carrier)
+            & (filtered["flight_number"].astype(str) == str(flight_number))
+            & (pd.to_datetime(filtered["travel_date"]).dt.date == travel_date_dt)
         )
         upgrades = (
-            dataset.loc[mask, "upgrade_type"].dropna().drop_duplicates().sort_values()
+            filtered.loc[mask, "upgrade_type"].dropna().drop_duplicates().sort_values()
         )
         options = [{"label": upg, "value": upg} for upg in upgrades]
         value = options[0]["value"] if options else None
@@ -1103,6 +1271,8 @@ def create_app() -> Dash:
         Output("snapshot-dropdown", "options"),
         Output("snapshot-dropdown", "value"),
         Input("upgrade-dropdown", "value"),
+        Input("min-bid-filter", "value"),
+        Input("min-snapshot-filter", "value"),
         State("carrier-dropdown", "value"),
         State("flight-number-dropdown", "value"),
         State("travel-date-dropdown", "value"),
@@ -1110,6 +1280,8 @@ def create_app() -> Dash:
     )
     def populate_snapshots(
         upgrade_type: Optional[str],
+        min_bids_value: Optional[object],
+        min_snapshot_value: Optional[object],
         carrier: Optional[str],
         flight_number: Optional[str],
         travel_date: Optional[str],
@@ -1123,14 +1295,17 @@ def create_app() -> Dash:
             return [], None
 
         travel_date_dt = pd.to_datetime(travel_date).date()
+        min_bids = _normalize_threshold(min_bids_value)
+        min_snapshots = _normalize_threshold(min_snapshot_value)
+        filtered = _filter_dataset_by_combo_counts(dataset, min_bids, min_snapshots)
         mask = (
-            (dataset["carrier_code"] == carrier)
-            & (dataset["flight_number"].astype(str) == str(flight_number))
-            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
-            & (dataset["upgrade_type"] == upgrade_type)
+            (filtered["carrier_code"] == carrier)
+            & (filtered["flight_number"].astype(str) == str(flight_number))
+            & (pd.to_datetime(filtered["travel_date"]).dt.date == travel_date_dt)
+            & (filtered["upgrade_type"] == upgrade_type)
         )
         snapshots = (
-            dataset.loc[mask, "snapshot_num"].dropna().drop_duplicates().sort_values()
+            filtered.loc[mask, "snapshot_num"].dropna().drop_duplicates().sort_values()
         )
         options = [
             {"label": f"Snapshot {snap}", "value": str(snap)} for snap in snapshots
