@@ -68,6 +68,7 @@ DISPLAY_FEATURE_ROWS = [
     "usd_base_amount_25%",
     "usd_base_amount_50%",
     "usd_base_amount_75%",
+    "usd_base_amount_max",
     "Acceptance Probability",
 ]
 
@@ -76,6 +77,10 @@ _USD_PERCENT_COLUMNS = {
     "usd_base_amount_50%": 0.50,
     "usd_base_amount_75%": 0.75,
 }
+
+_USD_MAX_COLUMN = "usd_base_amount_max"
+
+_BID_IDENTIFIER_COLUMNS = ("id", "bid_id", "bid_number")
 
 _BAR_COLOR_SEQUENCE = (
     getattr(plotly_colors.qualitative, "G10", None)
@@ -114,27 +119,60 @@ def _normalize_offer_time(record: Dict[str, object]) -> None:
     record["offer_time"] = round(offer_value, 4)
 
 
-def _refresh_usd_quantiles(record: Dict[str, object]) -> None:
-    base_amount = _safe_float(record.get("usd_base_amount"))
-    if base_amount is None:
-        return
-    record["usd_base_amount"] = base_amount
-    for column, fraction in _USD_PERCENT_COLUMNS.items():
-        record[column] = round(base_amount * fraction, 2)
-
-
 def _prepare_bid_record(record: Dict[str, object]) -> Dict[str, object]:
     prepared = dict(record)
     prepared.pop("Acceptance Probability", None)
     _normalize_offer_time(prepared)
-    _refresh_usd_quantiles(prepared)
+    amount_value = _safe_float(prepared.get("usd_base_amount"))
+    if amount_value is not None:
+        prepared["usd_base_amount"] = round(amount_value, 2)
     return prepared
+
+
+def _recompute_usd_metrics(records: List[Dict[str, object]]) -> None:
+    if not records:
+        return
+
+    amounts: List[Optional[float]] = []
+    for record in records:
+        amount = _safe_float(record.get("usd_base_amount"))
+        if amount is not None:
+            record["usd_base_amount"] = round(amount, 2)
+        amounts.append(amount)
+
+    valid_amounts = [value for value in amounts if value is not None]
+    max_amount: Optional[float] = max(valid_amounts) if valid_amounts else None
+
+    for idx, record in enumerate(records):
+        peer_values = [
+            value
+            for peer_idx, value in enumerate(amounts)
+            if peer_idx != idx and value is not None
+        ]
+        if peer_values:
+            peer_series = pd.Series(peer_values)
+            for column, fraction in _USD_PERCENT_COLUMNS.items():
+                quantile_value = peer_series.quantile(fraction)
+                record[column] = (
+                    round(float(quantile_value), 2)
+                    if quantile_value is not None and not pd.isna(quantile_value)
+                    else None
+                )
+        else:
+            for column in _USD_PERCENT_COLUMNS:
+                record[column] = None
+
+        record[_USD_MAX_COLUMN] = (
+            round(float(max_amount), 2)
+            if max_amount is not None and not pd.isna(max_amount)
+            else None
+        )
 
 
 def _compute_bid_label_map(df: pd.DataFrame) -> Tuple[Dict[object, int], Optional[str]]:
     """Build a mapping from bid identifier to the label index."""
 
-    for column in ("id", "bid_id", "bid_number"):
+    for column in _BID_IDENTIFIER_COLUMNS:
         if column not in df.columns:
             continue
         values = df[column].dropna()
@@ -1177,6 +1215,7 @@ def create_app() -> Dash:
             restored_records = [dict(record) for record in baseline_records]
             restored_meta = dict(baseline_meta) if baseline_meta else dict(snapshot_meta or {})
             restored_meta["num_offers"] = len(restored_records)
+            _recompute_usd_metrics(restored_records)
             return (
                 summary_block,
                 "Restored snapshot to original values.",
@@ -1193,10 +1232,14 @@ def create_app() -> Dash:
             for feature in DISPLAY_FEATURE_ROWS:
                 if feature != "Acceptance Probability":
                     new_bid.setdefault(feature, base.get(feature))
+            for identifier in _BID_IDENTIFIER_COLUMNS:
+                if identifier in new_bid:
+                    new_bid[identifier] = None
             new_bid["Bid #"] = _get_next_bid_label(existing_records)
             new_bid.setdefault("offer_status", "pending")
             prepared_bid = _prepare_bid_record(new_bid)
             new_data = _sort_records_by_bid(existing_records + [prepared_bid])
+            _recompute_usd_metrics(new_data)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
             return summary_block, "", new_meta, new_data, existing_removed, no_update, no_update
@@ -1232,6 +1275,7 @@ def create_app() -> Dash:
                     no_update,
                 )
             working = _sort_records_by_bid(working_records + restored_records)
+            _recompute_usd_metrics(working)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             return summary_block, "", new_meta, working, remaining_removed, no_update, no_update
@@ -1270,6 +1314,7 @@ def create_app() -> Dash:
                         }
                     )
             working = _sort_records_by_bid(working)
+            _recompute_usd_metrics(working)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             updated_removed = existing_removed + removed_entries
@@ -1388,6 +1433,7 @@ def create_app() -> Dash:
 
         base_records = [_prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
         base_data = _sort_records_by_bid(base_records)
+        _recompute_usd_metrics(base_data)
 
         snapshot_meta = {
             "carrier": carrier,
@@ -1478,12 +1524,15 @@ def create_app() -> Dash:
                 updated_meta["num_offers"] = offers_value
                 for record in updated_records:
                     _normalize_offer_time(record)
-                    _refresh_usd_quantiles(record)
+                _recompute_usd_metrics(updated_records)
                 return updated_records, updated_meta
             if offers_value > current_len and current_len > 0:
                 template = updated_records[0]
                 for _ in range(offers_value - current_len):
                     new_bid = dict(template)
+                    for identifier in _BID_IDENTIFIER_COLUMNS:
+                        if identifier in new_bid:
+                            new_bid[identifier] = None
                     new_bid["Bid #"] = _get_next_bid_label(updated_records)
                     new_bid.setdefault("offer_status", "pending")
                     updated_records.append(_prepare_bid_record(new_bid))
@@ -1492,7 +1541,7 @@ def create_app() -> Dash:
             updated_records = _sort_records_by_bid(updated_records)
             for record in updated_records:
                 _normalize_offer_time(record)
-                _refresh_usd_quantiles(record)
+            _recompute_usd_metrics(updated_records)
             updated_meta["num_offers"] = len(updated_records)
             return updated_records, updated_meta
 
@@ -1573,6 +1622,9 @@ def create_app() -> Dash:
                 elif feature in _USD_PERCENT_COLUMNS:
                     numeric = _safe_float(value)
                     row[column_id] = round(numeric, 2) if numeric is not None else value
+                elif feature == _USD_MAX_COLUMN:
+                    numeric = _safe_float(value)
+                    row[column_id] = round(numeric, 2) if numeric is not None else value
                 elif feature.startswith("multiplier"):
                     numeric = _safe_float(value)
                     row[column_id] = round(numeric, 4) if numeric is not None else value
@@ -1598,6 +1650,14 @@ def create_app() -> Dash:
                     "pointerEvents": "none",
                 }
             )
+
+        style_rules.append(
+            {
+                "if": {"filter_query": f'{{Feature}} = "{_USD_MAX_COLUMN}"'},
+                "backgroundColor": "#f8fafc",
+                "pointerEvents": "none",
+            }
+        )
 
         return columns, data_rows, style_rules
 
@@ -1679,6 +1739,8 @@ def create_app() -> Dash:
                     elif feature in _USD_PERCENT_COLUMNS:
                         # recomputed from usd_base_amount after loop
                         continue
+                    elif feature == _USD_MAX_COLUMN:
+                        continue
                     elif feature.startswith("multiplier"):
                         numeric = _safe_float(value)
                         record[feature] = round(numeric, 4) if numeric is not None else value
@@ -1686,7 +1748,7 @@ def create_app() -> Dash:
                         numeric = _safe_float(value)
                         record[feature] = numeric if numeric is not None else value
             _normalize_offer_time(record)
-            _refresh_usd_quantiles(record)
+        _recompute_usd_metrics(updated_records)
         return updated_records
 
     @app.callback(
