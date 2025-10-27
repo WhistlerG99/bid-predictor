@@ -6,7 +6,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import mlflow
 import pandas as pd
-from dash import Dash, Input, Output, State, dash_table, dcc, html
+from dash import Dash, Input, Output, State, callback_context, dash_table, dcc, html, no_update
 from mlflow.exceptions import MlflowException
 import plotly.graph_objects as go
 
@@ -51,6 +51,22 @@ def _get_feature_columns() -> Tuple[List[str], List[str]]:
     features = list(feature_config["pre_features"])
     categorical = list(feature_config["cat_features"])
     return features, categorical
+
+
+DISPLAY_FEATURE_ROWS = [
+    "item_count",
+    "usd_base_amount",
+    "fare_class",
+    "offer_time",
+    "multiplier_fare_class",
+    "multiplier_loyalty",
+    "multiplier_success_history",
+    "multiplier_payment_type",
+    "usd_base_amount_25%",
+    "usd_base_amount_50%",
+    "usd_base_amount_75%",
+    "Acceptance Probability",
+]
 
 
 def _prepare_prediction_dataframe(table_records: Iterable[Dict[str, str]]) -> pd.DataFrame:
@@ -211,7 +227,6 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_app() -> Dash:
-    feature_columns, _ = _get_feature_columns()
     default_dataset_path = resolve_train_file(None)
 
     app = Dash(__name__)
@@ -320,143 +335,291 @@ def create_app() -> Dash:
             ),
             dcc.Store(id="dataset-path-store"),
             dcc.Store(id="model-uri-store"),
+            dcc.Store(id="bid-records-store"),
+            dcc.Store(id="snapshot-meta-store"),
+            dcc.Store(id="prediction-store"),
             html.Div(
                 [
                     html.Div(
                         [
-                            html.Label("Carrier", style={"fontWeight": "600"}),
-                            dcc.Dropdown(id="carrier-dropdown", placeholder="Select carrier", options=[]),
+                            html.Div(
+                                [
+                                    html.Label("Carrier", style={"fontWeight": "600"}),
+                                    dcc.Dropdown(
+                                        id="carrier-dropdown",
+                                        placeholder="Select carrier",
+                                        options=[],
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"marginBottom": "0.75rem"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Flight number", style={"fontWeight": "600"}),
+                                    dcc.Dropdown(
+                                        id="flight-number-dropdown",
+                                        placeholder="Select flight",
+                                        options=[],
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"marginBottom": "0.75rem"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Travel date", style={"fontWeight": "600"}),
+                                    dcc.Dropdown(
+                                        id="travel-date-dropdown",
+                                        placeholder="Select travel date",
+                                        options=[],
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"marginBottom": "0.75rem"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Upgrade type", style={"fontWeight": "600"}),
+                                    dcc.Dropdown(
+                                        id="upgrade-dropdown",
+                                        placeholder="Select upgrade type",
+                                        options=[],
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"marginBottom": "1rem"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label("Snapshot", style={"fontWeight": "600"}),
+                                    dcc.Dropdown(
+                                        id="snapshot-dropdown",
+                                        placeholder="Select snapshot",
+                                        options=[],
+                                        style={"width": "100%"},
+                                    ),
+                                ],
+                                style={"marginBottom": "1rem"},
+                            ),
+                            html.Div(
+                                [
+                                    html.H3(
+                                        "Selected flight",
+                                        style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
+                                    ),
+                                    html.Div(id="flight-summary", style={"color": "#16324f"}),
+                                ],
+                                style={
+                                    "backgroundColor": "#f4f1de",
+                                    "borderRadius": "10px",
+                                    "padding": "0.75rem",
+                                    "boxShadow": "inset 0 0 0 1px rgba(27, 73, 101, 0.1)",
+                                    "marginBottom": "1rem",
+                                },
+                            ),
+                            html.Div(
+                                [
+                                    html.H4(
+                                        "Snapshot controls",
+                                        style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
+                                    ),
+                                    html.Label("Seats available", style={"fontWeight": "600"}),
+                                    dcc.Input(
+                                        id="seats-available-input",
+                                        type="number",
+                                        min=0,
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.75rem",
+                                            "borderRadius": "6px",
+                                            "border": "1px solid #cbd5e1",
+                                            "padding": "0.4rem",
+                                        },
+                                    ),
+                                    html.Label("Number of offers", style={"fontWeight": "600"}),
+                                    dcc.Input(
+                                        id="offers-input",
+                                        type="number",
+                                        min=0,
+                                        step=1,
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.75rem",
+                                            "borderRadius": "6px",
+                                            "border": "1px solid #cbd5e1",
+                                            "padding": "0.4rem",
+                                        },
+                                    ),
+                                    html.Label(
+                                        "Time before departure (days / hours)",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    html.Div(
+                                        [
+                                            dcc.Input(
+                                                id="time-before-days-input",
+                                                type="number",
+                                                min=0,
+                                                step=1,
+                                                placeholder="Days",
+                                                style={
+                                                    "width": "48%",
+                                                    "borderRadius": "6px",
+                                                    "border": "1px solid #cbd5e1",
+                                                    "padding": "0.4rem",
+                                                },
+                                            ),
+                                            dcc.Input(
+                                                id="time-before-hours-input",
+                                                type="number",
+                                                min=0,
+                                                max=23,
+                                                step=1,
+                                                placeholder="Hours",
+                                                style={
+                                                    "width": "48%",
+                                                    "borderRadius": "6px",
+                                                    "border": "1px solid #cbd5e1",
+                                                    "padding": "0.4rem",
+                                                },
+                                            ),
+                                        ],
+                                        style={
+                                            "display": "flex",
+                                            "justifyContent": "space-between",
+                                            "gap": "4%",
+                                            "marginTop": "0.5rem",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                ],
+                                style={
+                                    "backgroundColor": "#edf2fb",
+                                    "borderRadius": "10px",
+                                    "padding": "0.75rem",
+                                    "boxShadow": "inset 0 0 0 1px rgba(22, 50, 79, 0.1)",
+                                    "marginBottom": "1rem",
+                                },
+                            ),
+                            html.Div(
+                                id="snapshot-feedback",
+                                className="status-message",
+                                style={"color": "#16324f"},
+                            ),
                         ],
-                        style={"flex": "1", "minWidth": "180px"},
+                        style={
+                            "flex": "0 0 300px",
+                            "maxWidth": "320px",
+                            "backgroundColor": "#ffffff",
+                            "borderRadius": "12px",
+                            "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                            "padding": "1rem",
+                            "alignSelf": "flex-start",
+                        },
                     ),
                     html.Div(
                         [
-                            html.Label("Flight number", style={"fontWeight": "600"}),
-                            dcc.Dropdown(id="flight-number-dropdown", placeholder="Select flight", options=[]),
+                            html.Div(
+                                [
+                                    html.H3(
+                                        "Acceptance probability trends",
+                                        style={"color": "#1b4965", "margin": "0"},
+                                    ),
+                                    html.Div(
+                                        id="prediction-warning",
+                                        className="status-message",
+                                        style={"marginTop": "0.5rem"},
+                                    ),
+                                    dcc.Graph(
+                                        id="prediction-graph",
+                                        style={"height": "800px", "marginTop": "1rem"},
+                                    ),
+                                ],
+                                style={
+                                    "backgroundColor": "#edf2fb",
+                                    "borderRadius": "12px",
+                                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                    "padding": "1.25rem",
+                                    "marginBottom": "1.5rem",
+                                },
+                            ),
+                            html.Div(
+                                [
+                                    html.Div(
+                                        [
+                                            html.Button(
+                                                "Add bid",
+                                                id="add-bid",
+                                                n_clicks=0,
+                                                style={
+                                                    "backgroundColor": "#2ec4b6",
+                                                    "color": "white",
+                                                    "border": "none",
+                                                    "padding": "0.5rem 1rem",
+                                                    "borderRadius": "6px",
+                                                    "marginRight": "0.5rem",
+                                                    "boxShadow": "0 2px 6px rgba(46, 196, 182, 0.4)",
+                                                },
+                                            ),
+                                            html.Button(
+                                                "Delete selected",
+                                                id="delete-bid",
+                                                n_clicks=0,
+                                                style={
+                                                    "backgroundColor": "#e71d36",
+                                                    "color": "white",
+                                                    "border": "none",
+                                                    "padding": "0.5rem 1rem",
+                                                    "borderRadius": "6px",
+                                                    "boxShadow": "0 2px 6px rgba(231, 29, 54, 0.4)",
+                                                },
+                                            ),
+                                        ],
+                                        style={"marginBottom": "0.75rem"},
+                                    ),
+                                    dash_table.DataTable(
+                                        id="bid-table",
+                                        columns=[],
+                                        data=[],
+                                        editable=True,
+                                        column_selectable="multi",
+                                        style_table={
+                                            "overflowX": "auto",
+                                            "borderRadius": "8px",
+                                            "boxShadow": "0 2px 6px rgba(0,0,0,0.1)",
+                                        },
+                                        style_cell={
+                                            "textAlign": "center",
+                                            "padding": "0.6rem",
+                                            "backgroundColor": "#ffffff",
+                                            "border": "1px solid #f1f5f9",
+                                        },
+                                        style_header={
+                                            "backgroundColor": "#1b4965",
+                                            "color": "white",
+                                            "fontWeight": "700",
+                                            "textAlign": "center",
+                                        },
+                                        style_data_conditional=[],
+                                    ),
+                                ],
+                                style={
+                                    "backgroundColor": "#ffffff",
+                                    "borderRadius": "12px",
+                                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                    "padding": "1.25rem",
+                                },
+                            ),
                         ],
-                        style={"flex": "1", "minWidth": "180px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Label("Travel date", style={"fontWeight": "600"}),
-                            dcc.Dropdown(id="travel-date-dropdown", placeholder="Select travel date", options=[]),
-                        ],
-                        style={"flex": "1", "minWidth": "180px"},
-                    ),
-                    html.Div(
-                        [
-                            html.Label("Upgrade type", style={"fontWeight": "600"}),
-                            dcc.Dropdown(id="upgrade-dropdown", placeholder="Select upgrade type", options=[]),
-                        ],
-                        style={"flex": "1", "minWidth": "180px"},
+                        style={"flex": "1", "minWidth": "0"},
                     ),
                 ],
                 style={
                     "display": "flex",
+                    "gap": "1.5rem",
+                    "alignItems": "flex-start",
                     "flexWrap": "wrap",
-                    "gap": "1rem",
-                    "padding": "1.5rem",
-                    "backgroundColor": "#edf2fb",
-                    "borderRadius": "12px",
-                    "boxShadow": "inset 0 0 10px rgba(27, 73, 101, 0.08)",
-                    "marginBottom": "1.5rem",
-                },
-            ),
-            html.Div(
-                [
-                    html.Div(id="flight-summary", style={"flex": "2", "paddingRight": "1rem"}),
-                    html.Div(
-                        [
-                            html.Label("Snapshot", style={"fontWeight": "600"}),
-                            dcc.Dropdown(id="snapshot-dropdown", placeholder="Select snapshot", options=[]),
-                            html.Div(id="snapshot-details", style={"marginTop": "0.75rem"}),
-                        ],
-                        style={"flex": "1", "minWidth": "220px"},
-                    ),
-                ],
-                style={
-                    "display": "flex",
-                    "flexWrap": "wrap",
-                    "gap": "1rem",
-                    "padding": "1.5rem",
-                    "backgroundColor": "#f4f1de",
-                    "borderRadius": "12px",
-                    "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.05)",
-                    "marginBottom": "1.5rem",
-                },
-            ),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Button(
-                                "Add bid",
-                                id="add-bid",
-                                n_clicks=0,
-                                style={
-                                    "backgroundColor": "#2ec4b6",
-                                    "color": "white",
-                                    "border": "none",
-                                    "padding": "0.5rem 1rem",
-                                    "borderRadius": "6px",
-                                    "marginRight": "0.5rem",
-                                },
-                            ),
-                            html.Button(
-                                "Delete selected",
-                                id="delete-bid",
-                                n_clicks=0,
-                                style={
-                                    "backgroundColor": "#e71d36",
-                                    "color": "white",
-                                    "border": "none",
-                                    "padding": "0.5rem 1rem",
-                                    "borderRadius": "6px",
-                                },
-                            ),
-                        ],
-                        style={"marginBottom": "0.75rem"},
-                    ),
-                    dash_table.DataTable(
-                        id="bid-table",
-                        columns=[{"name": col, "id": col, "editable": True} for col in feature_columns],
-                        data=[],
-                        editable=True,
-                        row_deletable=True,
-                        row_selectable="multi",
-                        style_table={"overflowX": "auto", "borderRadius": "8px", "boxShadow": "0 2px 6px rgba(0,0,0,0.1)"},
-                        style_cell={"textAlign": "center", "padding": "0.6rem", "backgroundColor": "#ffffff"},
-                        style_header={"backgroundColor": "#1b4965", "color": "white", "fontWeight": "700"},
-                    ),
-                ],
-                style={
-                    "padding": "1.5rem",
-                    "backgroundColor": "#ffffff",
-                    "borderRadius": "12px",
-                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
-                    "marginBottom": "1.5rem",
-                },
-            ),
-            html.Div(
-                [
-                    html.H3("Predictions", style={"color": "#1b4965"}),
-                    html.Div(id="prediction-warning", className="status-message", style={"marginBottom": "0.75rem"}),
-                    dash_table.DataTable(
-                        id="prediction-table",
-                        columns=[],
-                        data=[],
-                        style_table={"overflowX": "auto", "borderRadius": "8px", "boxShadow": "0 2px 6px rgba(0,0,0,0.1)"},
-                        style_cell={"textAlign": "center", "padding": "0.6rem", "backgroundColor": "#f7fff7"},
-                        style_header={"backgroundColor": "#16324f", "color": "white", "fontWeight": "700"},
-                    ),
-                    dcc.Graph(id="prediction-graph", style={"height": "800px", "marginTop": "1rem"}),
-                ],
-                style={
-                    "padding": "1.5rem",
-                    "backgroundColor": "#edf2fb",
-                    "borderRadius": "12px",
-                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
-                    "marginBottom": "2rem",
                 },
             ),
         ],
@@ -665,335 +828,425 @@ def create_app() -> Dash:
         value = options[0]["value"] if options else None
         return options, value
 
+
     @app.callback(
         Output("flight-summary", "children"),
-        Output("snapshot-details", "children"),
-        Output("bid-table", "columns"),
-        Output("bid-table", "data"),
-        Output("bid-table", "selected_rows"),
+        Output("snapshot-feedback", "children"),
+        Output("snapshot-meta-store", "data"),
+        Output("bid-records-store", "data"),
+        Output("bid-table", "selected_columns"),
         Input("snapshot-dropdown", "value"),
         Input("add-bid", "n_clicks"),
         Input("delete-bid", "n_clicks"),
-        State("bid-table", "data"),
-        State("bid-table", "selected_rows"),
-        State("bid-table", "columns"),
+        State("bid-records-store", "data"),
+        State("bid-table", "selected_columns"),
         State("carrier-dropdown", "value"),
         State("flight-number-dropdown", "value"),
         State("travel-date-dropdown", "value"),
         State("upgrade-dropdown", "value"),
         State("dataset-path-store", "data"),
+        State("snapshot-meta-store", "data"),
     )
     def update_snapshot_view(
         snapshot_value: Optional[str],
         add_clicks: int,
         delete_clicks: int,
-        existing_data: Optional[List[Dict[str, str]]],
-        selected_rows: Optional[List[int]],
-        existing_columns: Optional[List[Dict[str, str]]],
+        existing_records: Optional[List[Dict[str, str]]],
+        selected_columns: Optional[List[str]],
         carrier: Optional[str],
         flight_number: Optional[str],
         travel_date: Optional[str],
         upgrade_type: Optional[str],
         dataset_path: Optional[str],
+        snapshot_meta: Optional[Dict[str, str]],
     ):
-        from dash import callback_context
+        triggered = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
 
         if not dataset_path:
-            message = html.Div("Load a dataset to begin.")
-            return message, html.Div(), [], [], []
+            return (
+                html.Div("Load a dataset to begin."),
+                "",
+                None,
+                None,
+                [],
+            )
 
         dataset = _load_dataset_cached(dataset_path)
+
         if not carrier or not flight_number or not travel_date or not upgrade_type:
-            message = html.Div("Select carrier, flight, date, and upgrade type to continue.")
-            return message, html.Div(), [], [], []
+            return (
+                html.Div("Select a carrier, flight, travel date, and upgrade type."),
+                "",
+                snapshot_meta,
+                existing_records,
+                selected_columns or [],
+            )
 
         travel_date_dt = pd.to_datetime(travel_date).date()
-        subset_mask = (
-            (dataset["carrier_code"] == carrier)
-            & (dataset["flight_number"].astype(str) == str(flight_number))
-            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
-            & (dataset["upgrade_type"] == upgrade_type)
-        )
-        subset = dataset.loc[subset_mask].copy()
 
-        if subset.empty:
-            message = html.Div("No rows found for selected flight.")
-            return message, html.Div(), [], [], []
-
-        snapshot_count = (
-            subset["snapshot_num"].nunique() if "snapshot_num" in subset.columns else 0
-        )
-
-        flight_summary = html.Div(
+        summary_block = html.Ul(
             [
-                html.H3("Selected flight", style={"marginTop": "0", "color": "#1b4965"}),
-                html.Ul(
-                    [
-                        html.Li(f"Carrier: {carrier}"),
-                        html.Li(f"Flight number: {flight_number}"),
-                        html.Li(f"Travel date: {travel_date}"),
-                        html.Li(f"Upgrade type: {upgrade_type}"),
-                        html.Li(f"Snapshots available: {snapshot_count}"),
-                    ],
-                    style={"paddingLeft": "1.2rem"},
-                ),
-            ]
+                html.Li(f"Carrier: {carrier}"),
+                html.Li(f"Flight: {flight_number}"),
+                html.Li(f"Travel date: {travel_date}"),
+                html.Li(f"Upgrade type: {upgrade_type}"),
+            ],
+            style={"paddingLeft": "1.2rem", "margin": "0"},
         )
 
-        ctx = callback_context
-        triggered = getattr(ctx, "triggered_id", None)
-        if triggered is None and ctx.triggered:
-            triggered = ctx.triggered[0]["prop_id"].split(".")[0]
-
-        if snapshot_value is None:
-            message = html.Div("Select a snapshot to view bid details.")
-            return flight_summary, message, [], [], []
-
-        if "snapshot_num" not in subset.columns:
-            message = html.Div("Snapshot information is unavailable in this dataset.")
-            return flight_summary, message, [], [], []
-
-        snapshot_df = subset.loc[
-            subset["snapshot_num"].astype(str) == str(snapshot_value)
-        ].copy()
-        if snapshot_df.empty:
-            message = html.Div("No rows found for the selected snapshot.")
-            return flight_summary, message, [], [], []
-
-        sort_columns: List[str] = []
-        if "offer_time" in snapshot_df.columns:
-            sort_columns.append("offer_time")
-        if "Bid #" in snapshot_df.columns:
-            sort_columns.append("Bid #")
-        if sort_columns:
-            snapshot_df.sort_values(by=sort_columns, inplace=True, na_position="last")
-
-        # Prepare additional columns
-        if "Bid #" not in snapshot_df.columns:
-            snapshot_df.insert(0, "Bid #", range(1, len(snapshot_df) + 1))
-        if "seats_available" not in snapshot_df.columns:
-            seats_val = snapshot_df.get("seats_available", pd.Series(dtype=float))
-            if seats_val.empty:
-                snapshot_df["seats_available"] = None
-        if {
-            "departure_timestamp",
-            "current_timestamp",
-        }.issubset(snapshot_df.columns):
-            departure_ts = pd.to_datetime(snapshot_df["departure_timestamp"])
-            current_ts = pd.to_datetime(snapshot_df["current_timestamp"])
-            delta_hours = (departure_ts - current_ts).dt.total_seconds() / 3600
-            snapshot_df["time_before_departure_hours"] = delta_hours.round(2)
-            if "time_until_departure_hours" not in snapshot_df.columns:
-                snapshot_df["time_until_departure_hours"] = snapshot_df[
-                    "time_before_departure_hours"
-                ]
-        else:
-            if "time_before_departure_hours" not in snapshot_df.columns:
-                snapshot_df["time_before_departure_hours"] = None
-        if "Acceptance Probability" not in snapshot_df.columns:
-            snapshot_df["Acceptance Probability"] = None
-
-        required_columns = [
-            "Bid #",
-            "offer_status",
-            "seats_available",
-            "time_before_departure_hours",
-            "item_count",
-            "usd_base_amount",
-            "fare_class",
-            "offer_time",
-            "multiplier_fare_class",
-            "multiplier_loyalty",
-            "multiplier_success_history",
-            "multiplier_payment_type",
-            "usd_base_amount_25%",
-            "usd_base_amount_50%",
-            "usd_base_amount_75%",
-            "Acceptance Probability",
-            "snapshot_num",
-            "current_timestamp",
-            "departure_timestamp",
-            "carrier_code",
-            "flight_number",
-            "travel_date",
-            "upgrade_type",
-        ]
-        for column in required_columns:
-            if column not in snapshot_df.columns:
-                snapshot_df[column] = None
-
-        ordered_columns = required_columns + [
-            col for col in snapshot_df.columns if col not in required_columns
-        ]
-        snapshot_df = snapshot_df[ordered_columns]
-
-        # Format datetimes for display
-        for col in ["current_timestamp", "departure_timestamp", "offer_time"]:
-            if col in snapshot_df.columns:
-                snapshot_df[col] = snapshot_df[col].apply(
-                    lambda x: x.isoformat() if isinstance(x, pd.Timestamp) else x
-                )
-        if "travel_date" in snapshot_df.columns:
-            snapshot_df["travel_date"] = snapshot_df["travel_date"].apply(
-                lambda x: x.date().isoformat() if isinstance(x, pd.Timestamp) else x
-            )
-
-        editable_columns = {
-            "seats_available",
-            "time_before_departure_hours",
-            "item_count",
-            "usd_base_amount",
-            "fare_class",
-            "offer_time",
-            "multiplier_fare_class",
-            "multiplier_loyalty",
-            "multiplier_success_history",
-            "multiplier_payment_type",
-            "usd_base_amount_25%",
-            "usd_base_amount_50%",
-            "usd_base_amount_75%",
-        }
-
-        columns = [
-            {
-                "name": col,
-                "id": col,
-                "editable": col in editable_columns,
-            }
-            for col in snapshot_df.columns
-        ]
-
-        def _snapshot_summary_block(df: pd.DataFrame) -> html.Div:
-            seats_available = df.get("seats_available")
-            seats_value = seats_available.iloc[0] if seats_available is not None else None
-            current_time_series = df.get("current_timestamp")
-            current_time = current_time_series.iloc[0] if current_time_series is not None else None
-            if isinstance(current_time, str):
-                current_time_display = current_time
-            elif isinstance(current_time, pd.Timestamp):
-                current_time_display = current_time.isoformat()
-            else:
-                current_time_display = str(current_time) if current_time is not None else "N/A"
-
-            departure_series = df.get("departure_timestamp")
-            departure_time = departure_series.iloc[0] if departure_series is not None else None
-            if isinstance(departure_time, str):
-                departure_ts = pd.to_datetime(departure_time)
-            else:
-                departure_ts = departure_time
-
-            if isinstance(current_time, str):
-                current_ts = pd.to_datetime(current_time)
-            else:
-                current_ts = current_time
-
-            delta_display = "N/A"
-            if isinstance(departure_ts, pd.Timestamp) and isinstance(current_ts, pd.Timestamp):
-                delta = departure_ts - current_ts
-                days = delta.days
-                hours = int((delta.total_seconds() - days * 86400) // 3600)
-                delta_display = f"{days} days {hours} hours"
-
-            num_offers = len(df)
-            offers_series = df.get("offer_time")
-
-            return html.Div(
-                [
-                    html.P(f"Seats available: {seats_value if seats_value is not None else 'N/A'}"),
-                    html.P(f"Number of offers: {num_offers}"),
-                    html.P(f"Current timestamp: {current_time_display}"),
-                    html.P(f"Time before departure: {delta_display}"),
-                    html.P(
-                        f"Offer window: {offers_series.min()} – {offers_series.max()}"
-                        if offers_series is not None and not pd.Series(offers_series).isnull().all()
-                        else ""
-                    ),
-                ],
-                style={"lineHeight": "1.6", "color": "#16324f"},
-            )
-
-        snapshot_details = _snapshot_summary_block(snapshot_df)
-
-        base_data = snapshot_df.to_dict("records")
-
-        if triggered == "add-bid":
-            working_data = list(existing_data or base_data)
-            columns_ids = [col["id"] for col in (existing_columns or columns)]
-            template = {col_id: None for col_id in columns_ids}
-            template_source = (working_data[0] if working_data else base_data[0]) if (working_data or base_data) else {}
-            for key in [
-                "carrier_code",
-                "flight_number",
-                "travel_date",
-                "upgrade_type",
-                "snapshot_num",
-                "current_timestamp",
-                "departure_timestamp",
-            ]:
-                if template_source and key in template_source:
-                    template[key] = template_source.get(key)
+        if triggered == "add-bid" and existing_records:
+            base = existing_records[0].copy()
+            new_bid = {key: base.get(key) for key in base}
+            for feature in DISPLAY_FEATURE_ROWS:
+                if feature != "Acceptance Probability":
+                    new_bid.setdefault(feature, base.get(feature))
             existing_ids = [
-                row.get("Bid #") for row in working_data if row.get("Bid #") not in (None, "")
+                record.get("Bid #")
+                for record in existing_records
+                if record.get("Bid #") not in (None, "")
             ]
             next_bid = 1
             if existing_ids:
                 try:
                     next_bid = int(max(float(bid) for bid in existing_ids)) + 1
                 except Exception:
-                    next_bid = len(working_data) + 1
-            template["Bid #"] = next_bid
-            template.setdefault("offer_status", "pending")
-            working_data.append(template)
-            return flight_summary, snapshot_details, columns, working_data, []
+                    next_bid = len(existing_records) + 1
+            new_bid["Bid #"] = next_bid
+            new_bid.setdefault("offer_status", "pending")
+            new_data = existing_records + [new_bid]
+            new_meta = dict(snapshot_meta or {})
+            new_meta["num_offers"] = len(new_data)
+            return summary_block, "", new_meta, new_data, []
 
-        if triggered == "delete-bid":
-            if not existing_data:
-                return flight_summary, snapshot_details, columns, base_data, []
-            if not selected_rows:
-                return flight_summary, snapshot_details, columns, existing_data, selected_rows or []
-            new_data = [row for idx, row in enumerate(existing_data) if idx not in selected_rows]
-            return flight_summary, snapshot_details, columns, new_data, []
+        if triggered == "delete-bid" and existing_records:
+            if not selected_columns:
+                return summary_block, "Select columns to delete.", snapshot_meta, existing_records, selected_columns or []
+            indices_to_remove = sorted(
+                {
+                    int(col_id.replace("bid_", ""))
+                    for col_id in selected_columns
+                    if col_id.startswith("bid_")
+                },
+                reverse=True,
+            )
+            working = list(existing_records)
+            for idx in indices_to_remove:
+                if 0 <= idx < len(working):
+                    working.pop(idx)
+            for pos, record in enumerate(working, start=1):
+                record["Bid #"] = pos
+            new_meta = dict(snapshot_meta or {})
+            new_meta["num_offers"] = len(working)
+            return summary_block, "", new_meta, working, []
 
-        return flight_summary, snapshot_details, columns, base_data, []
+        if triggered != "snapshot-dropdown":
+            return summary_block, "", snapshot_meta, existing_records, selected_columns or []
+
+        mask = (
+            (dataset["carrier_code"] == carrier)
+            & (dataset["flight_number"].astype(str) == str(flight_number))
+            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
+            & (dataset["upgrade_type"] == upgrade_type)
+        )
+        subset = dataset.loc[mask].copy()
+
+        if subset.empty:
+            return (
+                summary_block,
+                "No rows found for the selected flight.",
+                None,
+                None,
+                [],
+            )
+
+        if "snapshot_num" not in subset.columns:
+            return (
+                summary_block,
+                "Snapshot information is unavailable in this dataset.",
+                None,
+                None,
+                [],
+            )
+
+        snapshot_df = subset.loc[
+            subset["snapshot_num"].astype(str) == str(snapshot_value)
+        ].copy()
+
+        if snapshot_df.empty:
+            return (
+                summary_block,
+                "No rows found for the selected snapshot.",
+                None,
+                None,
+                [],
+            )
+
+        if "Bid #" not in snapshot_df.columns:
+            snapshot_df["Bid #"] = range(1, len(snapshot_df) + 1)
+
+        for column in ["current_timestamp", "departure_timestamp", "travel_date"]:
+            if column in snapshot_df.columns:
+                snapshot_df[column] = snapshot_df[column].apply(
+                    lambda x: x.isoformat() if isinstance(x, pd.Timestamp) else x
+                )
+
+        seats_available = snapshot_df.get("seats_available")
+        seats_value = (
+            seats_available.iloc[0]
+            if seats_available is not None and not seats_available.empty
+            else None
+        )
+
+        departure_time = snapshot_df.get("departure_timestamp")
+        current_time = snapshot_df.get("current_timestamp")
+        departure_ts = (
+            pd.to_datetime(departure_time.iloc[0])
+            if departure_time is not None and not departure_time.empty
+            else None
+        )
+        current_ts = (
+            pd.to_datetime(current_time.iloc[0])
+            if current_time is not None and not current_time.empty
+            else None
+        )
+
+        delta_hours: Optional[float] = None
+        if isinstance(departure_ts, pd.Timestamp) and isinstance(current_ts, pd.Timestamp):
+            delta = departure_ts - current_ts
+            delta_hours = max(delta.total_seconds() / 3600, 0)
+
+        base_data = snapshot_df.to_dict("records")
+
+        snapshot_meta = {
+            "carrier": carrier,
+            "flight_number": flight_number,
+            "travel_date": travel_date,
+            "upgrade_type": upgrade_type,
+            "snapshot": snapshot_value,
+            "seats_available": seats_value,
+            "num_offers": len(base_data),
+            "departure_timestamp": departure_ts.isoformat() if isinstance(departure_ts, pd.Timestamp) else None,
+            "current_timestamp": current_ts.isoformat() if isinstance(current_ts, pd.Timestamp) else None,
+            "time_before_departure_hours": delta_hours,
+        }
+
+        return summary_block, "", snapshot_meta, base_data, []
 
     @app.callback(
-        Output("prediction-table", "columns"),
-        Output("prediction-table", "data"),
-        Output("prediction-graph", "figure"),
-        Output("prediction-warning", "children"),
-        Input("bid-table", "data"),
-        State("model-uri-store", "data"),
+        Output("seats-available-input", "value"),
+        Output("offers-input", "value"),
+        Output("time-before-days-input", "value"),
+        Output("time-before-hours-input", "value"),
+        Input("snapshot-meta-store", "data"),
+        Input("bid-records-store", "data"),
     )
-    def run_predictions(table_data: List[Dict[str, str]], model_uri: Optional[str]):
-        if not table_data:
-            return [], [], go.Figure(), ""
-        if not model_uri:
-            df = pd.DataFrame(table_data)
-            columns = [{"name": col, "id": col} for col in df.columns]
-            return columns, table_data, _build_prediction_plot(pd.DataFrame()), ""
+    def sync_inputs(meta: Optional[Dict[str, str]], records: Optional[List[Dict[str, str]]]):
+        seats_value = meta.get("seats_available") if meta else None
+        offers_value = len(records) if records else 0
+        delta_hours = meta.get("time_before_departure_hours") if meta else None
+        if delta_hours is not None:
+            days = int(delta_hours // 24)
+            hours = int(round(delta_hours - days * 24))
+        else:
+            days = None
+            hours = None
+        return seats_value, offers_value, days, hours
 
-        df = _prepare_prediction_dataframe(table_data)
+    @app.callback(
+        Output("bid-records-store", "data"),
+        Output("snapshot-meta-store", "data"),
+        Input("seats-available-input", "value"),
+        Input("offers-input", "value"),
+        Input("time-before-days-input", "value"),
+        Input("time-before-hours-input", "value"),
+        State("bid-records-store", "data"),
+        State("snapshot-meta-store", "data"),
+        prevent_initial_call=True,
+    )
+    def apply_summary_overrides(
+        seats_value: Optional[float],
+        offers_value: Optional[int],
+        days_value: Optional[int],
+        hours_value: Optional[int],
+        records: Optional[List[Dict[str, str]]],
+        meta: Optional[Dict[str, str]],
+    ):
+        if records is None or meta is None:
+            return no_update, no_update
+
+        triggered = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
+
+        updated_records = [dict(record) for record in records]
+        updated_meta = dict(meta)
+
+        if triggered == "seats-available-input":
+            if seats_value is None:
+                return no_update, no_update
+            for record in updated_records:
+                record["seats_available"] = seats_value
+            updated_meta["seats_available"] = seats_value
+            return updated_records, updated_meta
+
+        if triggered == "offers-input":
+            if offers_value is None or offers_value < 0:
+                return no_update, no_update
+            current_len = len(updated_records)
+            if offers_value == current_len:
+                updated_meta["num_offers"] = offers_value
+                return updated_records, updated_meta
+            if offers_value > current_len and current_len > 0:
+                template = updated_records[0]
+                for _ in range(offers_value - current_len):
+                    new_bid = dict(template)
+                    new_bid["Bid #"] = len(updated_records) + 1
+                    new_bid.setdefault("offer_status", "pending")
+                    updated_records.append(new_bid)
+            elif offers_value < current_len:
+                updated_records = updated_records[: offers_value]
+            for pos, record in enumerate(updated_records, start=1):
+                record["Bid #"] = pos
+            updated_meta["num_offers"] = len(updated_records)
+            return updated_records, updated_meta
+
+        if triggered in {"time-before-days-input", "time-before-hours-input"}:
+            if days_value is None and hours_value is None:
+                return no_update, no_update
+            hours_value = hours_value or 0
+            days_value = days_value or 0
+            total_hours = max(days_value * 24 + hours_value, 0)
+            departure_iso = updated_meta.get("departure_timestamp")
+            if departure_iso:
+                departure_ts = pd.to_datetime(departure_iso)
+                new_current = departure_ts - pd.Timedelta(hours=total_hours)
+                for record in updated_records:
+                    record["current_timestamp"] = new_current.isoformat()
+                updated_meta["current_timestamp"] = new_current.isoformat()
+            updated_meta["time_before_departure_hours"] = total_hours
+            return updated_records, updated_meta
+
+        return no_update, no_update
+
+    @app.callback(
+        Output("bid-table", "columns"),
+        Output("bid-table", "data"),
+        Output("bid-table", "style_data_conditional"),
+        Input("bid-records-store", "data"),
+        Input("prediction-store", "data"),
+    )
+    def render_bid_table(
+        records: Optional[List[Dict[str, str]]],
+        predictions: Optional[Dict[str, float]],
+    ):
+        if not records:
+            columns = [
+                {"name": "Feature", "id": "Feature", "editable": False},
+            ]
+            return columns, [], []
+
+        columns = [
+            {"name": "Feature", "id": "Feature", "editable": False},
+        ]
+        data_rows: List[Dict[str, object]] = []
+        style_rules: List[Dict[str, object]] = []
+
+        for idx, record in enumerate(records):
+            bid_label = record.get("Bid #") or record.get("bid_number") or idx + 1
+            column_id = f"bid_{idx}"
+            columns.append({"name": f"Bid {bid_label}", "id": column_id, "editable": True})
+
+        prediction_map = predictions or {}
+
+        for feature in DISPLAY_FEATURE_ROWS:
+            row = {"Feature": feature}
+            for idx, record in enumerate(records):
+                column_id = f"bid_{idx}"
+                if feature == "Acceptance Probability":
+                    row[column_id] = prediction_map.get(column_id)
+                else:
+                    row[column_id] = record.get(feature)
+            data_rows.append(row)
+
+        style_rules.append(
+            {
+                "if": {"filter_query": '{Feature} = "Acceptance Probability"'},
+                "fontWeight": "700",
+                "backgroundColor": "#f1f5f9",
+                "pointerEvents": "none",
+            }
+        )
+
+        return columns, data_rows, style_rules
+
+    @app.callback(
+        Output("bid-records-store", "data"),
+        Input("bid-table", "data_timestamp"),
+        State("bid-table", "data"),
+        State("bid-table", "columns"),
+        State("bid-records-store", "data"),
+        prevent_initial_call=True,
+    )
+    def persist_table_edits(
+        data_timestamp: Optional[int],
+        table_data: Optional[List[Dict[str, object]]],
+        columns: Optional[List[Dict[str, object]]],
+        records: Optional[List[Dict[str, object]]],
+    ):
+        if not data_timestamp or not table_data or not columns or not records:
+            return no_update
+
+        updated_records = [dict(record) for record in records]
+        feature_map = {row.get("Feature"): row for row in table_data}
+        bid_columns = [col for col in columns if col["id"] != "Feature"]
+
+        for position, column in enumerate(bid_columns):
+            column_id = column["id"]
+            if position >= len(updated_records):
+                continue
+            record = updated_records[position]
+            for feature in DISPLAY_FEATURE_ROWS:
+                if feature == "Acceptance Probability":
+                    continue
+                value_row = feature_map.get(feature)
+                if value_row is not None and column_id in value_row:
+                    record[feature] = value_row[column_id]
+        return updated_records
+
+    @app.callback(
+        Output("prediction-graph", "figure"),
+        Output("prediction-store", "data"),
+        Output("prediction-warning", "children"),
+        Input("bid-records-store", "data"),
+        Input("model-uri-store", "data"),
+    )
+    def run_predictions(
+        records: Optional[List[Dict[str, str]]],
+        model_uri: Optional[str],
+    ):
+        if not records:
+            return _build_prediction_plot(pd.DataFrame()), {}, ""
+
+        df = _prepare_prediction_dataframe(records)
+
+        if not model_uri:
+            empty_fig = _build_prediction_plot(pd.DataFrame())
+            return empty_fig, {}, "Load a model to generate acceptance probabilities."
+
         try:
             pred_df = _predict(model_uri, df)
         except Exception as exc:  # pragma: no cover - user feedback
             empty_fig = go.Figure()
             empty_fig.update_layout(title=f"Prediction failed: {exc}")
-            columns = [{"name": col, "id": col} for col in df.columns]
-            return columns, table_data, empty_fig, str(exc)
+            return empty_fig, {}, str(exc)
 
-        columns = [
-            {"name": col, "id": col}
-            if col == "Acceptance Probability"
-            else {"name": col, "id": col}
-            for col in pred_df.columns
-        ]
         figure = _build_prediction_plot(pred_df)
-        data = pred_df.to_dict("records")
         warning = pred_df.attrs.get("model_warning", "")
-        if warning:
-            figure.update_layout(title=f"{figure.layout.title.text} (warning)")
-        return columns, data, figure, warning
 
+        predictions = {}
+        for idx, _ in enumerate(records):
+            column_id = f"bid_{idx}"
+            predictions[column_id] = pred_df.iloc[idx].get("Acceptance Probability") if idx < len(pred_df) else None
+
+        return figure, predictions, warning
     return app
 
 
