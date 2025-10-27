@@ -463,6 +463,30 @@ def build_scenario_line_chart(df: pd.DataFrame, feature_label: str) -> go.Figure
     return fig
 
 
+def records_to_dataframe(records: Optional[Sequence[Dict[str, object]]]) -> pd.DataFrame:
+    """Convert serialized scenario records back into a DataFrame.
+
+    Dash stores JSON-serializable data inside ``dcc.Store`` components. When
+    ``extract_baseline_snapshot`` exports records for the scenario tab it
+    stringifies datetime columns so they can be stored.  Rehydrate those
+    columns here so downstream helpers (e.g. prediction pipelines) see the
+    expected dtypes again.
+    """
+
+    df = pd.DataFrame(records or [])
+    if df.empty:
+        return df
+
+    for column in df.columns:
+        if not isinstance(column, str):
+            continue
+        if "timestamp" in column.lower():
+            parsed = pd.to_datetime(df[column], errors="coerce")
+            if parsed.notna().any():
+                df[column] = parsed
+    return df
+
+
 __all__ = [
     "ScenarioFeature",
     "ScenarioRange",
@@ -474,5 +498,6 @@ __all__ = [
     "compute_default_range",
     "decode_flight_key",
     "extract_baseline_snapshot",
+    "records_to_dataframe",
     "select_feature",
 ]

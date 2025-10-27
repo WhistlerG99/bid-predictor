@@ -34,6 +34,7 @@ from .scenario import (
     compute_default_range,
     decode_flight_key,
     extract_baseline_snapshot,
+    records_to_dataframe,
     select_feature,
 )
 
@@ -64,6 +65,7 @@ __all__ = [
     "compute_default_range",
     "decode_flight_key",
     "extract_baseline_snapshot",
+    "records_to_dataframe",
     "select_feature",
     "sort_records_by_bid",
     "USD_MAX_COLUMN",

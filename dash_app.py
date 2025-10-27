@@ -37,6 +37,7 @@ from bid_predictor.ui import (
     predict,
     recompute_usd_metrics,
     select_feature,
+    records_to_dataframe,
     safe_float,
     sort_records_by_bid,
 )
@@ -781,7 +782,7 @@ def create_app() -> Dash:
         Input("scenario-baseline-store", "data"),
     )
     def populate_scenario_features(baseline_records: Optional[List[Dict[str, object]]]):
-        baseline_df = pd.DataFrame(baseline_records or [])
+        baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df)
         options = [{"label": feature.label, "value": feature.encode()} for feature in features]
         value = options[0]["value"] if options else None
@@ -802,7 +803,7 @@ def create_app() -> Dash:
         baseline_records: Optional[List[Dict[str, object]]],
         feature_value: Optional[str],
     ):
-        baseline_df = pd.DataFrame(baseline_records or [])
+        baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df)
         feature = select_feature(features, feature_value)
         if baseline_df.empty or feature is None:
@@ -844,7 +845,7 @@ def create_app() -> Dash:
         step_count: Optional[int],
         model_uri: Optional[str],
     ):
-        baseline_df = pd.DataFrame(baseline_records or [])
+        baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df)
         feature = select_feature(features, feature_value)
 
