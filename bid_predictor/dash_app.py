@@ -1,9 +1,7 @@
 """Interactive Dash UI to explore bid acceptance predictions from an MLflow model."""
 from __future__ import annotations
 
-import math
-from functools import lru_cache
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 import mlflow
@@ -11,443 +9,27 @@ import pandas as pd
 from dash import Dash, Input, Output, State, callback_context, dash_table, dcc, html, no_update
 from mlflow.exceptions import MlflowException
 import plotly.graph_objects as go
-from plotly import colors as plotly_colors
 
-from .feature_config import _GROUPBY_KEY_FEATURES, load_feature_config
-from .tuning.data_access import load_training_data
-
-
-# -- Caching helpers ---------------------------------------------------------------------------
-
-
-@lru_cache(maxsize=4)
-def _load_dataset_cached(path: str) -> pd.DataFrame:
-    """Load the training dataset and cache it for repeated access."""
-
-    df = load_training_data(path)
-    # Ensure the group-by key columns exist; raise a helpful error if missing.
-    missing = [col for col in _GROUPBY_KEY_FEATURES if col not in df.columns]
-    if missing:
-        raise ValueError(
-            "Dataset is missing required columns: {}".format(
-                ", ".join(sorted(missing))
-            )
-        )
-
-    # Normalize timestamp columns for reliable downstream calculations.
-    for col in ("current_timestamp", "departure_timestamp", "travel_date"):
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col])
-
-    return df
-
-
-@lru_cache(maxsize=4)
-def _load_model_cached(model_uri: str):
-    """Load and cache the MLflow model given a model URI."""
-
-    return mlflow.sklearn.load_model(model_uri)
-
-
-def _get_feature_columns() -> Tuple[List[str], List[str]]:
-    feature_config = load_feature_config()
-    features = list(feature_config["pre_features"])
-    categorical = list(feature_config["cat_features"])
-    return features, categorical
-
-
-DISPLAY_FEATURE_ROWS = [
-    "item_count",
-    "usd_base_amount",
-    "fare_class",
-    "offer_time",
-    "multiplier_fare_class",
-    "multiplier_loyalty",
-    "multiplier_success_history",
-    "multiplier_payment_type",
-    "usd_base_amount_25%",
-    "usd_base_amount_50%",
-    "usd_base_amount_75%",
-    "usd_base_amount_max",
-    "Acceptance Probability",
-]
-
-_USD_PERCENT_COLUMNS = {
-    "usd_base_amount_25%": 0.25,
-    "usd_base_amount_50%": 0.50,
-    "usd_base_amount_75%": 0.75,
-}
-
-_USD_MAX_COLUMN = "usd_base_amount_max"
-
-_BID_IDENTIFIER_COLUMNS = ("id", "bid_id", "bid_number")
-
-_BAR_COLOR_SEQUENCE = (
-    getattr(plotly_colors.qualitative, "G10", None)
-    or getattr(plotly_colors.qualitative, "Plotly", None)
-    or [
-        "#006d77",
-        "#ff7f50",
-        "#6a4c93",
-        "#4361ee",
-        "#f4a261",
-        "#2a9d8f",
-        "#e63946",
-        "#8338ec",
-        "#ffbe0b",
-        "#3a86ff",
-    ]
+from .ui import (
+    BAR_COLOR_SEQUENCE,
+    BID_IDENTIFIER_COLUMNS,
+    DISPLAY_FEATURE_ROWS,
+    USD_MAX_COLUMN,
+    USD_PERCENT_COLUMNS,
+    apply_bid_labels,
+    build_prediction_plot,
+    compute_bid_label_map,
+    get_next_bid_label,
+    load_dataset_cached,
+    load_model_cached,
+    normalize_offer_time,
+    prepare_bid_record,
+    prepare_prediction_dataframe,
+    predict,
+    recompute_usd_metrics,
+    safe_float,
+    sort_records_by_bid,
 )
-
-
-def _safe_float(value: object) -> Optional[float]:
-    if value in (None, ""):
-        return None
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    if pd.isna(result):
-        return None
-    return result
-
-
-def _normalize_offer_time(record: Dict[str, object]) -> None:
-    offer_value = _safe_float(record.get("offer_time"))
-    if offer_value is None:
-        return
-    record["offer_time"] = round(offer_value, 4)
-
-
-def _prepare_bid_record(record: Dict[str, object]) -> Dict[str, object]:
-    prepared = dict(record)
-    prepared.pop("Acceptance Probability", None)
-    _normalize_offer_time(prepared)
-    amount_value = _safe_float(prepared.get("usd_base_amount"))
-    if amount_value is not None:
-        prepared["usd_base_amount"] = round(amount_value, 2)
-    return prepared
-
-
-def _recompute_usd_metrics(records: List[Dict[str, object]]) -> None:
-    if not records:
-        return
-
-    amounts: List[Optional[float]] = []
-    for record in records:
-        amount = _safe_float(record.get("usd_base_amount"))
-        if amount is not None:
-            record["usd_base_amount"] = round(amount, 2)
-        amounts.append(amount)
-
-    valid_amounts = [value for value in amounts if value is not None]
-    max_amount: Optional[float] = max(valid_amounts) if valid_amounts else None
-
-    for idx, record in enumerate(records):
-        peer_values = [
-            value
-            for peer_idx, value in enumerate(amounts)
-            if peer_idx != idx and value is not None
-        ]
-        if peer_values:
-            peer_series = pd.Series(peer_values)
-            for column, fraction in _USD_PERCENT_COLUMNS.items():
-                quantile_value = peer_series.quantile(fraction)
-                record[column] = (
-                    round(float(quantile_value), 2)
-                    if quantile_value is not None and not pd.isna(quantile_value)
-                    else None
-                )
-        else:
-            for column in _USD_PERCENT_COLUMNS:
-                record[column] = None
-
-        record[_USD_MAX_COLUMN] = (
-            round(float(max_amount), 2)
-            if max_amount is not None and not pd.isna(max_amount)
-            else None
-        )
-
-
-def _compute_bid_label_map(df: pd.DataFrame) -> Tuple[Dict[object, int], Optional[str]]:
-    """Build a mapping from bid identifier to the label index."""
-
-    for column in _BID_IDENTIFIER_COLUMNS:
-        if column not in df.columns:
-            continue
-        values = df[column].dropna()
-        if values.empty:
-            continue
-        try:
-            ordered = (
-                pd.Series(values.unique())
-                .sort_values(kind="mergesort")
-                .tolist()
-            )
-        except Exception:
-            ordered = (
-                pd.Series(values.astype(str).unique())
-                .sort_values(kind="mergesort")
-                .tolist()
-            )
-        label_map = {value: index + 1 for index, value in enumerate(ordered)}
-        return label_map, column
-    return {}, None
-
-
-def _apply_bid_labels(
-    df: pd.DataFrame,
-    label_map: Dict[object, int],
-    label_column: Optional[str],
-) -> pd.DataFrame:
-    """Ensure the Bid # column reflects the provided identifier mapping."""
-
-    if df.empty:
-        return df
-
-    working = df.copy()
-    existing = working.get("Bid #")
-
-    if label_map and label_column and label_column in working.columns:
-        mapped = working[label_column].map(label_map)
-        if existing is not None:
-            mapped = mapped.fillna(existing)
-        working["Bid #"] = mapped
-    elif "Bid #" not in working.columns:
-        working["Bid #"] = range(1, len(working) + 1)
-
-    return working
-
-
-def _sort_records_by_bid(records: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
-    """Return records ordered by their bid label."""
-
-    def sort_key(record: Dict[str, object]) -> Tuple[int, object]:
-        label = record.get("Bid #")
-        if label in (None, "") or pd.isna(label) or (
-            isinstance(label, float) and math.isnan(label)
-        ):
-            return (1, "")
-        try:
-            return (0, float(label))
-        except (TypeError, ValueError):
-            return (0, str(label))
-
-    return sorted(list(records), key=sort_key)
-
-
-def _get_next_bid_label(records: Iterable[Dict[str, object]]) -> int:
-    """Return the next available bid label given the existing records."""
-
-    max_label = 0
-    for record in records:
-        label = record.get("Bid #")
-        if label in (None, ""):
-            continue
-        try:
-            value = int(float(label))
-        except (TypeError, ValueError):
-            continue
-        max_label = max(max_label, value)
-    return max_label + 1 if max_label > 0 else 1
-
-
-def _prepare_prediction_dataframe(table_records: Iterable[Dict[str, str]]) -> pd.DataFrame:
-    df = pd.DataFrame(list(table_records))
-    if df.empty:
-        return df
-
-    # Attempt to convert numeric columns back to floats/ints when possible.
-    for col in df.columns:
-        if col in {
-            "carrier_code",
-            "flight_number",
-            "fare_class",
-            "offer_status",
-            "upgrade_type",
-            "Bid #",
-        }:
-            continue
-        if df[col].isnull().all():
-            continue
-        try:
-            df[col] = pd.to_numeric(df[col])
-        except (TypeError, ValueError):
-            try:
-                df[col] = pd.to_datetime(df[col])
-            except (TypeError, ValueError):
-                pass
-    if "travel_date" in df.columns:
-        df["travel_date"] = pd.to_datetime(df["travel_date"])
-    if "current_timestamp" in df.columns:
-        df["current_timestamp"] = pd.to_datetime(df["current_timestamp"])
-    if "departure_timestamp" in df.columns:
-        df["departure_timestamp"] = pd.to_datetime(df["departure_timestamp"])
-    features, _ = _get_feature_columns()
-    feature_df = df.reindex(columns=features)
-    extra_columns = [col for col in df.columns if col not in feature_df.columns]
-    for column in extra_columns:
-        feature_df[column] = df[column]
-    return feature_df
-
-
-def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
-    fig = go.Figure()
-    if df.empty or "Acceptance Probability" not in df.columns:
-        fig.update_layout(title="No predictions available", template="plotly_white")
-        return fig
-
-    work = df.copy()
-    if "Bid #" not in work.columns and "bid_number" in work.columns:
-        work["Bid #"] = work["bid_number"]
-    if "departure_timestamp" in work.columns and "current_timestamp" in work.columns:
-        work["time_until_departure_hours"] = (
-            (pd.to_datetime(work["departure_timestamp"]) - pd.to_datetime(work["current_timestamp"]))
-            .dt.total_seconds()
-            .div(3600)
-            .round()
-        )
-    elif "snapshot_num" in work.columns:
-        work["time_until_departure_hours"] = work["snapshot_num"]
-    else:
-        work["time_until_departure_hours"] = range(len(work))
-
-    if "Bid #" not in work.columns:
-        work["Bid #"] = range(1, len(work) + 1)
-    if "offer_status" not in work.columns:
-        work["offer_status"] = "unknown"
-
-    # Create traces per bid using time ordering
-    status_palette = {
-        "accepted": "#2ec4b6",
-        "rejected": "#ff6b6b",
-        "pending": "#ffd166",
-        "unknown": "#5e60ce",
-    }
-
-    for color_index, (bid_id, grp) in enumerate(work.groupby("Bid #")):
-        grp_sorted = grp.sort_values("time_until_departure_hours")
-        status = grp_sorted["offer_status"].iloc[-1]
-        label = f"Bid {bid_id} - {status}"
-        marker_color = _BAR_COLOR_SEQUENCE[color_index % len(_BAR_COLOR_SEQUENCE)]
-        border_color = status_palette.get(str(status).lower(), "#1b4965")
-        snapshot_data = None
-        if "snapshot_num" in grp_sorted.columns:
-            snapshot_data = grp_sorted["snapshot_num"].astype(str)
-        hover_template = "Time: %{x}<br>Probability: %{y:.4f}%"
-        if snapshot_data is not None:
-            hover_template = "Snapshot: %{customdata[0]}<br>" + hover_template
-        fig.add_trace(
-            go.Bar(
-                x=grp_sorted["time_until_departure_hours"],
-                y=grp_sorted["Acceptance Probability"],
-                name=label,
-                marker=dict(color=marker_color, line=dict(color=border_color, width=1.5)),
-                customdata=None
-                if snapshot_data is None
-                else snapshot_data.to_numpy().reshape(-1, 1),
-                hovertemplate=hover_template + "<extra></extra>",
-            )
-        )
-
-    if "seats_available" in work.columns:
-        seats = (
-            work[["time_until_departure_hours", "seats_available"]]
-            .drop_duplicates()
-            .sort_values("time_until_departure_hours")
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=seats["time_until_departure_hours"],
-                y=seats["seats_available"],
-                name="Seats available",
-                mode="lines+markers",
-                yaxis="y2",
-                line=dict(color="#FF5733"),
-            )
-        )
-
-    fig.update_layout(
-        template="plotly_white",
-        barmode="group",
-        title="Acceptance probability by snapshot",
-        xaxis_title="Time until departure (hours or snapshot)",
-        yaxis=dict(title="Acceptance probability (%)", rangemode="tozero"),
-        legend=dict(
-            title="Bid and status",
-            orientation="v",
-            yanchor="top",
-            y=1,
-            x=1.02,
-            xanchor="left",
-            bgcolor="rgba(255, 255, 255, 0.8)",
-            bordercolor="#cbd5e1",
-            borderwidth=1,
-        ),
-        margin=dict(r=220),
-        height=760,
-    )
-    if "seats_available" in work.columns:
-        fig.update_layout(yaxis2=dict(title="Seats available", overlaying="y", side="right"))
-    return fig
-
-
-def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
-
-    model = _load_model_cached(model_uri)
-    feature_df = df.copy()
-    model_warning: Optional[str] = None
-
-    expected_columns: Optional[List[str]] = None
-    try:
-        metadata = getattr(model, "metadata", None)
-        if metadata is not None:
-            input_schema = metadata.get_input_schema()
-            if input_schema is not None:
-                names = list(input_schema.input_names())
-                expected_columns = names or None
-    except AttributeError:
-        expected_columns = None
-
-    if expected_columns:
-        missing = [col for col in expected_columns if col not in feature_df.columns]
-        if missing:
-            model_warning = (
-                "Added missing model columns with empty values: {}".format(
-                    ", ".join(sorted(missing))
-                )
-            )
-        # ensure the dataframe has exactly the schema expected by the model
-        feature_df = feature_df.reindex(columns=expected_columns)
-    else:
-        features, _ = _get_feature_columns()
-        missing = [col for col in features if col not in feature_df.columns]
-        if missing:
-            model_warning = (
-                "Added missing feature config columns with empty values: {}".format(
-                    ", ".join(sorted(missing))
-                )
-            )
-        # align to feature config order, introducing NaNs for absent columns so
-        # downstream transformers receive the expected number of features
-        feature_df = feature_df.reindex(columns=features)
-
-    predictions = model.predict_proba(feature_df)
-    if isinstance(predictions, pd.DataFrame) and "Acceptance Probability" in predictions.columns:
-        acceptance = predictions["Acceptance Probability"].astype(float).to_numpy()
-    else:
-        # mlflow.pyfunc returns numpy array; expect probability in second column
-        if predictions.ndim == 2 and predictions.shape[1] > 1:
-            acceptance = predictions[:, 1]
-        else:
-            acceptance = predictions
-    acceptance_series = pd.Series(acceptance, index=df.index, dtype="float64") * 100.0
-    df["Acceptance Probability"] = acceptance_series.round(4)
-    if model_warning:
-        df.attrs["model_warning"] = model_warning
-    return df
 
 
 # -- Dash application --------------------------------------------------------------------------
@@ -920,7 +502,7 @@ def create_app() -> Dash:
             return "Please provide a dataset path.", None
 
         try:
-            dataset = _load_dataset_cached(path)
+            dataset = load_dataset_cached(path)
         except Exception as exc:  # pragma: no cover - user feedback
             return f"Failed to load dataset: {exc}", None
 
@@ -952,7 +534,7 @@ def create_app() -> Dash:
             else:
                 # Default to production stage if nothing provided.
                 model_uri = f"models:/{model_name}/Production"
-            _load_model_cached(model_uri)
+            load_model_cached(model_uri)
         except MlflowException as exc:  # pragma: no cover - user feedback
             return f"Failed to load model: {exc}", None
         except Exception as exc:  # pragma: no cover
@@ -969,7 +551,7 @@ def create_app() -> Dash:
         if not dataset_path:
             return [], None
 
-        dataset = _load_dataset_cached(dataset_path)
+        dataset = load_dataset_cached(dataset_path)
         carriers = (
             dataset["carrier_code"].dropna().drop_duplicates().sort_values()
             if "carrier_code" in dataset.columns
@@ -989,7 +571,7 @@ def create_app() -> Dash:
         if not dataset_path or not carrier:
             return [], None
 
-        dataset = _load_dataset_cached(dataset_path)
+        dataset = load_dataset_cached(dataset_path)
         if "carrier_code" not in dataset.columns or "flight_number" not in dataset.columns:
             return [], None
 
@@ -1016,7 +598,7 @@ def create_app() -> Dash:
         if not dataset_path or not carrier or not flight_number:
             return [], None
 
-        dataset = _load_dataset_cached(dataset_path)
+        dataset = load_dataset_cached(dataset_path)
         if "travel_date" not in dataset.columns:
             return [], None
 
@@ -1052,7 +634,7 @@ def create_app() -> Dash:
         if not dataset_path or not carrier or not flight_number or not travel_date:
             return [], None
 
-        dataset = _load_dataset_cached(dataset_path)
+        dataset = load_dataset_cached(dataset_path)
         if "upgrade_type" not in dataset.columns:
             return [], None
 
@@ -1088,7 +670,7 @@ def create_app() -> Dash:
         if not dataset_path or not carrier or not flight_number or not travel_date or not upgrade_type:
             return [], None
 
-        dataset = _load_dataset_cached(dataset_path)
+        dataset = load_dataset_cached(dataset_path)
         if "snapshot_num" not in dataset.columns:
             return [], None
 
@@ -1176,7 +758,7 @@ def create_app() -> Dash:
                 no_update,
             )
 
-        dataset = _load_dataset_cached(dataset_path)
+        dataset = load_dataset_cached(dataset_path)
 
         if not carrier or not flight_number or not travel_date or not upgrade_type:
             return (
@@ -1215,7 +797,7 @@ def create_app() -> Dash:
             restored_records = [dict(record) for record in baseline_records]
             restored_meta = dict(baseline_meta) if baseline_meta else dict(snapshot_meta or {})
             restored_meta["num_offers"] = len(restored_records)
-            _recompute_usd_metrics(restored_records)
+            recompute_usd_metrics(restored_records)
             return (
                 summary_block,
                 "Restored snapshot to original values.",
@@ -1232,14 +814,14 @@ def create_app() -> Dash:
             for feature in DISPLAY_FEATURE_ROWS:
                 if feature != "Acceptance Probability":
                     new_bid.setdefault(feature, base.get(feature))
-            for identifier in _BID_IDENTIFIER_COLUMNS:
+            for identifier in BID_IDENTIFIER_COLUMNS:
                 if identifier in new_bid:
                     new_bid[identifier] = None
-            new_bid["Bid #"] = _get_next_bid_label(existing_records)
+            new_bid["Bid #"] = get_next_bid_label(existing_records)
             new_bid.setdefault("offer_status", "pending")
-            prepared_bid = _prepare_bid_record(new_bid)
-            new_data = _sort_records_by_bid(existing_records + [prepared_bid])
-            _recompute_usd_metrics(new_data)
+            prepared_bid = prepare_bid_record(new_bid)
+            new_data = sort_records_by_bid(existing_records + [prepared_bid])
+            recompute_usd_metrics(new_data)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
             return summary_block, "", new_meta, new_data, existing_removed, no_update, no_update
@@ -1261,7 +843,7 @@ def create_app() -> Dash:
             remaining_removed: List[Dict[str, object]] = []
             for item in existing_removed:
                 if item.get("id") in restore_ids:
-                    restored_records.append(_prepare_bid_record(item.get("record", {})))
+                    restored_records.append(prepare_bid_record(item.get("record", {})))
                 else:
                     remaining_removed.append(item)
             if not restored_records:
@@ -1274,8 +856,8 @@ def create_app() -> Dash:
                     no_update,
                     no_update,
                 )
-            working = _sort_records_by_bid(working_records + restored_records)
-            _recompute_usd_metrics(working)
+            working = sort_records_by_bid(working_records + restored_records)
+            recompute_usd_metrics(working)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             return summary_block, "", new_meta, working, remaining_removed, no_update, no_update
@@ -1313,8 +895,8 @@ def create_app() -> Dash:
                             "record": removed_record,
                         }
                     )
-            working = _sort_records_by_bid(working)
-            _recompute_usd_metrics(working)
+            working = sort_records_by_bid(working)
+            recompute_usd_metrics(working)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             updated_removed = existing_removed + removed_entries
@@ -1380,7 +962,7 @@ def create_app() -> Dash:
                 no_update,
             )
 
-        label_map, label_column = _compute_bid_label_map(subset)
+        label_map, label_column = compute_bid_label_map(subset)
         snapshot_df = subset.loc[
             subset["snapshot_num"].astype(str) == str(snapshot_value)
         ].copy()
@@ -1396,7 +978,7 @@ def create_app() -> Dash:
                 no_update,
             )
 
-        snapshot_df = _apply_bid_labels(snapshot_df, label_map, label_column)
+        snapshot_df = apply_bid_labels(snapshot_df, label_map, label_column)
         if "Bid #" in snapshot_df.columns:
             snapshot_df = snapshot_df.sort_values("Bid #")
 
@@ -1431,9 +1013,9 @@ def create_app() -> Dash:
             delta = departure_ts - current_ts
             delta_hours = max(delta.total_seconds() / 3600, 0)
 
-        base_records = [_prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
-        base_data = _sort_records_by_bid(base_records)
-        _recompute_usd_metrics(base_data)
+        base_records = [prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
+        base_data = sort_records_by_bid(base_records)
+        recompute_usd_metrics(base_data)
 
         snapshot_meta = {
             "carrier": carrier,
@@ -1518,30 +1100,30 @@ def create_app() -> Dash:
         if triggered == "offers-input":
             if offers_value is None or offers_value < 0:
                 return no_update, no_update
-            updated_records = _sort_records_by_bid(updated_records)
+            updated_records = sort_records_by_bid(updated_records)
             current_len = len(updated_records)
             if offers_value == current_len:
                 updated_meta["num_offers"] = offers_value
                 for record in updated_records:
-                    _normalize_offer_time(record)
-                _recompute_usd_metrics(updated_records)
+                    normalize_offer_time(record)
+                recompute_usd_metrics(updated_records)
                 return updated_records, updated_meta
             if offers_value > current_len and current_len > 0:
                 template = updated_records[0]
                 for _ in range(offers_value - current_len):
                     new_bid = dict(template)
-                    for identifier in _BID_IDENTIFIER_COLUMNS:
+                    for identifier in BID_IDENTIFIER_COLUMNS:
                         if identifier in new_bid:
                             new_bid[identifier] = None
-                    new_bid["Bid #"] = _get_next_bid_label(updated_records)
+                    new_bid["Bid #"] = get_next_bid_label(updated_records)
                     new_bid.setdefault("offer_status", "pending")
-                    updated_records.append(_prepare_bid_record(new_bid))
+                    updated_records.append(prepare_bid_record(new_bid))
             elif offers_value < current_len:
                 updated_records = updated_records[: offers_value]
-            updated_records = _sort_records_by_bid(updated_records)
+            updated_records = sort_records_by_bid(updated_records)
             for record in updated_records:
-                _normalize_offer_time(record)
-            _recompute_usd_metrics(updated_records)
+                normalize_offer_time(record)
+            recompute_usd_metrics(updated_records)
             updated_meta["num_offers"] = len(updated_records)
             return updated_records, updated_meta
 
@@ -1611,25 +1193,25 @@ def create_app() -> Dash:
                 if feature == "fare_class":
                     row[column_id] = value
                 elif feature == "item_count":
-                    numeric = _safe_float(value)
+                    numeric = safe_float(value)
                     row[column_id] = int(numeric) if numeric is not None else value
                 elif feature == "offer_time":
-                    numeric = _safe_float(value)
+                    numeric = safe_float(value)
                     row[column_id] = round(numeric, 4) if numeric is not None else value
                 elif feature == "usd_base_amount":
-                    numeric = _safe_float(value)
+                    numeric = safe_float(value)
                     row[column_id] = round(numeric, 2) if numeric is not None else value
-                elif feature in _USD_PERCENT_COLUMNS:
-                    numeric = _safe_float(value)
+                elif feature in USD_PERCENT_COLUMNS:
+                    numeric = safe_float(value)
                     row[column_id] = round(numeric, 2) if numeric is not None else value
-                elif feature == _USD_MAX_COLUMN:
-                    numeric = _safe_float(value)
+                elif feature == USD_MAX_COLUMN:
+                    numeric = safe_float(value)
                     row[column_id] = round(numeric, 2) if numeric is not None else value
                 elif feature.startswith("multiplier"):
-                    numeric = _safe_float(value)
+                    numeric = safe_float(value)
                     row[column_id] = round(numeric, 4) if numeric is not None else value
                 else:
-                    numeric = _safe_float(value)
+                    numeric = safe_float(value)
                     row[column_id] = numeric if numeric is not None else value
             data_rows.append(row)
 
@@ -1642,7 +1224,7 @@ def create_app() -> Dash:
             }
         )
 
-        for percent_column in _USD_PERCENT_COLUMNS:
+        for percent_column in USD_PERCENT_COLUMNS:
             style_rules.append(
                 {
                     "if": {"filter_query": f'{{Feature}} = "{percent_column}"'},
@@ -1653,7 +1235,7 @@ def create_app() -> Dash:
 
         style_rules.append(
             {
-                "if": {"filter_query": f'{{Feature}} = "{_USD_MAX_COLUMN}"'},
+                "if": {"filter_query": f'{{Feature}} = "{USD_MAX_COLUMN}"'},
                 "backgroundColor": "#f8fafc",
                 "pointerEvents": "none",
             }
@@ -1728,27 +1310,27 @@ def create_app() -> Dash:
                     if feature == "fare_class":
                         record[feature] = value
                     elif feature == "item_count":
-                        numeric = _safe_float(value)
+                        numeric = safe_float(value)
                         record[feature] = int(numeric) if numeric is not None else value
                     elif feature == "offer_time":
-                        numeric = _safe_float(value)
+                        numeric = safe_float(value)
                         record[feature] = round(numeric, 4) if numeric is not None else value
                     elif feature == "usd_base_amount":
-                        numeric = _safe_float(value)
+                        numeric = safe_float(value)
                         record[feature] = numeric if numeric is not None else value
-                    elif feature in _USD_PERCENT_COLUMNS:
+                    elif feature in USD_PERCENT_COLUMNS:
                         # recomputed from usd_base_amount after loop
                         continue
-                    elif feature == _USD_MAX_COLUMN:
+                    elif feature == USD_MAX_COLUMN:
                         continue
                     elif feature.startswith("multiplier"):
-                        numeric = _safe_float(value)
+                        numeric = safe_float(value)
                         record[feature] = round(numeric, 4) if numeric is not None else value
                     else:
-                        numeric = _safe_float(value)
+                        numeric = safe_float(value)
                         record[feature] = numeric if numeric is not None else value
-            _normalize_offer_time(record)
-        _recompute_usd_metrics(updated_records)
+            normalize_offer_time(record)
+        recompute_usd_metrics(updated_records)
         return updated_records
 
     @app.callback(
@@ -1775,12 +1357,12 @@ def create_app() -> Dash:
         snapshot_meta: Optional[Dict[str, object]],
     ):
         if not records:
-            return _build_prediction_plot(pd.DataFrame()), {}, ""
+            return build_prediction_plot(pd.DataFrame()), {}, ""
 
-        selected_df = _prepare_prediction_dataframe(records)
+        selected_df = prepare_prediction_dataframe(records)
 
         if not model_uri:
-            empty_fig = _build_prediction_plot(pd.DataFrame())
+            empty_fig = build_prediction_plot(pd.DataFrame())
             return empty_fig, {}, "Load a model to generate acceptance probabilities."
 
         plot_source = pd.DataFrame()
@@ -1788,7 +1370,7 @@ def create_app() -> Dash:
         label_column: Optional[str] = None
         if dataset_path and carrier and flight_number and travel_date and upgrade_type:
             try:
-                dataset = _load_dataset_cached(dataset_path)
+                dataset = load_dataset_cached(dataset_path)
                 required = {"carrier_code", "flight_number", "travel_date", "upgrade_type"}
                 if required.issubset(dataset.columns):
                     travel_date_dt = pd.to_datetime(travel_date).date()
@@ -1799,8 +1381,8 @@ def create_app() -> Dash:
                         & (dataset["upgrade_type"] == upgrade_type)
                     )
                     plot_source = dataset.loc[mask].copy()
-                    label_map, label_column = _compute_bid_label_map(plot_source)
-                    plot_source = _apply_bid_labels(plot_source, label_map, label_column)
+                    label_map, label_column = compute_bid_label_map(plot_source)
+                    plot_source = apply_bid_labels(plot_source, label_map, label_column)
                     if "Bid #" in plot_source.columns:
                         plot_source = plot_source.sort_values("Bid #")
             except Exception:
@@ -1812,7 +1394,7 @@ def create_app() -> Dash:
         selected_snapshot_value = str(selected_snapshot) if selected_snapshot is not None else None
 
         if label_map and label_column:
-            selected_df = _apply_bid_labels(selected_df, label_map, label_column)
+            selected_df = apply_bid_labels(selected_df, label_map, label_column)
 
         if "snapshot_num" not in selected_df.columns and selected_snapshot_value is not None:
             selected_df["snapshot_num"] = selected_snapshot_value
@@ -1830,14 +1412,14 @@ def create_app() -> Dash:
             combined_df = pd.concat([plot_source, selected_df], ignore_index=True, sort=False)
 
         try:
-            plot_pred_df = _predict(model_uri, combined_df.copy())
-            table_pred_df = _predict(model_uri, selected_df.copy())
+            plot_pred_df = predict(model_uri, combined_df.copy())
+            table_pred_df = predict(model_uri, selected_df.copy())
         except Exception as exc:  # pragma: no cover - user feedback
             empty_fig = go.Figure()
             empty_fig.update_layout(title=f"Prediction failed: {exc}")
             return empty_fig, {}, str(exc)
 
-        figure = _build_prediction_plot(plot_pred_df)
+        figure = build_prediction_plot(plot_pred_df)
         warning = table_pred_df.attrs.get("model_warning", "") or plot_pred_df.attrs.get("model_warning", "") or ""
 
         predictions = {}
