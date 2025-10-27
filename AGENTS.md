@@ -24,7 +24,7 @@
   - `result_writing.py`: CSV/JSON/YAML writers for tuning summaries (normalize numpy types first).
 
 ## Dash UI Helpers
-- `bid_predictor/dash_app.py` should focus on layout and callbacks. Move reusable logic into the `bid_predictor/ui/` package.
+- `dash_app.py` at the repository root should focus on layout and callbacks. Move reusable logic into the `bid_predictor/ui/` package.
 - Each helper module in `ui/` should stay small and purpose-driven (e.g., data access, formatting, plotting).
 - Add or update unit tests under `tests/unit/ui/` whenever changing the UI helpers.
 

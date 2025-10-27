@@ -104,7 +104,7 @@ predictions for individual flights and bids. After installing the optional
 dependencies from `requirements.txt`, launch the app with:
 
 ```bash
-python -m bid_predictor.dash_app
+python dash_app.py
 ```
 
 Open http://127.0.0.1:8050/ in your browser. The interface guides you through
