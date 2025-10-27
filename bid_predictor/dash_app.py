@@ -236,7 +236,7 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
         # downstream transformers receive the expected number of features
         feature_df = feature_df.reindex(columns=features)
 
-    predictions = model.predict(feature_df)
+    predictions = model.predict_proba(feature_df)
     if isinstance(predictions, pd.DataFrame) and "Acceptance Probability" in predictions.columns:
         df["Acceptance Probability"] = predictions["Acceptance Probability"].values
     else:
