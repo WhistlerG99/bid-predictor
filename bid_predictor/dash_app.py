@@ -528,6 +528,8 @@ def create_app() -> Dash:
             dcc.Store(id="snapshot-meta-store"),
             dcc.Store(id="prediction-store"),
             dcc.Store(id="removed-bids-store"),
+            dcc.Store(id="baseline-bid-records-store"),
+            dcc.Store(id="baseline-snapshot-meta-store"),
             html.Div(
                 [
                     html.Div(
@@ -777,6 +779,20 @@ def create_app() -> Dash:
                                                     "borderRadius": "6px",
                                                     "marginLeft": "0.5rem",
                                                     "boxShadow": "0 2px 6px rgba(27, 73, 101, 0.35)",
+                                                },
+                                            ),
+                                            html.Button(
+                                                "Restore snapshot",
+                                                id="restore-snapshot",
+                                                n_clicks=0,
+                                                style={
+                                                    "backgroundColor": "#f4a261",
+                                                    "color": "#16324f",
+                                                    "border": "none",
+                                                    "padding": "0.5rem 1rem",
+                                                    "borderRadius": "6px",
+                                                    "marginLeft": "0.5rem",
+                                                    "boxShadow": "0 2px 6px rgba(244, 162, 97, 0.45)",
                                                 },
                                             ),
                                         ],
@@ -1061,10 +1077,13 @@ def create_app() -> Dash:
         Output("snapshot-meta-store", "data"),
         Output("bid-records-store", "data"),
         Output("removed-bids-store", "data"),
+        Output("baseline-bid-records-store", "data"),
+        Output("baseline-snapshot-meta-store", "data"),
         Input("snapshot-dropdown", "value"),
         Input("add-bid", "n_clicks"),
         Input("delete-bid", "n_clicks"),
         Input("restore-bid", "n_clicks"),
+        Input("restore-snapshot", "n_clicks"),
         State("bid-records-store", "data"),
         State("bid-table", "selected_columns"),
         State("bid-delete-selector", "value"),
@@ -1076,12 +1095,15 @@ def create_app() -> Dash:
         State("dataset-path-store", "data"),
         State("snapshot-meta-store", "data"),
         State("removed-bids-store", "data"),
+        State("baseline-bid-records-store", "data"),
+        State("baseline-snapshot-meta-store", "data"),
     )
     def update_snapshot_view(
         snapshot_value: Optional[str],
         add_clicks: int,
         delete_clicks: int,
         restore_clicks: int,
+        restore_snapshot_clicks: int,
         existing_records: Optional[List[Dict[str, str]]],
         selected_columns: Optional[List[str]],
         delete_selector: Optional[List[int]],
@@ -1093,9 +1115,17 @@ def create_app() -> Dash:
         dataset_path: Optional[str],
         snapshot_meta: Optional[Dict[str, str]],
         removed_store: Optional[List[Dict[str, object]]],
+        baseline_records_store: Optional[List[Dict[str, object]]],
+        baseline_meta_store: Optional[Dict[str, object]],
     ):
-        triggered = callback_context.triggered[0]["prop_id"].split(".")[0] if callback_context.triggered else None
+        triggered = (
+            callback_context.triggered[0]["prop_id"].split(".")[0]
+            if callback_context.triggered
+            else None
+        )
         existing_removed = list(removed_store or [])
+        baseline_records = [dict(record) for record in baseline_records_store or []]
+        baseline_meta = dict(baseline_meta_store or {})
 
         if not dataset_path:
             return (
@@ -1104,6 +1134,8 @@ def create_app() -> Dash:
                 None,
                 None,
                 existing_removed,
+                no_update,
+                no_update,
             )
 
         dataset = _load_dataset_cached(dataset_path)
@@ -1115,6 +1147,8 @@ def create_app() -> Dash:
                 snapshot_meta,
                 existing_records,
                 existing_removed,
+                no_update,
+                no_update,
             )
 
         travel_date_dt = pd.to_datetime(travel_date).date()
@@ -1129,6 +1163,30 @@ def create_app() -> Dash:
             style={"paddingLeft": "1.2rem", "margin": "0"},
         )
 
+        if triggered == "restore-snapshot":
+            if not baseline_records:
+                return (
+                    summary_block,
+                    "No baseline snapshot available to restore.",
+                    snapshot_meta,
+                    existing_records,
+                    existing_removed,
+                    no_update,
+                    no_update,
+                )
+            restored_records = [dict(record) for record in baseline_records]
+            restored_meta = dict(baseline_meta) if baseline_meta else dict(snapshot_meta or {})
+            restored_meta["num_offers"] = len(restored_records)
+            return (
+                summary_block,
+                "Restored snapshot to original values.",
+                restored_meta,
+                restored_records,
+                [],
+                no_update,
+                no_update,
+            )
+
         if triggered == "add-bid" and existing_records:
             base = existing_records[0].copy()
             new_bid = {key: base.get(key) for key in base}
@@ -1141,12 +1199,20 @@ def create_app() -> Dash:
             new_data = _sort_records_by_bid(existing_records + [prepared_bid])
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
-            return summary_block, "", new_meta, new_data, existing_removed
+            return summary_block, "", new_meta, new_data, existing_removed, no_update, no_update
 
         if triggered == "restore-bid":
             working_records = list(existing_records or [])
             if not restore_selector:
-                return summary_block, "Select removed bids to restore.", snapshot_meta, working_records, existing_removed
+                return (
+                    summary_block,
+                    "Select removed bids to restore.",
+                    snapshot_meta,
+                    working_records,
+                    existing_removed,
+                    no_update,
+                    no_update,
+                )
             restore_ids = set(restore_selector)
             restored_records: List[Dict[str, object]] = []
             remaining_removed: List[Dict[str, object]] = []
@@ -1156,11 +1222,19 @@ def create_app() -> Dash:
                 else:
                     remaining_removed.append(item)
             if not restored_records:
-                return summary_block, "No matching removed bids found.", snapshot_meta, working_records, existing_removed
+                return (
+                    summary_block,
+                    "No matching removed bids found.",
+                    snapshot_meta,
+                    working_records,
+                    existing_removed,
+                    no_update,
+                    no_update,
+                )
             working = _sort_records_by_bid(working_records + restored_records)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
-            return summary_block, "", new_meta, working, remaining_removed
+            return summary_block, "", new_meta, working, remaining_removed, no_update, no_update
 
         if triggered == "delete-bid" and existing_records:
             selections = set()
@@ -1174,7 +1248,15 @@ def create_app() -> Dash:
                 selections.update(int(idx) for idx in delete_selector)
             indices_to_remove = sorted(selections, reverse=True)
             if not indices_to_remove:
-                return summary_block, "Select bids to delete.", snapshot_meta, existing_records, existing_removed
+                return (
+                    summary_block,
+                    "Select bids to delete.",
+                    snapshot_meta,
+                    existing_records,
+                    existing_removed,
+                    no_update,
+                    no_update,
+                )
             working = list(existing_records)
             removed_entries: List[Dict[str, object]] = []
             for idx in indices_to_remove:
@@ -1191,10 +1273,37 @@ def create_app() -> Dash:
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             updated_removed = existing_removed + removed_entries
-            return summary_block, "", new_meta, working, updated_removed
+            return (
+                summary_block,
+                "",
+                new_meta,
+                working,
+                updated_removed,
+                no_update,
+                no_update,
+            )
 
         if triggered != "snapshot-dropdown":
-            return summary_block, "", snapshot_meta, existing_records, existing_removed
+            return (
+                summary_block,
+                "",
+                snapshot_meta,
+                existing_records,
+                existing_removed,
+                no_update,
+                no_update,
+            )
+
+        if snapshot_value is None:
+            return (
+                summary_block,
+                "Select a snapshot to view bids.",
+                snapshot_meta,
+                existing_records,
+                existing_removed,
+                no_update,
+                no_update,
+            )
 
         mask = (
             (dataset["carrier_code"] == carrier)
@@ -1211,6 +1320,8 @@ def create_app() -> Dash:
                 None,
                 None,
                 [],
+                no_update,
+                no_update,
             )
 
         if "snapshot_num" not in subset.columns:
@@ -1220,6 +1331,8 @@ def create_app() -> Dash:
                 None,
                 None,
                 [],
+                no_update,
+                no_update,
             )
 
         label_map, label_column = _compute_bid_label_map(subset)
@@ -1234,6 +1347,8 @@ def create_app() -> Dash:
                 None,
                 None,
                 [],
+                no_update,
+                no_update,
             )
 
         snapshot_df = _apply_bid_labels(snapshot_df, label_map, label_column)
@@ -1287,7 +1402,17 @@ def create_app() -> Dash:
             "time_before_departure_hours": delta_hours,
         }
 
-        return summary_block, "", snapshot_meta, base_data, []
+        baseline_records = [dict(record) for record in base_data]
+        baseline_meta = dict(snapshot_meta)
+        return (
+            summary_block,
+            "",
+            snapshot_meta,
+            base_data,
+            [],
+            baseline_records,
+            baseline_meta,
+        )
 
     @app.callback(
         Output("seats-available-input", "value"),
