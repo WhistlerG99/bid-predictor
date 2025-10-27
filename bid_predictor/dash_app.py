@@ -123,16 +123,34 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         work["offer_status"] = "unknown"
 
     # Create traces per bid using time ordering
+    status_palette = {
+        "accepted": "#2ec4b6",
+        "rejected": "#ff6b6b",
+        "pending": "#ffd166",
+        "unknown": "#5e60ce",
+    }
+
     for bid_id, grp in work.groupby("Bid #"):
         grp_sorted = grp.sort_values("time_until_departure_hours")
         status = grp_sorted["offer_status"].iloc[-1]
         label = f"Bid {bid_id} - {status}"
+        marker_color = status_palette.get(str(status).lower(), "#1b4965")
+        snapshot_data = None
+        if "snapshot_num" in grp_sorted.columns:
+            snapshot_data = grp_sorted["snapshot_num"].astype(str)
+        hover_template = "Time: %{x}<br>Probability: %{y:.3f}"
+        if snapshot_data is not None:
+            hover_template = "Snapshot: %{customdata[0]}<br>" + hover_template
         fig.add_trace(
             go.Bar(
                 x=grp_sorted["time_until_departure_hours"],
                 y=grp_sorted["Acceptance Probability"],
                 name=label,
-                hovertemplate="Time: %{x}<br>Probability: %{y:.3f}<extra></extra>",
+                marker=dict(color=marker_color),
+                customdata=None
+                if snapshot_data is None
+                else snapshot_data.to_numpy().reshape(-1, 1),
+                hovertemplate=hover_template + "<extra></extra>",
             )
         )
 
@@ -159,7 +177,18 @@ def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         title="Acceptance probability by snapshot",
         xaxis_title="Time until departure (hours or snapshot)",
         yaxis=dict(title="Acceptance probability", rangemode="tozero"),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.35, x=0.5, xanchor="center"),
+        legend=dict(
+            title="Bid and status",
+            orientation="v",
+            yanchor="top",
+            y=1,
+            x=1.02,
+            xanchor="left",
+            bgcolor="rgba(255, 255, 255, 0.8)",
+            bordercolor="#cbd5e1",
+            borderwidth=1,
+        ),
+        margin=dict(r=220),
         height=760,
     )
     if "seats_available" in work.columns:
@@ -578,6 +607,17 @@ def create_app() -> Dash:
                                         ],
                                         style={"marginBottom": "0.75rem"},
                                     ),
+                                    dcc.Dropdown(
+                                        id="bid-delete-selector",
+                                        options=[],
+                                        value=[],
+                                        multi=True,
+                                        placeholder="Select bids to delete",
+                                        style={
+                                            "marginBottom": "0.75rem",
+                                            "backgroundColor": "#ffffff",
+                                        },
+                                    ),
                                     dash_table.DataTable(
                                         id="bid-table",
                                         columns=[],
@@ -834,12 +874,12 @@ def create_app() -> Dash:
         Output("snapshot-feedback", "children"),
         Output("snapshot-meta-store", "data"),
         Output("bid-records-store", "data"),
-        Output("bid-table", "selected_columns"),
         Input("snapshot-dropdown", "value"),
         Input("add-bid", "n_clicks"),
         Input("delete-bid", "n_clicks"),
         State("bid-records-store", "data"),
         State("bid-table", "selected_columns"),
+        State("bid-delete-selector", "value"),
         State("carrier-dropdown", "value"),
         State("flight-number-dropdown", "value"),
         State("travel-date-dropdown", "value"),
@@ -853,6 +893,7 @@ def create_app() -> Dash:
         delete_clicks: int,
         existing_records: Optional[List[Dict[str, str]]],
         selected_columns: Optional[List[str]],
+        delete_selector: Optional[List[int]],
         carrier: Optional[str],
         flight_number: Optional[str],
         travel_date: Optional[str],
@@ -868,7 +909,6 @@ def create_app() -> Dash:
                 "",
                 None,
                 None,
-                [],
             )
 
         dataset = _load_dataset_cached(dataset_path)
@@ -879,7 +919,6 @@ def create_app() -> Dash:
                 "",
                 snapshot_meta,
                 existing_records,
-                selected_columns or [],
             )
 
         travel_date_dt = pd.to_datetime(travel_date).date()
@@ -916,19 +955,21 @@ def create_app() -> Dash:
             new_data = existing_records + [new_bid]
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
-            return summary_block, "", new_meta, new_data, []
+            return summary_block, "", new_meta, new_data
 
         if triggered == "delete-bid" and existing_records:
-            if not selected_columns:
-                return summary_block, "Select columns to delete.", snapshot_meta, existing_records, selected_columns or []
-            indices_to_remove = sorted(
-                {
+            selections = set()
+            if selected_columns:
+                selections.update(
                     int(col_id.replace("bid_", ""))
                     for col_id in selected_columns
-                    if col_id.startswith("bid_")
-                },
-                reverse=True,
-            )
+                    if col_id.startswith("bid_") and col_id.replace("bid_", "").isdigit()
+                )
+            if delete_selector:
+                selections.update(int(idx) for idx in delete_selector)
+            indices_to_remove = sorted(selections, reverse=True)
+            if not indices_to_remove:
+                return summary_block, "Select bids to delete.", snapshot_meta, existing_records
             working = list(existing_records)
             for idx in indices_to_remove:
                 if 0 <= idx < len(working):
@@ -937,10 +978,10 @@ def create_app() -> Dash:
                 record["Bid #"] = pos
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
-            return summary_block, "", new_meta, working, []
+            return summary_block, "", new_meta, working
 
         if triggered != "snapshot-dropdown":
-            return summary_block, "", snapshot_meta, existing_records, selected_columns or []
+            return summary_block, "", snapshot_meta, existing_records
 
         mask = (
             (dataset["carrier_code"] == carrier)
@@ -956,7 +997,6 @@ def create_app() -> Dash:
                 "No rows found for the selected flight.",
                 None,
                 None,
-                [],
             )
 
         if "snapshot_num" not in subset.columns:
@@ -965,7 +1005,6 @@ def create_app() -> Dash:
                 "Snapshot information is unavailable in this dataset.",
                 None,
                 None,
-                [],
             )
 
         snapshot_df = subset.loc[
@@ -978,7 +1017,6 @@ def create_app() -> Dash:
                 "No rows found for the selected snapshot.",
                 None,
                 None,
-                [],
             )
 
         if "Bid #" not in snapshot_df.columns:
@@ -1030,7 +1068,7 @@ def create_app() -> Dash:
             "time_before_departure_hours": delta_hours,
         }
 
-        return summary_block, "", snapshot_meta, base_data, []
+        return summary_block, "", snapshot_meta, base_data
 
     @app.callback(
         Output("seats-available-input", "value"),
@@ -1178,6 +1216,23 @@ def create_app() -> Dash:
         return columns, data_rows, style_rules
 
     @app.callback(
+        Output("bid-delete-selector", "options"),
+        Output("bid-delete-selector", "value"),
+        Input("bid-records-store", "data"),
+    )
+    def sync_delete_selector(records: Optional[List[Dict[str, object]]]):
+        if not records:
+            return [], []
+        options = [
+            {
+                "label": f"Bid {record.get('Bid #') or record.get('bid_number') or idx + 1}",
+                "value": idx,
+            }
+            for idx, record in enumerate(records)
+        ]
+        return options, []
+
+    @app.callback(
         Output("bid-records-store", "data", allow_duplicate=True),
         Input("bid-table", "data_timestamp"),
         State("bid-table", "data"),
@@ -1217,34 +1272,88 @@ def create_app() -> Dash:
         Output("prediction-warning", "children"),
         Input("bid-records-store", "data"),
         Input("model-uri-store", "data"),
+        State("dataset-path-store", "data"),
+        State("carrier-dropdown", "value"),
+        State("flight-number-dropdown", "value"),
+        State("travel-date-dropdown", "value"),
+        State("upgrade-dropdown", "value"),
+        State("snapshot-meta-store", "data"),
     )
     def run_predictions(
         records: Optional[List[Dict[str, str]]],
         model_uri: Optional[str],
+        dataset_path: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        travel_date: Optional[str],
+        upgrade_type: Optional[str],
+        snapshot_meta: Optional[Dict[str, object]],
     ):
         if not records:
             return _build_prediction_plot(pd.DataFrame()), {}, ""
 
-        df = _prepare_prediction_dataframe(records)
+        selected_df = _prepare_prediction_dataframe(records)
 
         if not model_uri:
             empty_fig = _build_prediction_plot(pd.DataFrame())
             return empty_fig, {}, "Load a model to generate acceptance probabilities."
 
+        plot_source = pd.DataFrame()
+        if dataset_path and carrier and flight_number and travel_date and upgrade_type:
+            try:
+                dataset = _load_dataset_cached(dataset_path)
+                required = {"carrier_code", "flight_number", "travel_date", "upgrade_type"}
+                if required.issubset(dataset.columns):
+                    travel_date_dt = pd.to_datetime(travel_date).date()
+                    mask = (
+                        (dataset["carrier_code"] == carrier)
+                        & (dataset["flight_number"].astype(str) == str(flight_number))
+                        & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
+                        & (dataset["upgrade_type"] == upgrade_type)
+                    )
+                    plot_source = dataset.loc[mask].copy()
+            except Exception:
+                plot_source = pd.DataFrame()
+
+        selected_snapshot = None
+        if snapshot_meta:
+            selected_snapshot = snapshot_meta.get("snapshot")
+        selected_snapshot_value = str(selected_snapshot) if selected_snapshot is not None else None
+
+        if "snapshot_num" not in selected_df.columns and selected_snapshot_value is not None:
+            selected_df["snapshot_num"] = selected_snapshot_value
+        elif "snapshot_num" in selected_df.columns:
+            selected_df["snapshot_num"] = selected_df["snapshot_num"].astype(str)
+
+        if plot_source.empty:
+            combined_df = selected_df.copy()
+        else:
+            if selected_snapshot_value is not None and "snapshot_num" in plot_source.columns:
+                mask = plot_source["snapshot_num"].astype(str) == selected_snapshot_value
+                plot_source = plot_source.loc[~mask]
+            if "snapshot_num" in plot_source.columns:
+                plot_source["snapshot_num"] = plot_source["snapshot_num"].astype(str)
+            combined_df = pd.concat([plot_source, selected_df], ignore_index=True, sort=False)
+
         try:
-            pred_df = _predict(model_uri, df)
+            plot_pred_df = _predict(model_uri, combined_df.copy())
+            table_pred_df = _predict(model_uri, selected_df.copy())
         except Exception as exc:  # pragma: no cover - user feedback
             empty_fig = go.Figure()
             empty_fig.update_layout(title=f"Prediction failed: {exc}")
             return empty_fig, {}, str(exc)
 
-        figure = _build_prediction_plot(pred_df)
-        warning = pred_df.attrs.get("model_warning", "")
+        figure = _build_prediction_plot(plot_pred_df)
+        warning = table_pred_df.attrs.get("model_warning", "") or plot_pred_df.attrs.get("model_warning", "") or ""
 
         predictions = {}
         for idx, _ in enumerate(records):
             column_id = f"bid_{idx}"
-            predictions[column_id] = pred_df.iloc[idx].get("Acceptance Probability") if idx < len(pred_df) else None
+            predictions[column_id] = (
+                table_pred_df.iloc[idx].get("Acceptance Probability")
+                if idx < len(table_pred_df)
+                else None
+            )
 
         return figure, predictions, warning
     return app
