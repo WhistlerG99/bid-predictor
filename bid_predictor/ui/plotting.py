@@ -67,18 +67,32 @@ def build_prediction_plot(df: pd.DataFrame) -> go.Figure:
         snapshot_data = None
         if "snapshot_num" in grp_sorted.columns:
             snapshot_data = grp_sorted["snapshot_num"].astype(str)
-        hover_template = "Time: %{x}<br>Probability: %{y:.4f}%"
+
+        bid_values = (
+            pd.Series([bid_id] * len(grp_sorted), index=grp_sorted.index)
+            .astype(str)
+        )
+
+        custom_columns = []
+        hover_lines = []
         if snapshot_data is not None:
-            hover_template = "Snapshot: %{customdata[0]}<br>" + hover_template
+            custom_columns.append(snapshot_data)
+            hover_lines.append("Snapshot: %{customdata[0]}")
+
+        custom_columns.append(bid_values)
+        bid_custom_index = len(custom_columns) - 1
+        hover_lines.append(f"Bid #: %{{customdata[{bid_custom_index}]}}")
+        hover_lines.extend(["Time: %{x}", "Probability: %{y:.4f}%"])
+        hover_template = "<br>".join(hover_lines)
+
+        customdata = pd.concat(custom_columns, axis=1).to_numpy()
         fig.add_trace(
             go.Bar(
                 x=grp_sorted["time_until_departure_hours"],
                 y=grp_sorted["Acceptance Probability"],
                 name=label,
                 marker=dict(color=marker_color, line=dict(color=border_color, width=1.5)),
-                customdata=None
-                if snapshot_data is None
-                else snapshot_data.to_numpy().reshape(-1, 1),
+                customdata=customdata,
                 hovertemplate=hover_template + "<extra></extra>",
             )
         )
