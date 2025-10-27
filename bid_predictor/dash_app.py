@@ -1,6 +1,7 @@
 """Interactive Dash UI to explore bid acceptance predictions from an MLflow model."""
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Tuple
 from uuid import uuid4
@@ -13,7 +14,7 @@ import plotly.graph_objects as go
 from plotly import colors as plotly_colors
 
 from .feature_config import _GROUPBY_KEY_FEATURES, load_feature_config
-from .tuning.data_access import load_training_data, resolve_train_file
+from .tuning.data_access import load_training_data
 
 
 # -- Caching helpers ---------------------------------------------------------------------------
@@ -130,6 +131,89 @@ def _prepare_bid_record(record: Dict[str, object]) -> Dict[str, object]:
     return prepared
 
 
+def _compute_bid_label_map(df: pd.DataFrame) -> Tuple[Dict[object, int], Optional[str]]:
+    """Build a mapping from bid identifier to the label index."""
+
+    for column in ("id", "bid_id", "bid_number"):
+        if column not in df.columns:
+            continue
+        values = df[column].dropna()
+        if values.empty:
+            continue
+        try:
+            ordered = (
+                pd.Series(values.unique())
+                .sort_values(kind="mergesort")
+                .tolist()
+            )
+        except Exception:
+            ordered = (
+                pd.Series(values.astype(str).unique())
+                .sort_values(kind="mergesort")
+                .tolist()
+            )
+        label_map = {value: index + 1 for index, value in enumerate(ordered)}
+        return label_map, column
+    return {}, None
+
+
+def _apply_bid_labels(
+    df: pd.DataFrame,
+    label_map: Dict[object, int],
+    label_column: Optional[str],
+) -> pd.DataFrame:
+    """Ensure the Bid # column reflects the provided identifier mapping."""
+
+    if df.empty:
+        return df
+
+    working = df.copy()
+    existing = working.get("Bid #")
+
+    if label_map and label_column and label_column in working.columns:
+        mapped = working[label_column].map(label_map)
+        if existing is not None:
+            mapped = mapped.fillna(existing)
+        working["Bid #"] = mapped
+    elif "Bid #" not in working.columns:
+        working["Bid #"] = range(1, len(working) + 1)
+
+    return working
+
+
+def _sort_records_by_bid(records: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Return records ordered by their bid label."""
+
+    def sort_key(record: Dict[str, object]) -> Tuple[int, object]:
+        label = record.get("Bid #")
+        if label in (None, "") or pd.isna(label) or (
+            isinstance(label, float) and math.isnan(label)
+        ):
+            return (1, "")
+        try:
+            return (0, float(label))
+        except (TypeError, ValueError):
+            return (0, str(label))
+
+    return sorted(list(records), key=sort_key)
+
+
+def _get_next_bid_label(records: Iterable[Dict[str, object]]) -> int:
+    """Return the next available bid label given the existing records."""
+
+    max_label = 0
+    for record in records:
+        label = record.get("Bid #")
+        if label in (None, ""):
+            continue
+        try:
+            value = int(float(label))
+        except (TypeError, ValueError):
+            continue
+        max_label = max(max_label, value)
+    return max_label + 1 if max_label > 0 else 1
+
+
 def _prepare_prediction_dataframe(table_records: Iterable[Dict[str, str]]) -> pd.DataFrame:
     df = pd.DataFrame(list(table_records))
     if df.empty:
@@ -137,7 +221,14 @@ def _prepare_prediction_dataframe(table_records: Iterable[Dict[str, str]]) -> pd
 
     # Attempt to convert numeric columns back to floats/ints when possible.
     for col in df.columns:
-        if col in {"carrier_code", "flight_number", "fare_class", "offer_status", "upgrade_type"}:
+        if col in {
+            "carrier_code",
+            "flight_number",
+            "fare_class",
+            "offer_status",
+            "upgrade_type",
+            "Bid #",
+        }:
             continue
         if df[col].isnull().all():
             continue
@@ -154,7 +245,12 @@ def _prepare_prediction_dataframe(table_records: Iterable[Dict[str, str]]) -> pd
         df["current_timestamp"] = pd.to_datetime(df["current_timestamp"])
     if "departure_timestamp" in df.columns:
         df["departure_timestamp"] = pd.to_datetime(df["departure_timestamp"])
-    return df
+    features, _ = _get_feature_columns()
+    feature_df = df.reindex(columns=features)
+    extra_columns = [col for col in df.columns if col not in feature_df.columns]
+    for column in extra_columns:
+        feature_df[column] = df[column]
+    return feature_df
 
 
 def _build_prediction_plot(df: pd.DataFrame) -> go.Figure:
@@ -320,7 +416,7 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_app() -> Dash:
-    default_dataset_path = resolve_train_file(None)
+    default_dataset_path = "./data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_testing.parquet"
 
     app = Dash(__name__)
     app.layout = html.Div(
@@ -1039,21 +1135,10 @@ def create_app() -> Dash:
             for feature in DISPLAY_FEATURE_ROWS:
                 if feature != "Acceptance Probability":
                     new_bid.setdefault(feature, base.get(feature))
-            existing_ids = [
-                record.get("Bid #")
-                for record in existing_records
-                if record.get("Bid #") not in (None, "")
-            ]
-            next_bid = 1
-            if existing_ids:
-                try:
-                    next_bid = int(max(float(bid) for bid in existing_ids)) + 1
-                except Exception:
-                    next_bid = len(existing_records) + 1
-            new_bid["Bid #"] = next_bid
+            new_bid["Bid #"] = _get_next_bid_label(existing_records)
             new_bid.setdefault("offer_status", "pending")
             prepared_bid = _prepare_bid_record(new_bid)
-            new_data = existing_records + [prepared_bid]
+            new_data = _sort_records_by_bid(existing_records + [prepared_bid])
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(new_data)
             return summary_block, "", new_meta, new_data, existing_removed
@@ -1072,9 +1157,7 @@ def create_app() -> Dash:
                     remaining_removed.append(item)
             if not restored_records:
                 return summary_block, "No matching removed bids found.", snapshot_meta, working_records, existing_removed
-            working = working_records + restored_records
-            for pos, record in enumerate(working, start=1):
-                record["Bid #"] = pos
+            working = _sort_records_by_bid(working_records + restored_records)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             return summary_block, "", new_meta, working, remaining_removed
@@ -1104,8 +1187,7 @@ def create_app() -> Dash:
                             "record": removed_record,
                         }
                     )
-            for pos, record in enumerate(working, start=1):
-                record["Bid #"] = pos
+            working = _sort_records_by_bid(working)
             new_meta = dict(snapshot_meta or {})
             new_meta["num_offers"] = len(working)
             updated_removed = existing_removed + removed_entries
@@ -1140,6 +1222,7 @@ def create_app() -> Dash:
                 [],
             )
 
+        label_map, label_column = _compute_bid_label_map(subset)
         snapshot_df = subset.loc[
             subset["snapshot_num"].astype(str) == str(snapshot_value)
         ].copy()
@@ -1153,8 +1236,9 @@ def create_app() -> Dash:
                 [],
             )
 
-        if "Bid #" not in snapshot_df.columns:
-            snapshot_df["Bid #"] = range(1, len(snapshot_df) + 1)
+        snapshot_df = _apply_bid_labels(snapshot_df, label_map, label_column)
+        if "Bid #" in snapshot_df.columns:
+            snapshot_df = snapshot_df.sort_values("Bid #")
 
         for column in ["current_timestamp", "departure_timestamp", "travel_date"]:
             if column in snapshot_df.columns:
@@ -1187,7 +1271,8 @@ def create_app() -> Dash:
             delta = departure_ts - current_ts
             delta_hours = max(delta.total_seconds() / 3600, 0)
 
-        base_data = [_prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
+        base_records = [_prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
+        base_data = _sort_records_by_bid(base_records)
 
         snapshot_meta = {
             "carrier": carrier,
@@ -1262,6 +1347,7 @@ def create_app() -> Dash:
         if triggered == "offers-input":
             if offers_value is None or offers_value < 0:
                 return no_update, no_update
+            updated_records = _sort_records_by_bid(updated_records)
             current_len = len(updated_records)
             if offers_value == current_len:
                 updated_meta["num_offers"] = offers_value
@@ -1273,13 +1359,13 @@ def create_app() -> Dash:
                 template = updated_records[0]
                 for _ in range(offers_value - current_len):
                     new_bid = dict(template)
-                    new_bid["Bid #"] = len(updated_records) + 1
+                    new_bid["Bid #"] = _get_next_bid_label(updated_records)
                     new_bid.setdefault("offer_status", "pending")
                     updated_records.append(_prepare_bid_record(new_bid))
             elif offers_value < current_len:
                 updated_records = updated_records[: offers_value]
-            for pos, record in enumerate(updated_records, start=1):
-                record["Bid #"] = pos
+            updated_records = _sort_records_by_bid(updated_records)
+            for record in updated_records:
                 _normalize_offer_time(record)
                 _refresh_usd_quantiles(record)
             updated_meta["num_offers"] = len(updated_records)
@@ -1511,6 +1597,8 @@ def create_app() -> Dash:
             return empty_fig, {}, "Load a model to generate acceptance probabilities."
 
         plot_source = pd.DataFrame()
+        label_map: Dict[object, int] = {}
+        label_column: Optional[str] = None
         if dataset_path and carrier and flight_number and travel_date and upgrade_type:
             try:
                 dataset = _load_dataset_cached(dataset_path)
@@ -1524,6 +1612,10 @@ def create_app() -> Dash:
                         & (dataset["upgrade_type"] == upgrade_type)
                     )
                     plot_source = dataset.loc[mask].copy()
+                    label_map, label_column = _compute_bid_label_map(plot_source)
+                    plot_source = _apply_bid_labels(plot_source, label_map, label_column)
+                    if "Bid #" in plot_source.columns:
+                        plot_source = plot_source.sort_values("Bid #")
             except Exception:
                 plot_source = pd.DataFrame()
 
@@ -1531,6 +1623,9 @@ def create_app() -> Dash:
         if snapshot_meta:
             selected_snapshot = snapshot_meta.get("snapshot")
         selected_snapshot_value = str(selected_snapshot) if selected_snapshot is not None else None
+
+        if label_map and label_column:
+            selected_df = _apply_bid_labels(selected_df, label_map, label_column)
 
         if "snapshot_num" not in selected_df.columns and selected_snapshot_value is not None:
             selected_df["snapshot_num"] = selected_snapshot_value
