@@ -44,7 +44,7 @@ def _load_dataset_cached(path: str) -> pd.DataFrame:
 def _load_model_cached(model_uri: str):
     """Load and cache the MLflow model given a model URI."""
 
-    return mlflow.pyfunc.load_model(model_uri)
+    return mlflow.sklearn.load_model(model_uri)
 
 
 # -- Utility functions -------------------------------------------------------------------------
@@ -95,7 +95,7 @@ def _filter_flight(dataset: pd.DataFrame, selector: Dict[str, str]) -> pd.DataFr
 
 def _get_feature_columns() -> Tuple[List[str], List[str]]:
     feature_config = load_feature_config()
-    features = list(feature_config["features"])
+    features = list(feature_config["pre_features"])
     categorical = list(feature_config["cat_features"])
     return features, categorical
 
