@@ -1053,8 +1053,8 @@ def create_app() -> Dash:
         return seats_value, offers_value, days, hours
 
     @app.callback(
-        Output("bid-records-store", "data"),
-        Output("snapshot-meta-store", "data"),
+        Output("bid-records-store", "data", allow_duplicate=True),
+        Output("snapshot-meta-store", "data", allow_duplicate=True),
         Input("seats-available-input", "value"),
         Input("offers-input", "value"),
         Input("time-before-days-input", "value"),
@@ -1178,7 +1178,7 @@ def create_app() -> Dash:
         return columns, data_rows, style_rules
 
     @app.callback(
-        Output("bid-records-store", "data"),
+        Output("bid-records-store", "data", allow_duplicate=True),
         Input("bid-table", "data_timestamp"),
         State("bid-table", "data"),
         State("bid-table", "columns"),
