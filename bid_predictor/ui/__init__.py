@@ -23,6 +23,19 @@ from .formatting import (
 )
 from .plotting import BAR_COLOR_SEQUENCE, build_prediction_plot
 from .predictions import predict
+from .scenario import (
+    ScenarioFeature,
+    ScenarioRange,
+    build_adjustment_grid,
+    build_feature_options,
+    build_flight_options,
+    build_scenario_line_chart,
+    build_upgrade_options,
+    compute_default_range,
+    decode_flight_key,
+    extract_baseline_snapshot,
+    select_feature,
+)
 
 __all__ = [
     "apply_bid_labels",
@@ -40,7 +53,18 @@ __all__ = [
     "prepare_prediction_dataframe",
     "predict",
     "recompute_usd_metrics",
+    "ScenarioFeature",
+    "ScenarioRange",
+    "build_adjustment_grid",
+    "build_feature_options",
+    "build_flight_options",
+    "build_scenario_line_chart",
+    "build_upgrade_options",
     "safe_float",
+    "compute_default_range",
+    "decode_flight_key",
+    "extract_baseline_snapshot",
+    "select_feature",
     "sort_records_by_bid",
     "USD_MAX_COLUMN",
     "USD_PERCENT_COLUMNS",

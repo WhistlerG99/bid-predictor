@@ -14,11 +14,20 @@ from bid_predictor.ui import (
     BAR_COLOR_SEQUENCE,
     BID_IDENTIFIER_COLUMNS,
     DISPLAY_FEATURE_ROWS,
+    ScenarioFeature,
+    ScenarioRange,
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
     apply_bid_labels,
     build_prediction_plot,
+    build_adjustment_grid,
+    build_feature_options,
+    build_flight_options,
+    build_scenario_line_chart,
+    build_upgrade_options,
+    compute_default_range,
     compute_bid_label_map,
+    extract_baseline_snapshot,
     get_next_bid_label,
     load_dataset_cached,
     load_model_cached,
@@ -27,6 +36,7 @@ from bid_predictor.ui import (
     prepare_prediction_dataframe,
     predict,
     recompute_usd_metrics,
+    select_feature,
     safe_float,
     sort_records_by_bid,
 )
@@ -150,339 +160,478 @@ def create_app() -> Dash:
             dcc.Store(id="removed-bids-store"),
             dcc.Store(id="baseline-bid-records-store"),
             dcc.Store(id="baseline-snapshot-meta-store"),
-            html.Div(
-                [
-                    html.Div(
-                        [
-                            html.Div(
-                                [
-                                    html.Label("Carrier", style={"fontWeight": "600"}),
-                                    dcc.Dropdown(
-                                        id="carrier-dropdown",
-                                        placeholder="Select carrier",
-                                        options=[],
-                                        style={"width": "100%"},
-                                    ),
-                                ],
-                                style={"marginBottom": "0.75rem"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Flight number", style={"fontWeight": "600"}),
-                                    dcc.Dropdown(
-                                        id="flight-number-dropdown",
-                                        placeholder="Select flight",
-                                        options=[],
-                                        style={"width": "100%"},
-                                    ),
-                                ],
-                                style={"marginBottom": "0.75rem"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Travel date", style={"fontWeight": "600"}),
-                                    dcc.Dropdown(
-                                        id="travel-date-dropdown",
-                                        placeholder="Select travel date",
-                                        options=[],
-                                        style={"width": "100%"},
-                                    ),
-                                ],
-                                style={"marginBottom": "0.75rem"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Upgrade type", style={"fontWeight": "600"}),
-                                    dcc.Dropdown(
-                                        id="upgrade-dropdown",
-                                        placeholder="Select upgrade type",
-                                        options=[],
-                                        style={"width": "100%"},
-                                    ),
-                                ],
-                                style={"marginBottom": "1rem"},
-                            ),
-                            html.Div(
-                                [
-                                    html.Label("Snapshot", style={"fontWeight": "600"}),
-                                    dcc.Dropdown(
-                                        id="snapshot-dropdown",
-                                        placeholder="Select snapshot",
-                                        options=[],
-                                        style={"width": "100%"},
-                                    ),
-                                ],
-                                style={"marginBottom": "1rem"},
-                            ),
-                            html.Div(
-                                [
-                                    html.H3(
-                                        "Selected flight",
-                                        style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
-                                    ),
-                                    html.Div(id="flight-summary", style={"color": "#16324f"}),
-                                ],
-                                style={
-                                    "backgroundColor": "#f4f1de",
-                                    "borderRadius": "10px",
-                                    "padding": "0.75rem",
-                                    "boxShadow": "inset 0 0 0 1px rgba(27, 73, 101, 0.1)",
-                                    "marginBottom": "1rem",
-                                },
-                            ),
-                            html.Div(
-                                [
-                                    html.H4(
-                                        "Snapshot controls",
-                                        style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
-                                    ),
-                                    html.Label("Seats available", style={"fontWeight": "600"}),
-                                    dcc.Input(
-                                        id="seats-available-input",
-                                        type="number",
-                                        min=0,
-                                        style={
-                                            "width": "100%",
-                                            "marginBottom": "0.75rem",
-                                            "borderRadius": "6px",
-                                            "border": "1px solid #cbd5e1",
-                                            "padding": "0.4rem",
-                                        },
-                                    ),
-                                    html.Label("Number of offers", style={"fontWeight": "600"}),
-                                    dcc.Input(
-                                        id="offers-input",
-                                        type="number",
-                                        min=0,
-                                        step=1,
-                                        style={
-                                            "width": "100%",
-                                            "marginBottom": "0.75rem",
-                                            "borderRadius": "6px",
-                                            "border": "1px solid #cbd5e1",
-                                            "padding": "0.4rem",
-                                        },
-                                    ),
-                                    html.Label(
-                                        "Time before departure (days / hours)",
-                                        style={"fontWeight": "600"},
-                                    ),
-                                    html.Div(
-                                        [
-                                            dcc.Input(
-                                                id="time-before-days-input",
-                                                type="number",
-                                                min=0,
-                                                step=1,
-                                                placeholder="Days",
-                                                style={
-                                                    "width": "48%",
-                                                    "borderRadius": "6px",
-                                                    "border": "1px solid #cbd5e1",
-                                                    "padding": "0.4rem",
-                                                },
-                                            ),
-                                            dcc.Input(
-                                                id="time-before-hours-input",
-                                                type="number",
-                                                min=0,
-                                                max=23,
-                                                step=1,
-                                                placeholder="Hours",
-                                                style={
-                                                    "width": "48%",
-                                                    "borderRadius": "6px",
-                                                    "border": "1px solid #cbd5e1",
-                                                    "padding": "0.4rem",
-                                                },
-                                            ),
-                                        ],
-                                        style={
-                                            "display": "flex",
-                                            "justifyContent": "space-between",
-                                            "gap": "4%",
-                                            "marginTop": "0.5rem",
-                                            "marginBottom": "0.5rem",
-                                        },
-                                    ),
-                                ],
-                                style={
-                                    "backgroundColor": "#edf2fb",
-                                    "borderRadius": "10px",
-                                    "padding": "0.75rem",
-                                    "boxShadow": "inset 0 0 0 1px rgba(22, 50, 79, 0.1)",
-                                    "marginBottom": "1rem",
-                                },
-                            ),
-                            html.Div(
-                                id="snapshot-feedback",
-                                className="status-message",
-                                style={"color": "#16324f"},
-                            ),
-                        ],
-                        style={
-                            "flex": "0 0 300px",
-                            "maxWidth": "320px",
-                            "backgroundColor": "#ffffff",
-                            "borderRadius": "12px",
-                            "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
-                            "padding": "1rem",
-                            "alignSelf": "flex-start",
-                        },
+            dcc.Store(id="scenario-baseline-store"),
+            dcc.Tabs(
+                id="main-tabs",
+                value="snapshot",
+                children=[
+                    dcc.Tab(
+                        label="Snapshot explorer",
+                        value="snapshot",
+                        children=[
+                                        html.Div(
+                                            [
+                                                html.Div(
+                                                    [
+                                                        html.Div(
+                                                            [
+                                                                html.Label("Carrier", style={"fontWeight": "600"}),
+                                                                dcc.Dropdown(
+                                                                    id="carrier-dropdown",
+                                                                    placeholder="Select carrier",
+                                                                    options=[],
+                                                                    style={"width": "100%"},
+                                                                ),
+                                                            ],
+                                                            style={"marginBottom": "0.75rem"},
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.Label("Flight number", style={"fontWeight": "600"}),
+                                                                dcc.Dropdown(
+                                                                    id="flight-number-dropdown",
+                                                                    placeholder="Select flight",
+                                                                    options=[],
+                                                                    style={"width": "100%"},
+                                                                ),
+                                                            ],
+                                                            style={"marginBottom": "0.75rem"},
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.Label("Travel date", style={"fontWeight": "600"}),
+                                                                dcc.Dropdown(
+                                                                    id="travel-date-dropdown",
+                                                                    placeholder="Select travel date",
+                                                                    options=[],
+                                                                    style={"width": "100%"},
+                                                                ),
+                                                            ],
+                                                            style={"marginBottom": "0.75rem"},
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.Label("Upgrade type", style={"fontWeight": "600"}),
+                                                                dcc.Dropdown(
+                                                                    id="upgrade-dropdown",
+                                                                    placeholder="Select upgrade type",
+                                                                    options=[],
+                                                                    style={"width": "100%"},
+                                                                ),
+                                                            ],
+                                                            style={"marginBottom": "1rem"},
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.Label("Snapshot", style={"fontWeight": "600"}),
+                                                                dcc.Dropdown(
+                                                                    id="snapshot-dropdown",
+                                                                    placeholder="Select snapshot",
+                                                                    options=[],
+                                                                    style={"width": "100%"},
+                                                                ),
+                                                            ],
+                                                            style={"marginBottom": "1rem"},
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.H3(
+                                                                    "Selected flight",
+                                                                    style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
+                                                                ),
+                                                                html.Div(id="flight-summary", style={"color": "#16324f"}),
+                                                            ],
+                                                            style={
+                                                                "backgroundColor": "#f4f1de",
+                                                                "borderRadius": "10px",
+                                                                "padding": "0.75rem",
+                                                                "boxShadow": "inset 0 0 0 1px rgba(27, 73, 101, 0.1)",
+                                                                "marginBottom": "1rem",
+                                                            },
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.H4(
+                                                                    "Snapshot controls",
+                                                                    style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},
+                                                                ),
+                                                                html.Label("Seats available", style={"fontWeight": "600"}),
+                                                                dcc.Input(
+                                                                    id="seats-available-input",
+                                                                    type="number",
+                                                                    min=0,
+                                                                    style={
+                                                                        "width": "100%",
+                                                                        "marginBottom": "0.75rem",
+                                                                        "borderRadius": "6px",
+                                                                        "border": "1px solid #cbd5e1",
+                                                                        "padding": "0.4rem",
+                                                                    },
+                                                                ),
+                                                                html.Label("Number of offers", style={"fontWeight": "600"}),
+                                                                dcc.Input(
+                                                                    id="offers-input",
+                                                                    type="number",
+                                                                    min=0,
+                                                                    step=1,
+                                                                    style={
+                                                                        "width": "100%",
+                                                                        "marginBottom": "0.75rem",
+                                                                        "borderRadius": "6px",
+                                                                        "border": "1px solid #cbd5e1",
+                                                                        "padding": "0.4rem",
+                                                                    },
+                                                                ),
+                                                                html.Label(
+                                                                    "Time before departure (days / hours)",
+                                                                    style={"fontWeight": "600"},
+                                                                ),
+                                                                html.Div(
+                                                                    [
+                                                                        dcc.Input(
+                                                                            id="time-before-days-input",
+                                                                            type="number",
+                                                                            min=0,
+                                                                            step=1,
+                                                                            placeholder="Days",
+                                                                            style={
+                                                                                "width": "48%",
+                                                                                "borderRadius": "6px",
+                                                                                "border": "1px solid #cbd5e1",
+                                                                                "padding": "0.4rem",
+                                                                            },
+                                                                        ),
+                                                                        dcc.Input(
+                                                                            id="time-before-hours-input",
+                                                                            type="number",
+                                                                            min=0,
+                                                                            max=23,
+                                                                            step=1,
+                                                                            placeholder="Hours",
+                                                                            style={
+                                                                                "width": "48%",
+                                                                                "borderRadius": "6px",
+                                                                                "border": "1px solid #cbd5e1",
+                                                                                "padding": "0.4rem",
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    style={
+                                                                        "display": "flex",
+                                                                        "justifyContent": "space-between",
+                                                                        "gap": "4%",
+                                                                        "marginTop": "0.5rem",
+                                                                        "marginBottom": "0.5rem",
+                                                                    },
+                                                                ),
+                                                            ],
+                                                            style={
+                                                                "backgroundColor": "#edf2fb",
+                                                                "borderRadius": "10px",
+                                                                "padding": "0.75rem",
+                                                                "boxShadow": "inset 0 0 0 1px rgba(22, 50, 79, 0.1)",
+                                                                "marginBottom": "1rem",
+                                                            },
+                                                        ),
+                                                        html.Div(
+                                                            id="snapshot-feedback",
+                                                            className="status-message",
+                                                            style={"color": "#16324f"},
+                                                        ),
+                                                    ],
+                                                    style={
+                                                        "flex": "0 0 300px",
+                                                        "maxWidth": "320px",
+                                                        "backgroundColor": "#ffffff",
+                                                        "borderRadius": "12px",
+                                                        "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                                        "padding": "1rem",
+                                                        "alignSelf": "flex-start",
+                                                    },
+                                                ),
+                                                html.Div(
+                                                    [
+                                                        html.Div(
+                                                            [
+                                                                html.H3(
+                                                                    "Acceptance probability trends",
+                                                                    style={"color": "#1b4965", "margin": "0"},
+                                                                ),
+                                                                html.Div(
+                                                                    id="prediction-warning",
+                                                                    className="status-message",
+                                                                    style={"marginTop": "0.5rem"},
+                                                                ),
+                                                                dcc.Graph(
+                                                                    id="prediction-graph",
+                                                                    style={"height": "800px", "marginTop": "1rem"},
+                                                                ),
+                                                            ],
+                                                            style={
+                                                                "backgroundColor": "#edf2fb",
+                                                                "borderRadius": "12px",
+                                                                "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                                                "padding": "1.25rem",
+                                                                "marginBottom": "1.5rem",
+                                                            },
+                                                        ),
+                                                        html.Div(
+                                                            [
+                                                                html.Div(
+                                                                    [
+                                                                        html.Button(
+                                                                            "Add bid",
+                                                                            id="add-bid",
+                                                                            n_clicks=0,
+                                                                            style={
+                                                                                "backgroundColor": "#2ec4b6",
+                                                                                "color": "white",
+                                                                                "border": "none",
+                                                                                "padding": "0.5rem 1rem",
+                                                                                "borderRadius": "6px",
+                                                                                "marginRight": "0.5rem",
+                                                                                "boxShadow": "0 2px 6px rgba(46, 196, 182, 0.4)",
+                                                                            },
+                                                                        ),
+                                                                        html.Button(
+                                                                            "Delete selected",
+                                                                            id="delete-bid",
+                                                                            n_clicks=0,
+                                                                            style={
+                                                                                "backgroundColor": "#e71d36",
+                                                                                "color": "white",
+                                                                                "border": "none",
+                                                                                "padding": "0.5rem 1rem",
+                                                                                "borderRadius": "6px",
+                                                                                "boxShadow": "0 2px 6px rgba(231, 29, 54, 0.4)",
+                                                                            },
+                                                                        ),
+                                                                        html.Button(
+                                                                            "Restore bids",
+                                                                            id="restore-bid",
+                                                                            n_clicks=0,
+                                                                            style={
+                                                                                "backgroundColor": "#1b4965",
+                                                                                "color": "white",
+                                                                                "border": "none",
+                                                                                "padding": "0.5rem 1rem",
+                                                                                "borderRadius": "6px",
+                                                                                "marginLeft": "0.5rem",
+                                                                                "boxShadow": "0 2px 6px rgba(27, 73, 101, 0.35)",
+                                                                            },
+                                                                        ),
+                                                                        html.Button(
+                                                                            "Restore snapshot",
+                                                                            id="restore-snapshot",
+                                                                            n_clicks=0,
+                                                                            style={
+                                                                                "backgroundColor": "#f4a261",
+                                                                                "color": "#16324f",
+                                                                                "border": "none",
+                                                                                "padding": "0.5rem 1rem",
+                                                                                "borderRadius": "6px",
+                                                                                "marginLeft": "0.5rem",
+                                                                                "boxShadow": "0 2px 6px rgba(244, 162, 97, 0.45)",
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    style={"marginBottom": "0.75rem"},
+                                                                ),
+                                                                dcc.Dropdown(
+                                                                    id="bid-delete-selector",
+                                                                    options=[],
+                                                                    value=[],
+                                                                    multi=True,
+                                                                    placeholder="Select bids to delete",
+                                                                    style={
+                                                                        "marginBottom": "0.75rem",
+                                                                        "backgroundColor": "#ffffff",
+                                                                    },
+                                                                ),
+                                                                dcc.Dropdown(
+                                                                    id="bid-restore-selector",
+                                                                    options=[],
+                                                                    value=[],
+                                                                    multi=True,
+                                                                    placeholder="Select removed bids to restore",
+                                                                    style={
+                                                                        "marginBottom": "0.75rem",
+                                                                        "backgroundColor": "#ffffff",
+                                                                    },
+                                                                ),
+                                                                dash_table.DataTable(
+                                                                    id="bid-table",
+                                                                    columns=[],
+                                                                    data=[],
+                                                                    editable=True,
+                                                                    column_selectable="multi",
+                                                                    style_table={
+                                                                        "overflowX": "auto",
+                                                                        "borderRadius": "8px",
+                                                                        "boxShadow": "0 2px 6px rgba(0,0,0,0.1)",
+                                                                    },
+                                                                    style_cell={
+                                                                        "textAlign": "center",
+                                                                        "padding": "0.6rem",
+                                                                        "backgroundColor": "#ffffff",
+                                                                        "border": "1px solid #f1f5f9",
+                                                                    },
+                                                                    style_header={
+                                                                        "backgroundColor": "#1b4965",
+                                                                        "color": "white",
+                                                                        "fontWeight": "700",
+                                                                        "textAlign": "center",
+                                                                    },
+                                                                    style_data_conditional=[],
+                                                                ),
+                                                            ],
+                                                            style={
+                                                                "backgroundColor": "#ffffff",
+                                                                "borderRadius": "12px",
+                                                                "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                                                "padding": "1.25rem",
+                                                            },
+                                                        ),
+                                                    ],
+                                                    style={"flex": "1", "minWidth": "0"},
+                                                ),
+                                            ],
+                                            style={
+                                                "display": "flex",
+                                                "gap": "1.5rem",
+                                                "alignItems": "flex-start",
+                                                "flexWrap": "wrap",
+                                            },
+                                        ),                        ],
                     ),
-                    html.Div(
-                        [
-                            html.Div(
-                                [
-                                    html.H3(
-                                        "Acceptance probability trends",
-                                        style={"color": "#1b4965", "margin": "0"},
-                                    ),
-                                    html.Div(
-                                        id="prediction-warning",
-                                        className="status-message",
-                                        style={"marginTop": "0.5rem"},
-                                    ),
-                                    dcc.Graph(
-                                        id="prediction-graph",
-                                        style={"height": "800px", "marginTop": "1rem"},
-                                    ),
-                                ],
-                                style={
-                                    "backgroundColor": "#edf2fb",
-                                    "borderRadius": "12px",
-                                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
-                                    "padding": "1.25rem",
-                                    "marginBottom": "1.5rem",
-                                },
-                            ),
+                    dcc.Tab(
+                        label="Feature sensitivity",
+                        value="scenario",
+                        children=[
                             html.Div(
                                 [
                                     html.Div(
                                         [
-                                            html.Button(
-                                                "Add bid",
-                                                id="add-bid",
-                                                n_clicks=0,
-                                                style={
-                                                    "backgroundColor": "#2ec4b6",
-                                                    "color": "white",
-                                                    "border": "none",
-                                                    "padding": "0.5rem 1rem",
-                                                    "borderRadius": "6px",
-                                                    "marginRight": "0.5rem",
-                                                    "boxShadow": "0 2px 6px rgba(46, 196, 182, 0.4)",
-                                                },
+                                            html.H3(
+                                                "Scenario controls",
+                                                style={"margin": "0 0 1rem 0", "color": "#1b4965"},
                                             ),
-                                            html.Button(
-                                                "Delete selected",
-                                                id="delete-bid",
-                                                n_clicks=0,
-                                                style={
-                                                    "backgroundColor": "#e71d36",
-                                                    "color": "white",
-                                                    "border": "none",
-                                                    "padding": "0.5rem 1rem",
-                                                    "borderRadius": "6px",
-                                                    "boxShadow": "0 2px 6px rgba(231, 29, 54, 0.4)",
-                                                },
+                                            html.Label("Flight", style={"fontWeight": "600"}),
+                                            dcc.Dropdown(
+                                                id="scenario-flight-dropdown",
+                                                options=[],
+                                                placeholder="Select flight",
+                                                style={"width": "100%", "marginBottom": "0.75rem"},
                                             ),
-                                            html.Button(
-                                                "Restore bids",
-                                                id="restore-bid",
-                                                n_clicks=0,
-                                                style={
-                                                    "backgroundColor": "#1b4965",
-                                                    "color": "white",
-                                                    "border": "none",
-                                                    "padding": "0.5rem 1rem",
-                                                    "borderRadius": "6px",
-                                                    "marginLeft": "0.5rem",
-                                                    "boxShadow": "0 2px 6px rgba(27, 73, 101, 0.35)",
-                                                },
+                                            html.Label("Upgrade type", style={"fontWeight": "600"}),
+                                            dcc.Dropdown(
+                                                id="scenario-upgrade-dropdown",
+                                                options=[],
+                                                placeholder="Select upgrade",
+                                                style={"width": "100%", "marginBottom": "0.75rem"},
                                             ),
-                                            html.Button(
-                                                "Restore snapshot",
-                                                id="restore-snapshot",
-                                                n_clicks=0,
+                                            html.Div(
+                                                id="scenario-snapshot-label",
                                                 style={
-                                                    "backgroundColor": "#f4a261",
+                                                    "marginBottom": "0.75rem",
                                                     "color": "#16324f",
-                                                    "border": "none",
-                                                    "padding": "0.5rem 1rem",
-                                                    "borderRadius": "6px",
-                                                    "marginLeft": "0.5rem",
-                                                    "boxShadow": "0 2px 6px rgba(244, 162, 97, 0.45)",
+                                                    "fontStyle": "italic",
                                                 },
+                                            ),
+                                            html.Label("Feature to adjust", style={"fontWeight": "600"}),
+                                            dcc.Dropdown(
+                                                id="scenario-feature-dropdown",
+                                                options=[],
+                                                placeholder="Select a feature",
+                                                style={"width": "100%", "marginBottom": "0.75rem"},
+                                            ),
+                                            html.Label("Feature range", style={"fontWeight": "600"}),
+                                            dcc.RangeSlider(
+                                                id="scenario-range-slider",
+                                                min=0,
+                                                max=1,
+                                                value=[0, 1],
+                                                step=0.1,
+                                                allowCross=False,
+                                                tooltip={"placement": "bottom", "always_visible": False},
+                                                disabled=True,
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Label(
+                                                        "Number of evaluation points",
+                                                        style={"fontWeight": "600", "marginTop": "0.75rem"},
+                                                    ),
+                                                    dcc.Input(
+                                                        id="scenario-step-count",
+                                                        type="number",
+                                                        min=2,
+                                                        max=200,
+                                                        step=1,
+                                                        value=25,
+                                                        style={
+                                                            "width": "100%",
+                                                            "marginTop": "0.5rem",
+                                                            "borderRadius": "6px",
+                                                            "border": "1px solid #cbd5e1",
+                                                            "padding": "0.4rem",
+                                                        },
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Div(
+                                                id="scenario-base-value",
+                                                style={"marginTop": "0.75rem", "color": "#16324f"},
+                                            ),
+                                            html.Div(
+                                                id="scenario-control-warning",
+                                                className="status-message",
+                                                style={"marginTop": "0.75rem"},
                                             ),
                                         ],
-                                        style={"marginBottom": "0.75rem"},
-                                    ),
-                                    dcc.Dropdown(
-                                        id="bid-delete-selector",
-                                        options=[],
-                                        value=[],
-                                        multi=True,
-                                        placeholder="Select bids to delete",
                                         style={
-                                            "marginBottom": "0.75rem",
+                                            "flex": "0 0 320px",
+                                            "maxWidth": "340px",
                                             "backgroundColor": "#ffffff",
+                                            "borderRadius": "12px",
+                                            "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                            "padding": "1.25rem",
+                                            "alignSelf": "flex-start",
                                         },
                                     ),
-                                    dcc.Dropdown(
-                                        id="bid-restore-selector",
-                                        options=[],
-                                        value=[],
-                                        multi=True,
-                                        placeholder="Select removed bids to restore",
+                                    html.Div(
+                                        [
+                                            dcc.Graph(
+                                                id="scenario-graph",
+                                                style={"height": "620px"},
+                                            ),
+                                            html.Div(
+                                                id="scenario-warning",
+                                                className="status-message",
+                                                style={"marginTop": "0.75rem"},
+                                            ),
+                                        ],
                                         style={
-                                            "marginBottom": "0.75rem",
-                                            "backgroundColor": "#ffffff",
+                                            "flex": "1",
+                                            "minWidth": "0",
+                                            "backgroundColor": "#edf2fb",
+                                            "borderRadius": "12px",
+                                            "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                            "padding": "1.25rem",
                                         },
-                                    ),
-                                    dash_table.DataTable(
-                                        id="bid-table",
-                                        columns=[],
-                                        data=[],
-                                        editable=True,
-                                        column_selectable="multi",
-                                        style_table={
-                                            "overflowX": "auto",
-                                            "borderRadius": "8px",
-                                            "boxShadow": "0 2px 6px rgba(0,0,0,0.1)",
-                                        },
-                                        style_cell={
-                                            "textAlign": "center",
-                                            "padding": "0.6rem",
-                                            "backgroundColor": "#ffffff",
-                                            "border": "1px solid #f1f5f9",
-                                        },
-                                        style_header={
-                                            "backgroundColor": "#1b4965",
-                                            "color": "white",
-                                            "fontWeight": "700",
-                                            "textAlign": "center",
-                                        },
-                                        style_data_conditional=[],
                                     ),
                                 ],
                                 style={
-                                    "backgroundColor": "#ffffff",
-                                    "borderRadius": "12px",
-                                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
-                                    "padding": "1.25rem",
+                                    "display": "flex",
+                                    "gap": "1.5rem",
+                                    "alignItems": "flex-start",
+                                    "flexWrap": "wrap",
                                 },
                             ),
                         ],
-                        style={"flex": "1", "minWidth": "0"},
                     ),
                 ],
-                style={
-                    "display": "flex",
-                    "gap": "1.5rem",
-                    "alignItems": "flex-start",
-                    "flexWrap": "wrap",
-                },
+                style={"marginTop": "1rem"},
             ),
         ],
         style={"fontFamily": "'Segoe UI', sans-serif", "backgroundColor": "#fafafa", "padding": "1.5rem"},
@@ -541,6 +690,217 @@ def create_app() -> Dash:
             return f"Unexpected error while loading model: {exc}", None
 
         return f"Loaded model from {model_uri}", model_uri
+
+    @app.callback(
+        Output("scenario-flight-dropdown", "options"),
+        Output("scenario-flight-dropdown", "value"),
+        Input("dataset-path-store", "data"),
+    )
+    def populate_scenario_flights(dataset_path: Optional[str]):
+        if not dataset_path:
+            return [], None
+
+        try:
+            dataset = load_dataset_cached(dataset_path)
+        except Exception:
+            return [], None
+
+        options = build_flight_options(dataset)
+        value = options[0]["value"] if options else None
+        return options, value
+
+    @app.callback(
+        Output("scenario-upgrade-dropdown", "options"),
+        Output("scenario-upgrade-dropdown", "value"),
+        Input("scenario-flight-dropdown", "value"),
+        State("dataset-path-store", "data"),
+    )
+    def populate_scenario_upgrades(
+        flight_value: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path or not flight_value:
+            return [], None
+
+        try:
+            dataset = load_dataset_cached(dataset_path)
+        except Exception:
+            return [], None
+
+        options = build_upgrade_options(dataset, flight_value)
+        value = options[0]["value"] if options else None
+        return options, value
+
+    @app.callback(
+        Output("scenario-baseline-store", "data"),
+        Output("scenario-snapshot-label", "children"),
+        Output("scenario-control-warning", "children"),
+        Input("scenario-flight-dropdown", "value"),
+        Input("scenario-upgrade-dropdown", "value"),
+        State("dataset-path-store", "data"),
+    )
+    def update_scenario_baseline(
+        flight_value: Optional[str],
+        upgrade_type: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path:
+            return None, "Load a dataset to explore scenarios.", "Load a dataset to explore scenarios."
+
+        if not flight_value or not upgrade_type:
+            return None, "", "Select a flight and upgrade type."
+
+        try:
+            dataset = load_dataset_cached(dataset_path)
+        except Exception as exc:
+            return None, "", f"Failed to read dataset: {exc}"
+
+        baseline_df, snapshot_label = extract_baseline_snapshot(
+            dataset,
+            flight_value,
+            upgrade_type,
+        )
+        if baseline_df.empty:
+            return None, "No matching snapshot found for this selection.", "No bids are available for the chosen flight."
+
+        serializable = baseline_df.copy()
+        for column in serializable.columns:
+            if pd.api.types.is_datetime64_any_dtype(serializable[column]):
+                serializable[column] = serializable[column].dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+        baseline_records = serializable.to_dict("records")
+        summary = f"Using {len(baseline_df)} bids"
+        if snapshot_label:
+            summary += f" from snapshot {snapshot_label}"
+
+        return baseline_records, summary, ""
+
+    @app.callback(
+        Output("scenario-feature-dropdown", "options"),
+        Output("scenario-feature-dropdown", "value"),
+        Input("scenario-baseline-store", "data"),
+    )
+    def populate_scenario_features(baseline_records: Optional[List[Dict[str, object]]]):
+        baseline_df = pd.DataFrame(baseline_records or [])
+        features = build_feature_options(baseline_df)
+        options = [{"label": feature.label, "value": feature.encode()} for feature in features]
+        value = options[0]["value"] if options else None
+        return options, value
+
+    @app.callback(
+        Output("scenario-range-slider", "min"),
+        Output("scenario-range-slider", "max"),
+        Output("scenario-range-slider", "value"),
+        Output("scenario-range-slider", "step"),
+        Output("scenario-range-slider", "disabled"),
+        Output("scenario-step-count", "value"),
+        Output("scenario-base-value", "children"),
+        Input("scenario-baseline-store", "data"),
+        Input("scenario-feature-dropdown", "value"),
+    )
+    def configure_scenario_slider(
+        baseline_records: Optional[List[Dict[str, object]]],
+        feature_value: Optional[str],
+    ):
+        baseline_df = pd.DataFrame(baseline_records or [])
+        features = build_feature_options(baseline_df)
+        feature = select_feature(features, feature_value)
+        if baseline_df.empty or feature is None:
+            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, ""
+
+        scenario_range: Optional[ScenarioRange] = compute_default_range(baseline_df, feature)
+        if scenario_range is None:
+            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, "Feature is not numeric."
+
+        slider_min = float(scenario_range.min_value)
+        slider_max = float(scenario_range.max_value)
+        if slider_min == slider_max:
+            slider_max = slider_min + 1.0
+        slider_step = float(scenario_range.step)
+        slider_step = max(slider_step, 1.0 if feature.is_integer else 0.01)
+        slider_value = [slider_min, slider_max]
+        step_count = max(int(scenario_range.count), 2)
+        base_value = scenario_range.base_value
+        base_text = (
+            f"Baseline value: {int(round(base_value))}"
+            if feature.is_integer
+            else f"Baseline value: {base_value:.4f}"
+        )
+        return slider_min, slider_max, slider_value, slider_step, False, step_count, base_text
+
+    @app.callback(
+        Output("scenario-graph", "figure"),
+        Output("scenario-warning", "children"),
+        Input("scenario-baseline-store", "data"),
+        Input("scenario-feature-dropdown", "value"),
+        Input("scenario-range-slider", "value"),
+        Input("scenario-step-count", "value"),
+        Input("model-uri-store", "data"),
+    )
+    def render_scenario_graph(
+        baseline_records: Optional[List[Dict[str, object]]],
+        feature_value: Optional[str],
+        slider_range: Optional[List[float]],
+        step_count: Optional[int],
+        model_uri: Optional[str],
+    ):
+        baseline_df = pd.DataFrame(baseline_records or [])
+        features = build_feature_options(baseline_df)
+        feature = select_feature(features, feature_value)
+
+        if baseline_df.empty or feature is None:
+            placeholder = go.Figure()
+            placeholder.update_layout(
+                template="plotly_white",
+                title="Select a flight and feature to explore",
+                xaxis_title="Feature value",
+                yaxis_title="Acceptance probability (%)",
+            )
+            return placeholder, "Select a flight, upgrade, and feature to explore."
+
+        default_range = compute_default_range(baseline_df, feature)
+        if not slider_range or len(slider_range) != 2:
+            if default_range is not None:
+                slider_range = [
+                    float(default_range.min_value),
+                    float(default_range.max_value),
+                ]
+            else:
+                slider_range = [0.0, 1.0]
+
+        start, stop = float(slider_range[0]), float(slider_range[1])
+        if start > stop:
+            start, stop = stop, start
+
+        count = int(step_count or 25)
+        if count < 2:
+            count = 2
+
+        scenario_df = build_adjustment_grid(baseline_df, feature, start, stop, count)
+        if scenario_df.empty:
+            empty_fig = go.Figure()
+            empty_fig.update_layout(
+                template="plotly_white",
+                title="Unable to construct scenario adjustments",
+                xaxis_title=feature.label,
+                yaxis_title="Acceptance probability (%)",
+            )
+            return empty_fig, "Unable to construct scenario adjustments for this feature."
+
+        if not model_uri:
+            empty_fig = build_scenario_line_chart(pd.DataFrame(), feature.label)
+            return empty_fig, "Load a model to generate acceptance probabilities."
+
+        try:
+            prediction_df = predict(model_uri, scenario_df.copy())
+        except Exception as exc:  # pragma: no cover - user feedback
+            error_fig = go.Figure()
+            error_fig.update_layout(title=f"Prediction failed: {exc}")
+            return error_fig, str(exc)
+
+        figure = build_scenario_line_chart(prediction_df, feature.label)
+        warning = prediction_df.attrs.get("model_warning", "") or ""
+        return figure, warning
 
     @app.callback(
         Output("carrier-dropdown", "options"),
