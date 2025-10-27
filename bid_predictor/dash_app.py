@@ -200,6 +200,7 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
 
     model = _load_model_cached(model_uri)
     feature_df = df.copy()
+    model_warning: Optional[str] = None
 
     expected_columns: Optional[List[str]] = None
     try:
@@ -215,17 +216,25 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
     if expected_columns:
         missing = [col for col in expected_columns if col not in feature_df.columns]
         if missing:
-            raise ValueError(
-                "Input data is missing columns required by the model: {}".format(
+            model_warning = (
+                "Added missing model columns with empty values: {}".format(
                     ", ".join(sorted(missing))
                 )
             )
-        feature_df = feature_df[expected_columns].copy()
+        # ensure the dataframe has exactly the schema expected by the model
+        feature_df = feature_df.reindex(columns=expected_columns)
     else:
         features, _ = _get_feature_columns()
-        available = [col for col in features if col in feature_df.columns]
-        if available:
-            feature_df = feature_df[available].copy()
+        missing = [col for col in features if col not in feature_df.columns]
+        if missing:
+            model_warning = (
+                "Added missing feature config columns with empty values: {}".format(
+                    ", ".join(sorted(missing))
+                )
+            )
+        # align to feature config order, introducing NaNs for absent columns so
+        # downstream transformers receive the expected number of features
+        feature_df = feature_df.reindex(columns=features)
 
     predictions = model.predict(feature_df)
     if isinstance(predictions, pd.DataFrame) and "Acceptance Probability" in predictions.columns:
@@ -236,6 +245,8 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
             df["Acceptance Probability"] = predictions[:, 1]
         else:
             df["Acceptance Probability"] = predictions
+    if model_warning:
+        df.attrs["model_warning"] = model_warning
     return df
 
 
@@ -318,6 +329,7 @@ def create_app() -> Dash:
             ),
             html.Hr(),
             html.H3("Predictions"),
+            html.Div(id="prediction-warning", className="status-message"),
             dash_table.DataTable(
                 id="prediction-table",
                 columns=[],
@@ -415,16 +427,17 @@ def create_app() -> Dash:
         Output("prediction-table", "columns"),
         Output("prediction-table", "data"),
         Output("prediction-graph", "figure"),
+        Output("prediction-warning", "children"),
         Input("bid-table", "data"),
         State("model-uri-store", "data"),
     )
     def run_predictions(table_data: List[Dict[str, str]], model_uri: Optional[str]):
         if not table_data:
-            return [], [], go.Figure()
+            return [], [], go.Figure(), ""
         if not model_uri:
             df = pd.DataFrame(table_data)
             columns = [{"name": col, "id": col} for col in df.columns]
-            return columns, table_data, _build_prediction_plot(pd.DataFrame())
+            return columns, table_data, _build_prediction_plot(pd.DataFrame()), ""
 
         df = _prepare_prediction_dataframe(table_data)
         try:
@@ -433,7 +446,7 @@ def create_app() -> Dash:
             empty_fig = go.Figure()
             empty_fig.update_layout(title=f"Prediction failed: {exc}")
             columns = [{"name": col, "id": col} for col in df.columns]
-            return columns, table_data, empty_fig
+            return columns, table_data, empty_fig, str(exc)
 
         columns = [
             {"name": col, "id": col}
@@ -443,7 +456,10 @@ def create_app() -> Dash:
         ]
         figure = _build_prediction_plot(pred_df)
         data = pred_df.to_dict("records")
-        return columns, data, figure
+        warning = pred_df.attrs.get("model_warning", "")
+        if warning:
+            figure.update_layout(title=f"{figure.layout.title.text} (warning)")
+        return columns, data, figure, warning
 
     return app
 
