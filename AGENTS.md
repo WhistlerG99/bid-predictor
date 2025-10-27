@@ -14,6 +14,7 @@
 - `feature_config.py`: loads YAML feature configs and normalizes metadata (ensures group-by keys, etc.).
 - `preprocessor.py` & `transform.py`: feature engineering utilities used by the pipeline.
 - `tracking.py`: MLflow helpers shared by training and tuning flows.
+- `ui/`: utilities that power the Dash playground (data loading, filtering, plotting, and record helpers).
 - `tuning/`: orchestration of tuning (search space construction, CV, MLflow logging, result writers).
   - `data_access.py`: resolves training parquet path and loads data with optional testing split.
   - `cross_validation.py`: wraps stratified CV evaluation and scoring aggregation.
