@@ -199,8 +199,34 @@ def _predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:
         return df
 
     model = _load_model_cached(model_uri)
-    features, _ = _get_feature_columns()
-    feature_df = df[features].copy()
+    feature_df = df.copy()
+
+    expected_columns: Optional[List[str]] = None
+    try:
+        metadata = getattr(model, "metadata", None)
+        if metadata is not None:
+            input_schema = metadata.get_input_schema()
+            if input_schema is not None:
+                names = list(input_schema.input_names())
+                expected_columns = names or None
+    except AttributeError:
+        expected_columns = None
+
+    if expected_columns:
+        missing = [col for col in expected_columns if col not in feature_df.columns]
+        if missing:
+            raise ValueError(
+                "Input data is missing columns required by the model: {}".format(
+                    ", ".join(sorted(missing))
+                )
+            )
+        feature_df = feature_df[expected_columns].copy()
+    else:
+        features, _ = _get_feature_columns()
+        available = [col for col in features if col in feature_df.columns]
+        if available:
+            feature_df = feature_df[available].copy()
+
     predictions = model.predict(feature_df)
     if isinstance(predictions, pd.DataFrame) and "Acceptance Probability" in predictions.columns:
         df["Acceptance Probability"] = predictions["Acceptance Probability"].values
