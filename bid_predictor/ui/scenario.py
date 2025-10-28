@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
+from .constants import BID_IDENTIFIER_COLUMNS
 from .formatting import apply_bid_labels, compute_bid_label_map
 from .plotting import BAR_COLOR_SEQUENCE
 
@@ -65,6 +66,119 @@ class ScenarioRange:
     step: float
     count: int
     base_value: float
+
+
+def _stringify_group_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    return str(value)
+
+
+def _normalize_group_key(
+    carrier: object,
+    flight_number: object,
+    travel_date: object,
+    upgrade_type: object,
+) -> Tuple[str, str, str, str]:
+    carrier_value = _stringify_group_value(carrier)
+    flight_value = _stringify_group_value(flight_number)
+
+    travel_dt = pd.to_datetime(travel_date, errors="coerce")
+    if pd.isna(travel_dt):
+        travel_value = _stringify_group_value(travel_date)
+    else:
+        travel_value = travel_dt.date().isoformat()
+
+    upgrade_value = _stringify_group_value(upgrade_type)
+    return (carrier_value, flight_value, travel_value, upgrade_value)
+
+
+def _count_unique_bids(group: pd.DataFrame) -> int:
+    for column in BID_IDENTIFIER_COLUMNS:
+        if column not in group.columns:
+            continue
+        values = group[column].dropna()
+        if not values.empty:
+            return int(pd.Series(values).nunique())
+
+    if "Bid #" in group.columns:
+        values = pd.to_numeric(group["Bid #"], errors="coerce")
+        values = values.dropna()
+        if not values.empty:
+            return int(values.nunique())
+
+    return int(len(group))
+
+
+def _count_snapshots(group: pd.DataFrame) -> int:
+    if "snapshot_num" in group.columns:
+        numeric = pd.to_numeric(group["snapshot_num"], errors="coerce")
+        numeric = numeric.dropna()
+        if not numeric.empty:
+            return int(numeric.nunique())
+
+    if "snapshot_id" in group.columns:
+        values = group["snapshot_id"].dropna()
+        if not values.empty:
+            return int(pd.Series(values).nunique())
+
+    for column in ("current_timestamp", "snapshot_timestamp"):
+        if column not in group.columns:
+            continue
+        timestamps = pd.to_datetime(group[column], errors="coerce")
+        timestamps = timestamps.dropna()
+        if not timestamps.empty:
+            return int(timestamps.nunique())
+
+    return 1
+
+
+def filter_scenario_dataset(
+    dataset: pd.DataFrame,
+    min_unique_bids: Optional[int] = None,
+    min_snapshots: Optional[int] = None,
+) -> pd.DataFrame:
+    """Return dataset rows whose flight/upgrade groups satisfy the thresholds."""
+
+    if dataset.empty:
+        return dataset.copy()
+
+    group_columns = ["carrier_code", "flight_number", "travel_date", "upgrade_type"]
+    if not set(group_columns).issubset(dataset.columns):
+        return dataset.copy()
+
+    keys = [
+        _normalize_group_key(*values)
+        for values in dataset[group_columns].itertuples(index=False, name=None)
+    ]
+    working = dataset.copy()
+    working["_scenario_key"] = keys
+
+    records: List[Tuple[Tuple[str, str, str, str], int, int]] = []
+    for key, group in working.groupby("_scenario_key", dropna=False):
+        bid_count = _count_unique_bids(group)
+        snapshot_count = _count_snapshots(group)
+        records.append((key, bid_count, snapshot_count))
+
+    if not records:
+        return dataset.iloc[0:0].copy()
+
+    summary = pd.DataFrame(records, columns=["key", "unique_bids", "snapshots"])
+
+    mask = pd.Series(True, index=summary.index)
+    if min_unique_bids is not None and min_unique_bids > 1:
+        mask &= summary["unique_bids"] >= int(min_unique_bids)
+    if min_snapshots is not None and min_snapshots > 1:
+        mask &= summary["snapshots"] >= int(min_snapshots)
+
+    valid_keys: Set[Tuple[str, str, str, str]] = set(summary.loc[mask, "key"])
+    if not valid_keys:
+        return dataset.iloc[0:0].copy()
+
+    filtered = working.loc[working["_scenario_key"].isin(valid_keys)].copy()
+    return filtered.drop(columns="_scenario_key")
 
 
 def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:

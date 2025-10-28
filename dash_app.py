@@ -32,6 +32,7 @@ from bid_predictor.ui import (
     compute_default_range,
     compute_bid_label_map,
     extract_baseline_snapshot,
+    filter_scenario_dataset,
     get_next_bid_label,
     load_dataset_cached,
     load_model_cached,
@@ -48,6 +49,30 @@ from bid_predictor.ui import (
 
 
 # -- Dash application --------------------------------------------------------------------------
+
+
+def _coerce_positive_int(value: Optional[object]) -> Optional[int]:
+    if value in (None, "", []):
+        return None
+    try:
+        numeric = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return numeric if numeric > 0 else None
+
+
+def _load_filtered_dataset(
+    dataset_path: Optional[str],
+    min_unique_bids: Optional[int],
+    min_snapshots: Optional[int],
+) -> pd.DataFrame:
+    if not dataset_path:
+        return pd.DataFrame()
+    try:
+        dataset = load_dataset_cached(dataset_path)
+    except Exception:
+        return pd.DataFrame()
+    return filter_scenario_dataset(dataset, min_unique_bids, min_snapshots)
 
 
 def create_app() -> Dash:
@@ -525,6 +550,54 @@ def create_app() -> Dash:
                                             ),
                                             html.Div(
                                                 [
+                                                    html.Div(
+                                                        [
+                                                            html.Label(
+                                                                "Minimum unique bids",
+                                                                style={"fontWeight": "600"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="scenario-min-unique-bids",
+                                                                type="number",
+                                                                min=1,
+                                                                step=1,
+                                                                value=1,
+                                                                debounce=True,
+                                                                placeholder="e.g. 4",
+                                                                style={"width": "100%"},
+                                                            ),
+                                                        ],
+                                                        style={"flex": "1", "minWidth": "12rem"},
+                                                    ),
+                                                    html.Div(
+                                                        [
+                                                            html.Label(
+                                                                "Minimum snapshots",
+                                                                style={"fontWeight": "600"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="scenario-min-snapshots",
+                                                                type="number",
+                                                                min=1,
+                                                                step=1,
+                                                                value=1,
+                                                                debounce=True,
+                                                                placeholder="e.g. 2",
+                                                                style={"width": "100%"},
+                                                            ),
+                                                        ],
+                                                        style={"flex": "1", "minWidth": "12rem"},
+                                                    ),
+                                                ],
+                                                style={
+                                                    "display": "flex",
+                                                    "gap": "0.75rem",
+                                                    "flexWrap": "wrap",
+                                                    "marginBottom": "0.75rem",
+                                                },
+                                            ),
+                                            html.Div(
+                                                [
                                                     html.Label("Carrier", style={"fontWeight": "600"}),
                                                     dcc.Dropdown(
                                                         id="scenario-carrier-dropdown",
@@ -876,16 +949,23 @@ def create_app() -> Dash:
         Output("scenario-carrier-dropdown", "options"),
         Output("scenario-carrier-dropdown", "value"),
         Input("dataset-path-store", "data"),
+        Input("scenario-min-unique-bids", "value"),
+        Input("scenario-min-snapshots", "value"),
     )
-    def populate_scenario_carriers(dataset_path: Optional[str]):
+    def populate_scenario_carriers(
+        dataset_path: Optional[str],
+        min_unique_bids_value: Optional[object],
+        min_snapshots_value: Optional[object],
+    ):
         if not dataset_path:
             return [], None
 
-        try:
-            dataset = load_dataset_cached(dataset_path)
-        except Exception:
-            return [], None
+        min_unique_bids = _coerce_positive_int(min_unique_bids_value)
+        min_snapshots = _coerce_positive_int(min_snapshots_value)
 
+        dataset = _load_filtered_dataset(
+            dataset_path, min_unique_bids, min_snapshots
+        )
         options = build_carrier_options(dataset)
         value = options[0]["value"] if options else None
         return options, value
@@ -894,19 +974,25 @@ def create_app() -> Dash:
         Output("scenario-flight-number-dropdown", "options"),
         Output("scenario-flight-number-dropdown", "value"),
         Input("scenario-carrier-dropdown", "value"),
+        Input("scenario-min-unique-bids", "value"),
+        Input("scenario-min-snapshots", "value"),
         State("dataset-path-store", "data"),
     )
     def populate_scenario_flight_numbers(
-        carrier: Optional[str], dataset_path: Optional[str]
+        carrier: Optional[str],
+        min_unique_bids_value: Optional[object],
+        min_snapshots_value: Optional[object],
+        dataset_path: Optional[str],
     ):
         if not dataset_path or not carrier:
             return [], None
 
-        try:
-            dataset = load_dataset_cached(dataset_path)
-        except Exception:
-            return [], None
+        min_unique_bids = _coerce_positive_int(min_unique_bids_value)
+        min_snapshots = _coerce_positive_int(min_snapshots_value)
 
+        dataset = _load_filtered_dataset(
+            dataset_path, min_unique_bids, min_snapshots
+        )
         options = build_flight_number_options(dataset, carrier)
         value = options[0]["value"] if options else None
         return options, value
@@ -915,22 +1001,27 @@ def create_app() -> Dash:
         Output("scenario-travel-date-dropdown", "options"),
         Output("scenario-travel-date-dropdown", "value"),
         Input("scenario-flight-number-dropdown", "value"),
+        Input("scenario-min-unique-bids", "value"),
+        Input("scenario-min-snapshots", "value"),
         State("scenario-carrier-dropdown", "value"),
         State("dataset-path-store", "data"),
     )
     def populate_scenario_travel_dates(
         flight_number: Optional[str],
+        min_unique_bids_value: Optional[object],
+        min_snapshots_value: Optional[object],
         carrier: Optional[str],
         dataset_path: Optional[str],
     ):
         if not dataset_path or not carrier or not flight_number:
             return [], None
 
-        try:
-            dataset = load_dataset_cached(dataset_path)
-        except Exception:
-            return [], None
+        min_unique_bids = _coerce_positive_int(min_unique_bids_value)
+        min_snapshots = _coerce_positive_int(min_snapshots_value)
 
+        dataset = _load_filtered_dataset(
+            dataset_path, min_unique_bids, min_snapshots
+        )
         options = build_travel_date_options(dataset, carrier, flight_number)
         value = options[0]["value"] if options else None
         return options, value
@@ -939,12 +1030,16 @@ def create_app() -> Dash:
         Output("scenario-upgrade-dropdown", "options"),
         Output("scenario-upgrade-dropdown", "value"),
         Input("scenario-travel-date-dropdown", "value"),
+        Input("scenario-min-unique-bids", "value"),
+        Input("scenario-min-snapshots", "value"),
         State("scenario-carrier-dropdown", "value"),
         State("scenario-flight-number-dropdown", "value"),
         State("dataset-path-store", "data"),
     )
     def populate_scenario_upgrades(
         travel_date: Optional[str],
+        min_unique_bids_value: Optional[object],
+        min_snapshots_value: Optional[object],
         carrier: Optional[str],
         flight_number: Optional[str],
         dataset_path: Optional[str],
@@ -952,10 +1047,12 @@ def create_app() -> Dash:
         if not dataset_path or not carrier or not flight_number or not travel_date:
             return [], None
 
-        try:
-            dataset = load_dataset_cached(dataset_path)
-        except Exception:
-            return [], None
+        min_unique_bids = _coerce_positive_int(min_unique_bids_value)
+        min_snapshots = _coerce_positive_int(min_snapshots_value)
+
+        dataset = _load_filtered_dataset(
+            dataset_path, min_unique_bids, min_snapshots
+        )
 
         options = build_upgrade_options(dataset, carrier, flight_number, travel_date)
         value = options[0]["value"] if options else None

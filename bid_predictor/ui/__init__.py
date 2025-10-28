@@ -36,6 +36,7 @@ from .scenario import (
     build_upgrade_options,
     compute_default_range,
     extract_baseline_snapshot,
+    filter_scenario_dataset,
     records_to_dataframe,
     select_feature,
 )
@@ -70,6 +71,7 @@ __all__ = [
     "safe_float",
     "compute_default_range",
     "extract_baseline_snapshot",
+    "filter_scenario_dataset",
     "records_to_dataframe",
     "select_feature",
     "sort_records_by_bid",
