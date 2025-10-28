@@ -39,6 +39,7 @@ from .scenario import (
     extract_baseline_snapshot,
     records_to_dataframe,
     select_feature,
+    TIME_TO_DEPARTURE_SCENARIO_KEY,
 )
 
 __all__ = [
@@ -74,6 +75,7 @@ __all__ = [
     "extract_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
+    "TIME_TO_DEPARTURE_SCENARIO_KEY",
     "sort_records_by_bid",
     "USD_MAX_COLUMN",
     "USD_PERCENT_COLUMNS",
