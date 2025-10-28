@@ -7,6 +7,7 @@ DISPLAY_FEATURE_ROWS = [
     "item_count",
     "usd_base_amount",
     "fare_class",
+    "from_cabin",
     "offer_time",
     "multiplier_fare_class",
     "multiplier_loyalty",

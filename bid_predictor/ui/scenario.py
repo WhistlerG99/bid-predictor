@@ -71,6 +71,15 @@ class ScenarioRange:
     base_value: float
 
 
+@dataclass(frozen=True)
+class RangeOverride:
+    """Optional configuration overrides loaded from the YAML defaults file."""
+
+    min_value: float
+    max_value: float
+    is_discrete: Optional[bool] = None
+
+
 def _coerce_range_value(value: object) -> Optional[float]:
     if value in (None, ""):
         return None
@@ -83,8 +92,21 @@ def _coerce_range_value(value: object) -> Optional[float]:
     return float(number)
 
 
+def _parse_discrete_flag(value: object) -> Optional[bool]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"discrete", "integer", "count", "true"}:
+        return True
+    if text in {"continuous", "float", "false"}:
+        return False
+    return None
+
+
 @lru_cache(maxsize=1)
-def _load_range_defaults() -> Dict[str, Tuple[float, float]]:
+def _load_range_defaults() -> Dict[str, RangeOverride]:
     if not _RANGE_DEFAULTS_PATH.exists():
         return {}
     try:
@@ -102,7 +124,7 @@ def _load_range_defaults() -> Dict[str, Tuple[float, float]]:
     else:
         raw_ranges = payload
 
-    ranges: Dict[str, Tuple[float, float]] = {}
+    ranges: Dict[str, RangeOverride] = {}
     for key, values in raw_ranges.items():
         if not isinstance(values, dict):
             continue
@@ -112,11 +134,18 @@ def _load_range_defaults() -> Dict[str, Tuple[float, float]]:
             continue
         if min_value > max_value:
             min_value, max_value = max_value, min_value
-        ranges[str(key)] = (float(min_value), float(max_value))
+        discrete_flag = _parse_discrete_flag(
+            values.get("type") if "type" in values else values.get("discrete")
+        )
+        ranges[str(key)] = RangeOverride(
+            min_value=float(min_value),
+            max_value=float(max_value),
+            is_discrete=discrete_flag,
+        )
     return ranges
 
 
-def _lookup_default_range(feature: ScenarioFeature) -> Optional[Tuple[float, float]]:
+def _lookup_default_range(feature: ScenarioFeature) -> Optional[RangeOverride]:
     defaults = _load_range_defaults()
     candidate_keys = [feature.key]
     if feature.kind == "time_to_departure":
@@ -132,6 +161,10 @@ def _lookup_default_range(feature: ScenarioFeature) -> Optional[Tuple[float, flo
         if key in defaults:
             return defaults[key]
     return None
+
+
+def _lookup_range_override_for_key(key: str) -> Optional[RangeOverride]:
+    return _load_range_defaults().get(key)
 
 
 def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
@@ -357,13 +390,17 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
         if numeric is None:
             continue
         label = column.replace("_", " ").title()
+        override = _lookup_range_override_for_key(column)
+        is_integer = _infer_is_integer(numeric)
+        if override is not None and override.is_discrete is not None:
+            is_integer = override.is_discrete
         options.append(
             ScenarioFeature(
                 key=column,
                 scope="global",
                 label=label,
                 bid_label=None,
-                is_integer=_infer_is_integer(numeric),
+                is_integer=is_integer,
             )
         )
 
@@ -389,7 +426,10 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
             numeric = _coerce_numeric(df[column])
             if numeric is None:
                 continue
+            override = _lookup_range_override_for_key(column)
             is_integer = _infer_is_integer(numeric)
+            if override is not None and override.is_discrete is not None:
+                is_integer = override.is_discrete
             for bid_value in sorted(label_series.dropna().unique()):
                 label = f"Bid {int(bid_value)} – {column.replace('_', ' ')}"
                 options.append(
@@ -432,9 +472,8 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
 
         override = _lookup_default_range(feature)
         if override is not None:
-            override_min, override_max = override
-            min_value = min(override_min, base_value)
-            max_value = max(override_max, base_value)
+            min_value = min(override.min_value, base_value)
+            max_value = max(override.max_value, base_value)
         else:
             span = max_value - min_value
             if math.isclose(min_value, max_value):
@@ -472,12 +511,14 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
     min_value = float(numeric.min())
     max_value = float(numeric.max())
     override = _lookup_default_range(feature)
+    treat_as_integer = feature.is_integer
+    if override is not None and override.is_discrete is not None:
+        treat_as_integer = override.is_discrete
 
-    if feature.is_integer:
+    if treat_as_integer:
         if override is not None:
-            override_min, override_max = override
-            min_value = min(override_min, base_value)
-            max_value = max(override_max, base_value)
+            min_value = min(override.min_value, base_value)
+            max_value = max(override.max_value, base_value)
         else:
             span = max_value - min_value
             margin = max(1.0, math.ceil(span * 0.3))
@@ -494,9 +535,8 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
         count = max(min(count, 60), 8)
     else:
         if override is not None:
-            override_min, override_max = override
-            min_value = min(override_min, base_value)
-            max_value = max(override_max, base_value)
+            min_value = min(override.min_value, base_value)
+            max_value = max(override.max_value, base_value)
         else:
             span = max_value - min_value
             if math.isclose(span, 0.0):
