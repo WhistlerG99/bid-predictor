@@ -42,7 +42,7 @@ from bid_predictor.tuning.result_writing import (
     write_best_result_json,
     write_results_csv,
 )
-from train import prepare_features
+from bid_predictor.data import prepare_features
 
 
 set_config(enable_metadata_routing=True)
