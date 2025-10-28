@@ -587,6 +587,13 @@ def create_app() -> Dash:
                                                 style={"width": "100%", "marginBottom": "0.75rem"},
                                             ),
                                             html.Div(
+                                                id="scenario-base-value",
+                                                style={
+                                                    "margin": "0 0 0.75rem 0",
+                                                    "color": "#16324f",
+                                                },
+                                            ),
+                                            html.Div(
                                                 [
                                                     html.Div(
                                                         [
@@ -706,10 +713,6 @@ def create_app() -> Dash:
                                                         },
                                                     ),
                                                 ],
-                                            ),
-                                            html.Div(
-                                                id="scenario-base-value",
-                                                style={"marginTop": "0.75rem", "color": "#16324f"},
                                             ),
                                             html.Div(
                                                 id="scenario-control-warning",
@@ -1158,10 +1161,14 @@ def create_app() -> Dash:
         seats_style: Dict[str, object] = {"display": "none"}
         time_style: Dict[str, object] = {"display": "none"}
         if decoded_feature is not None:
-            if decoded_feature.kind == "time_to_departure":
-                seats_style = {"display": "block", "marginBottom": "0.75rem"}
+            visible_style = {"display": "block", "marginBottom": "0.75rem"}
             if decoded_feature.key == "seats_available":
-                time_style = {"display": "block", "marginBottom": "0.75rem"}
+                time_style = visible_style
+            elif decoded_feature.kind == "time_to_departure":
+                seats_style = visible_style
+            else:
+                seats_style = visible_style
+                time_style = visible_style
 
         return seats_value, time_value, seats_style, time_style
 

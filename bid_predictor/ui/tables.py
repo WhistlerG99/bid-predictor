@@ -80,6 +80,14 @@ def build_bid_table(
         }
     )
 
+    style_rules.append(
+        {
+            "if": {"filter_query": '{Feature} = "offer_status"'},
+            "backgroundColor": "#f8fafc",
+            "pointerEvents": "none",
+        }
+    )
+
     for percent_column in USD_PERCENT_COLUMNS:
         style_rules.append(
             {
@@ -141,6 +149,8 @@ def apply_table_edits(
                 # recomputed from usd_base_amount after loop
                 continue
             elif feature == USD_MAX_COLUMN:
+                continue
+            elif feature == "offer_status":
                 continue
             elif feature.startswith("multiplier"):
                 numeric = safe_float(value)
