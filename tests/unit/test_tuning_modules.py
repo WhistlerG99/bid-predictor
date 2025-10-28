@@ -10,9 +10,9 @@ from sklearn.model_selection import StratifiedKFold
 skopt = pytest.importorskip("skopt")
 from skopt.space import Categorical, Integer, Real  # type: ignore  # noqa: E402
 
+import bid_predictor.data as data_module
 from bid_predictor.tuning import (
     cross_validation,
-    data_access,
     feature_tuning,
     result_writing,
     search_config,
@@ -199,8 +199,12 @@ def test_write_best_catboost_params(tmp_path):
 
 def test_resolve_train_file_uses_environment(monkeypatch):
     monkeypatch.setenv("S3_BUCKET_DATA", "s3://bucket")
-    monkeypatch.setattr(data_access, "detect_execution_environment", lambda: ("sagemaker_notebook", ""))
-    path = data_access.resolve_train_file(None)
+    monkeypatch.setattr(
+        data_module,
+        "detect_execution_environment",
+        lambda: ("sagemaker_notebook", ""),
+    )
+    path = data_module.resolve_train_file(None)
     assert path.startswith("s3://bucket")
 
 
@@ -221,8 +225,12 @@ def test_load_training_data_uses_pyarrow(monkeypatch):
 
     import types
 
-    monkeypatch.setattr(data_access.ds, "dataset", lambda path, format: DummyDataset(path, format))
-    df = data_access.load_training_data("dummy")
+    monkeypatch.setattr(
+        data_module.ds,
+        "dataset",
+        lambda path, format, filesystem=None: DummyDataset(path, format),
+    )
+    df = data_module.load_training_data("dummy")
     assert list(df.columns) == ["carrier_code", "fare_class", "seats_available"]
 
 

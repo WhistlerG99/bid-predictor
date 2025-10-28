@@ -24,7 +24,7 @@ from bid_predictor.tuning.cross_validation import (
     RandomDateSplitter,
     cross_validate_with_eval,
 )
-from bid_predictor.tuning.data_access import load_training_data, resolve_train_file
+from bid_predictor.data import load_training_data, resolve_train_file
 from bid_predictor.feature_config import load_feature_config
 from bid_predictor.tuning.feature_tuning import (
     apply_transform_overrides,

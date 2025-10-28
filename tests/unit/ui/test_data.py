@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from bid_predictor.ui.data import load_dataset_cached, prepare_prediction_dataframe
+from bid_predictor.data import load_dataset_cached, prepare_prediction_dataframe
 
 
 @pytest.fixture(autouse=True)
@@ -14,7 +14,7 @@ def clear_caches():
 def test_load_dataset_cached_normalizes_and_caches(monkeypatch):
     calls = []
 
-    def fake_loader(path: str) -> pd.DataFrame:
+    def fake_loader(path: str, **kwargs) -> pd.DataFrame:
         calls.append(path)
         return pd.DataFrame(
             {
@@ -29,7 +29,7 @@ def test_load_dataset_cached_normalizes_and_caches(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "bid_predictor.ui.data.load_training_data",
+        "bid_predictor.data.load_training_data",
         fake_loader,
     )
 
@@ -44,11 +44,11 @@ def test_load_dataset_cached_normalizes_and_caches(monkeypatch):
 
 
 def test_load_dataset_cached_missing_columns(monkeypatch):
-    def fake_loader(path: str) -> pd.DataFrame:
+    def fake_loader(path: str, **kwargs) -> pd.DataFrame:
         return pd.DataFrame({"carrier_code": ["AC"]})
 
     monkeypatch.setattr(
-        "bid_predictor.ui.data.load_training_data",
+        "bid_predictor.data.load_training_data",
         fake_loader,
     )
 
@@ -58,7 +58,7 @@ def test_load_dataset_cached_missing_columns(monkeypatch):
 
 def test_prepare_prediction_dataframe_converts_types(monkeypatch):
     monkeypatch.setattr(
-        "bid_predictor.ui.data.get_feature_columns",
+        "bid_predictor.data.get_feature_columns",
         lambda: (["usd_base_amount", "travel_date"], []),
     )
 
