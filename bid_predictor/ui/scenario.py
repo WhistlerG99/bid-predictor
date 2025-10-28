@@ -480,7 +480,8 @@ def records_to_dataframe(records: Optional[Sequence[Dict[str, object]]]) -> pd.D
     for column in df.columns:
         if not isinstance(column, str):
             continue
-        if "timestamp" in column.lower():
+        lowercase = column.lower()
+        if "timestamp" in lowercase or "date" in lowercase:
             parsed = pd.to_datetime(df[column], errors="coerce")
             if parsed.notna().any():
                 df[column] = parsed
