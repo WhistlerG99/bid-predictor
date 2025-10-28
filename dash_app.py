@@ -33,6 +33,7 @@ from bid_predictor.ui import (
     compute_bid_label_map,
     extract_global_baseline_values,
     extract_baseline_snapshot,
+    select_baseline_snapshot,
     get_next_bid_label,
     load_dataset_cached,
     load_model_cached,
@@ -1092,7 +1093,12 @@ def create_app() -> Dash:
         time_default = defaults.get(TIME_TO_DEPARTURE_SCENARIO_KEY)
         if time_default is not None:
             time_default = float(time_default)
-        if seats_default is not None or time_default is not None:
+        baseline_snapshot_value = select_baseline_snapshot(baseline_df, time_default)
+        if (
+            seats_default is not None
+            or time_default is not None
+            or baseline_snapshot_value is not None
+        ):
             for record in base_records:
                 if seats_default is not None:
                     record["seats_available"] = seats_default
@@ -1105,6 +1111,8 @@ def create_app() -> Dash:
                         continue
                     current_ts = departure_ts - pd.to_timedelta(time_default, unit="hour")
                     record["current_timestamp"] = current_ts
+                if baseline_snapshot_value is not None:
+                    record["snapshot_num"] = baseline_snapshot_value
         recompute_usd_metrics(base_records)
 
         serializable_records: List[Dict[str, object]] = []
