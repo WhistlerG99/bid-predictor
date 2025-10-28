@@ -5,7 +5,7 @@ from .constants import (
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
 )
-from .data import (
+from ..data import (
     get_feature_columns,
     load_dataset_cached,
     load_model_cached,

@@ -5,7 +5,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from .data import get_feature_columns, load_model_cached
+from ..data import get_feature_columns, load_model_cached
 
 
 def predict(model_uri: str, df: pd.DataFrame) -> pd.DataFrame:

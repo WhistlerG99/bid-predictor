@@ -183,7 +183,9 @@ def train_and_log_model(
     explicit_flags = set(var_args.pop("_explicit_flags", set()))
     catboost_config_path = var_args.pop("catboost_config", None)
 
-    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(data, pre_features, testing)
+    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(
+        data, pre_features, testing=testing
+    )
 
 
     mlflow.set_experiment(experiment_name)
