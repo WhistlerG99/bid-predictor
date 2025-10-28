@@ -511,6 +511,7 @@ def log_prob_examples(df):
         "fare_class",
         "time_until_departure",
     ]
+    df = df.sort_index()
 
     df["time_until_departure"] = df.departure_timestamp - df.current_timestamp
 
@@ -520,16 +521,16 @@ def log_prob_examples(df):
         .groupby(_GROUPBY_KEY_FEATURES[:-1], observed=True)
         .size()
     )
-
+    
     cand = cnts_snap.reset_index(name="n")
     cand = cand[(cand["n"] >= 5) & (cand["n"] < 10)]
 
     sampled = (
         cand.groupby("carrier_code", observed=True)
         .apply(
-            lambda g: g.sample(n=min(5, len(g)), random_state=10), include_groups=True
+            lambda g: g.sample(n=min(5, len(g)), random_state=10), include_groups=False
         )
-        .reset_index(drop=True)
+        .reset_index(level="carrier_code")
     )
 
     # create auctions list of tuples (carrier_code, flight_number, travel_date, upgrade_type)
@@ -550,7 +551,8 @@ def log_prob_examples(df):
         )
         acc_prob.columns = [" - ".join(map(str, c)) for c in acc_prob.columns]
         acc_prob.index = acc_prob.index.round("h")
-
+        acc_prob = acc_prob.sort_index(ascending=False)
+        
         seats_avail = (
             df.loc[auc, ["seats_available", "time_until_departure"]]
             .reset_index()[["time_until_departure", "seats_available"]]
@@ -558,7 +560,8 @@ def log_prob_examples(df):
             .set_index("time_until_departure")
         )
         seats_avail.index = seats_avail.index.round("h")
-
+        seats_avail = seats_avail.sort_index(ascending=False)
+        
         fig_p, ax_p = plt.subplots(figsize=(10, 8))
         acc_prob.plot.bar(ax=ax_p, zorder=1, alpha=0.9)
         ax_s = seats_avail.plot(ax=ax_p, secondary_y=True)
