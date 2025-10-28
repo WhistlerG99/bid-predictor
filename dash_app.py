@@ -21,9 +21,11 @@ from bid_predictor.ui import (
     apply_bid_labels,
     build_prediction_plot,
     build_adjustment_grid,
+    build_carrier_options,
     build_feature_options,
-    build_flight_options,
+    build_flight_number_options,
     build_scenario_line_chart,
+    build_travel_date_options,
     build_upgrade_options,
     compute_default_range,
     compute_bid_label_map,
@@ -517,12 +519,44 @@ def create_app() -> Dash:
                                                 "Scenario controls",
                                                 style={"margin": "0 0 1rem 0", "color": "#1b4965"},
                                             ),
-                                            html.Label("Flight", style={"fontWeight": "600"}),
-                                            dcc.Dropdown(
-                                                id="scenario-flight-dropdown",
-                                                options=[],
-                                                placeholder="Select flight",
-                                                style={"width": "100%", "marginBottom": "0.75rem"},
+                                            html.Div(
+                                                [
+                                                    html.Label("Carrier", style={"fontWeight": "600"}),
+                                                    dcc.Dropdown(
+                                                        id="scenario-carrier-dropdown",
+                                                        options=[],
+                                                        placeholder="Select carrier",
+                                                        style={"width": "100%"},
+                                                    ),
+                                                ],
+                                                style={"marginBottom": "0.75rem"},
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Label(
+                                                        "Flight number",
+                                                        style={"fontWeight": "600"},
+                                                    ),
+                                                    dcc.Dropdown(
+                                                        id="scenario-flight-number-dropdown",
+                                                        options=[],
+                                                        placeholder="Select flight",
+                                                        style={"width": "100%"},
+                                                    ),
+                                                ],
+                                                style={"marginBottom": "0.75rem"},
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Label("Travel date", style={"fontWeight": "600"}),
+                                                    dcc.Dropdown(
+                                                        id="scenario-travel-date-dropdown",
+                                                        options=[],
+                                                        placeholder="Select travel date",
+                                                        style={"width": "100%"},
+                                                    ),
+                                                ],
+                                                style={"marginBottom": "0.75rem"},
                                             ),
                                             html.Label("Upgrade type", style={"fontWeight": "600"}),
                                             dcc.Dropdown(
@@ -554,7 +588,8 @@ def create_app() -> Dash:
                                                 value=[0, 1],
                                                 step=0.1,
                                                 allowCross=False,
-                                                tooltip={"placement": "bottom", "always_visible": False},
+                                                tooltip={"placement": "top", "always_visible": True},
+                                                marks=None,
                                                 disabled=True,
                                             ),
                                             html.Div(
@@ -693,11 +728,11 @@ def create_app() -> Dash:
         return f"Loaded model from {model_uri}", model_uri
 
     @app.callback(
-        Output("scenario-flight-dropdown", "options"),
-        Output("scenario-flight-dropdown", "value"),
+        Output("scenario-carrier-dropdown", "options"),
+        Output("scenario-carrier-dropdown", "value"),
         Input("dataset-path-store", "data"),
     )
-    def populate_scenario_flights(dataset_path: Optional[str]):
+    def populate_scenario_carriers(dataset_path: Optional[str]):
         if not dataset_path:
             return [], None
 
@@ -706,21 +741,20 @@ def create_app() -> Dash:
         except Exception:
             return [], None
 
-        options = build_flight_options(dataset)
+        options = build_carrier_options(dataset)
         value = options[0]["value"] if options else None
         return options, value
 
     @app.callback(
-        Output("scenario-upgrade-dropdown", "options"),
-        Output("scenario-upgrade-dropdown", "value"),
-        Input("scenario-flight-dropdown", "value"),
+        Output("scenario-flight-number-dropdown", "options"),
+        Output("scenario-flight-number-dropdown", "value"),
+        Input("scenario-carrier-dropdown", "value"),
         State("dataset-path-store", "data"),
     )
-    def populate_scenario_upgrades(
-        flight_value: Optional[str],
-        dataset_path: Optional[str],
+    def populate_scenario_flight_numbers(
+        carrier: Optional[str], dataset_path: Optional[str]
     ):
-        if not dataset_path or not flight_value:
+        if not dataset_path or not carrier:
             return [], None
 
         try:
@@ -728,7 +762,57 @@ def create_app() -> Dash:
         except Exception:
             return [], None
 
-        options = build_upgrade_options(dataset, flight_value)
+        options = build_flight_number_options(dataset, carrier)
+        value = options[0]["value"] if options else None
+        return options, value
+
+    @app.callback(
+        Output("scenario-travel-date-dropdown", "options"),
+        Output("scenario-travel-date-dropdown", "value"),
+        Input("scenario-flight-number-dropdown", "value"),
+        State("scenario-carrier-dropdown", "value"),
+        State("dataset-path-store", "data"),
+    )
+    def populate_scenario_travel_dates(
+        flight_number: Optional[str],
+        carrier: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path or not carrier or not flight_number:
+            return [], None
+
+        try:
+            dataset = load_dataset_cached(dataset_path)
+        except Exception:
+            return [], None
+
+        options = build_travel_date_options(dataset, carrier, flight_number)
+        value = options[0]["value"] if options else None
+        return options, value
+
+    @app.callback(
+        Output("scenario-upgrade-dropdown", "options"),
+        Output("scenario-upgrade-dropdown", "value"),
+        Input("scenario-travel-date-dropdown", "value"),
+        State("scenario-carrier-dropdown", "value"),
+        State("scenario-flight-number-dropdown", "value"),
+        State("dataset-path-store", "data"),
+    )
+    def populate_scenario_upgrades(
+        travel_date: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path or not carrier or not flight_number or not travel_date:
+            return [], None
+
+        try:
+            dataset = load_dataset_cached(dataset_path)
+        except Exception:
+            return [], None
+
+        options = build_upgrade_options(dataset, carrier, flight_number, travel_date)
         value = options[0]["value"] if options else None
         return options, value
 
@@ -736,19 +820,23 @@ def create_app() -> Dash:
         Output("scenario-baseline-store", "data"),
         Output("scenario-snapshot-label", "children"),
         Output("scenario-control-warning", "children"),
-        Input("scenario-flight-dropdown", "value"),
+        Input("scenario-carrier-dropdown", "value"),
+        Input("scenario-flight-number-dropdown", "value"),
+        Input("scenario-travel-date-dropdown", "value"),
         Input("scenario-upgrade-dropdown", "value"),
         State("dataset-path-store", "data"),
     )
     def update_scenario_baseline(
-        flight_value: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        travel_date: Optional[str],
         upgrade_type: Optional[str],
         dataset_path: Optional[str],
     ):
         if not dataset_path:
             return None, "Load a dataset to explore scenarios.", "Load a dataset to explore scenarios."
 
-        if not flight_value or not upgrade_type:
+        if not carrier or not flight_number or not travel_date or not upgrade_type:
             return None, "", "Select a flight and upgrade type."
 
         try:
@@ -758,7 +846,9 @@ def create_app() -> Dash:
 
         baseline_df, snapshot_label = extract_baseline_snapshot(
             dataset,
-            flight_value,
+            carrier,
+            flight_number,
+            travel_date,
             upgrade_type,
         )
         if baseline_df.empty:
@@ -822,11 +912,16 @@ def create_app() -> Dash:
         slider_value = [slider_min, slider_max]
         step_count = max(int(scenario_range.count), 2)
         base_value = scenario_range.base_value
-        base_text = (
-            f"Baseline value: {int(round(base_value))}"
-            if feature.is_integer
-            else f"Baseline value: {base_value:.4f}"
-        )
+        if feature.is_integer:
+            baseline_text = f"Baseline value: {int(round(base_value))}"
+            range_text = f"Range: {int(round(slider_min))} – {int(round(slider_max))}"
+        else:
+            baseline_text = f"Baseline value: {base_value:.4f}"
+            range_text = f"Range: {slider_min:.4f} – {slider_max:.4f}"
+        base_text = html.Div([
+            html.Div(baseline_text),
+            html.Div(range_text),
+        ])
         return slider_min, slider_max, slider_value, slider_step, False, step_count, base_text
 
     @app.callback(

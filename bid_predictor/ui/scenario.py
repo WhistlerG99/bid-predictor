@@ -67,88 +67,99 @@ class ScenarioRange:
     base_value: float
 
 
-def _encode_flight_key(carrier: str, flight_number: str, travel_date: str) -> str:
-    payload = {
-        "carrier": carrier,
-        "flight_number": str(flight_number),
-        "travel_date": str(travel_date),
-    }
-    return json.dumps(payload, sort_keys=True)
+def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
+    """Return carrier dropdown options for the scenario explorer."""
 
-
-def decode_flight_key(value: Optional[str]) -> Optional[Dict[str, str]]:
-    if not value:
-        return None
-    try:
-        payload = json.loads(value)
-    except (TypeError, ValueError):
-        return None
-    required = {"carrier", "flight_number", "travel_date"}
-    if not required.issubset(payload):
-        return None
-    return {
-        "carrier": str(payload["carrier"]),
-        "flight_number": str(payload["flight_number"]),
-        "travel_date": str(payload["travel_date"]),
-    }
-
-
-def build_flight_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
-    if dataset.empty:
+    if dataset.empty or "carrier_code" not in dataset.columns:
         return []
+
+    carriers = dataset["carrier_code"].dropna().drop_duplicates().sort_values()
+    return [{"label": str(code), "value": str(code)} for code in carriers]
+
+
+def build_flight_number_options(dataset: pd.DataFrame, carrier: Optional[str]) -> List[Dict[str, str]]:
+    """Return flight number options filtered by carrier."""
+
+    if dataset.empty or not carrier:
+        return []
+    required = {"carrier_code", "flight_number"}
+    if not required.issubset(dataset.columns):
+        return []
+
+    mask = dataset["carrier_code"] == carrier
+    flights = (
+        dataset.loc[mask, "flight_number"].dropna().astype(str).drop_duplicates().sort_values()
+    )
+    return [{"label": value, "value": value} for value in flights]
+
+
+def build_travel_date_options(
+    dataset: pd.DataFrame,
+    carrier: Optional[str],
+    flight_number: Optional[str],
+) -> List[Dict[str, str]]:
+    """Return travel date options filtered by carrier and flight number."""
+
+    if dataset.empty or not carrier or not flight_number:
+        return []
+
     required = {"carrier_code", "flight_number", "travel_date"}
     if not required.issubset(dataset.columns):
         return []
-    working = dataset.dropna(subset=list(required)).copy()
-    working["travel_date"] = pd.to_datetime(working["travel_date"]).dt.date.astype(str)
-    working["flight_number"] = working["flight_number"].astype(str)
 
-    working = (
-        working[["carrier_code", "flight_number", "travel_date"]]
-        .drop_duplicates()
-        .sort_values(["travel_date", "carrier_code", "flight_number"], ascending=[True, True, True])
+    mask = (dataset["carrier_code"] == carrier) & (
+        dataset["flight_number"].astype(str) == str(flight_number)
     )
+    dates = (
+        pd.to_datetime(dataset.loc[mask, "travel_date"], errors="coerce")
+        .dropna()
+        .drop_duplicates()
+        .sort_values()
+    )
+    return [
+        {"label": dt.date().isoformat(), "value": dt.date().isoformat()}
+        for dt in dates
+    ]
 
-    options: List[Dict[str, str]] = []
-    for row in working.itertuples(index=False):
-        label = f"{row.carrier_code} {row.flight_number} · {row.travel_date}"
-        value = _encode_flight_key(row.carrier_code, row.flight_number, row.travel_date)
-        options.append({"label": label, "value": value})
-    return options
 
+def build_upgrade_options(
+    dataset: pd.DataFrame,
+    carrier: Optional[str],
+    flight_number: Optional[str],
+    travel_date: Optional[str],
+) -> List[Dict[str, str]]:
+    """Return upgrade type options filtered by the selected flight."""
 
-def build_upgrade_options(dataset: pd.DataFrame, flight_value: Optional[str]) -> List[Dict[str, str]]:
-    if dataset.empty:
+    if dataset.empty or not carrier or not flight_number or not travel_date:
         return []
-    details = decode_flight_key(flight_value)
-    if not details:
-        return []
+
     required = {"carrier_code", "flight_number", "travel_date", "upgrade_type"}
     if not required.issubset(dataset.columns):
         return []
 
-    travel_date = pd.to_datetime(details["travel_date"]).date()
+    travel_date_dt = pd.to_datetime(travel_date, errors="coerce")
+    if pd.isna(travel_date_dt):
+        return []
+
     mask = (
-        (dataset["carrier_code"] == details["carrier"]) &
-        (dataset["flight_number"].astype(str) == details["flight_number"]) &
-        (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date)
+        (dataset["carrier_code"] == carrier)
+        & (dataset["flight_number"].astype(str) == str(flight_number))
+        & (pd.to_datetime(dataset["travel_date"], errors="coerce").dt.date == travel_date_dt.date())
     )
     upgrades = (
-        dataset.loc[mask, "upgrade_type"]
-        .dropna()
-        .drop_duplicates()
-        .sort_values()
+        dataset.loc[mask, "upgrade_type"].dropna().drop_duplicates().sort_values()
     )
     return [{"label": str(value), "value": str(value)} for value in upgrades]
 
 
 def extract_baseline_snapshot(
     dataset: pd.DataFrame,
-    flight_value: Optional[str],
+    carrier: Optional[str],
+    flight_number: Optional[str],
+    travel_date: Optional[str],
     upgrade_type: Optional[str],
 ) -> Tuple[pd.DataFrame, Optional[str]]:
-    details = decode_flight_key(flight_value)
-    if not details or not upgrade_type:
+    if not carrier or not flight_number or not travel_date or not upgrade_type:
         return pd.DataFrame(), None
 
     required = {
@@ -160,12 +171,15 @@ def extract_baseline_snapshot(
     if not required.issubset(dataset.columns):
         return pd.DataFrame(), None
 
-    travel_date = pd.to_datetime(details["travel_date"]).date()
+    travel_date_dt = pd.to_datetime(travel_date, errors="coerce")
+    if pd.isna(travel_date_dt):
+        return pd.DataFrame(), None
+
     mask = (
-        (dataset["carrier_code"] == details["carrier"]) &
-        (dataset["flight_number"].astype(str) == details["flight_number"]) &
-        (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date) &
-        (dataset["upgrade_type"] == upgrade_type)
+        (dataset["carrier_code"] == carrier)
+        & (dataset["flight_number"].astype(str) == str(flight_number))
+        & (pd.to_datetime(dataset["travel_date"], errors="coerce").dt.date == travel_date_dt.date())
+        & (dataset["upgrade_type"] == upgrade_type)
     )
     subset = dataset.loc[mask].copy()
     if subset.empty:
@@ -492,12 +506,13 @@ __all__ = [
     "ScenarioFeature",
     "ScenarioRange",
     "build_adjustment_grid",
+    "build_carrier_options",
     "build_feature_options",
-    "build_flight_options",
+    "build_flight_number_options",
     "build_scenario_line_chart",
+    "build_travel_date_options",
     "build_upgrade_options",
     "compute_default_range",
-    "decode_flight_key",
     "extract_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
