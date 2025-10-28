@@ -186,20 +186,51 @@ def extract_baseline_snapshot(
         return subset, None
 
     snapshot_label: Optional[str] = None
+    unique_snapshots: Optional[pd.Index] = None
     if "snapshot_num" in subset.columns:
         snapshot_numbers = pd.to_numeric(subset["snapshot_num"], errors="coerce")
         if snapshot_numbers.notna().any():
-            latest = snapshot_numbers.max()
-            snapshot_label = str(int(latest)) if float(latest).is_integer() else str(latest)
-            subset = subset.loc[snapshot_numbers == latest].copy()
+            unique_snapshots = snapshot_numbers.dropna().unique()
+            sort_order = pd.Series(snapshot_numbers).fillna(-math.inf)
+            subset = subset.assign(_scenario_snapshot_order=sort_order)
 
     label_map, label_column = compute_bid_label_map(subset)
     subset = apply_bid_labels(subset, label_map, label_column)
+
+    dedup_field: Optional[str] = None
+    if label_column and label_column in subset.columns:
+        dedup_field = label_column
+    elif "Bid #" in subset.columns:
+        dedup_field = "Bid #"
+
+    if dedup_field is not None:
+        subset = subset.copy()
+        if "_scenario_snapshot_order" in subset.columns:
+            subset = subset.sort_values([dedup_field, "_scenario_snapshot_order"])
+        else:
+            subset = subset.sort_values(dedup_field)
+        subset = subset.drop_duplicates(subset=dedup_field, keep="last")
+
+    if "_scenario_snapshot_order" in subset.columns:
+        subset = subset.drop(columns="_scenario_snapshot_order")
+
     if "Bid #" in subset.columns:
         subset = subset.sort_values("Bid #")
     else:
-        subset = subset.reset_index(drop=True)
-        subset["Bid #"] = range(1, len(subset) + 1)
+        subset = subset.sort_index()
+    subset = subset.reset_index(drop=True)
+
+    if unique_snapshots is not None and len(unique_snapshots) > 0:
+        if len(unique_snapshots) == 1:
+            label_value = unique_snapshots[0]
+            snapshot_label = (
+                f"from snapshot {int(label_value)}"
+                if float(label_value).is_integer()
+                else f"from snapshot {label_value}"
+            )
+        else:
+            snapshot_label = f"across {len(unique_snapshots)} snapshots"
+
     return subset, snapshot_label
 
 
@@ -331,12 +362,17 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
         base_value = float(series.iloc[0])
         min_value = float(series.min())
         max_value = float(series.max())
+        span = max_value - min_value
         if math.isclose(min_value, max_value):
-            delta = max(abs(base_value) * 0.25, 6.0)
+            delta = max(abs(base_value) * 0.35, 6.0)
             min_value = max(base_value - delta, 0.0)
             max_value = base_value + delta
-        step = max((max_value - min_value) / 20.0, 0.5)
-        count = max(int(round((max_value - min_value) / max(step, 1e-6))) + 1, 5)
+        else:
+            margin = max(span * 0.25, 6.0)
+            min_value = max(min_value - margin, 0.0)
+            max_value = max_value + margin
+        step = max((max_value - min_value) / 30.0, 0.5)
+        count = max(int(round((max_value - min_value) / max(step, 1e-6))) + 1, 20)
         return ScenarioRange(min_value=min_value, max_value=max_value, step=step, count=count, base_value=base_value)
 
     column = feature.key
@@ -356,33 +392,37 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
     base_value = float(numeric.iloc[0])
     min_value = float(numeric.min())
     max_value = float(numeric.max())
-    if math.isclose(min_value, max_value):
-        span = abs(base_value) * 0.25 or 1.0
-        min_value = base_value - span
-        max_value = base_value + span
-        if feature.is_integer:
-            min_value = math.floor(min_value)
-            max_value = math.ceil(max_value)
-            if min_value == max_value:
-                max_value = min_value + 1
-        else:
-            if math.isclose(min_value, max_value):
-                max_value = min_value + 1.0
-
     if feature.is_integer:
-        min_value = math.floor(min_value)
-        max_value = math.ceil(max_value)
-        if min_value < 0 and column in {"item_count"}:
-            min_value = 0
+        span = max_value - min_value
+        margin = max(1.0, math.ceil(span * 0.3))
+        if math.isclose(span, 0.0):
+            margin = max(margin, 2.0)
+        min_value = math.floor(min_value - margin)
+        max_value = math.ceil(max_value + margin)
+        if column in {"item_count", "seats_available", "available_inventory"}:
+            min_value = max(min_value, 0)
+        if min_value == max_value:
+            max_value = min_value + 1
         step = 1.0
         count = int(max_value - min_value) + 1
-        count = max(min(count, 25), 5)
+        count = max(min(count, 60), 8)
     else:
         span = max_value - min_value
-        step = span / 30.0 if span > 0 else max(abs(base_value) * 0.05, 0.5)
+        if math.isclose(span, 0.0):
+            margin = max(abs(base_value) * 0.35, 1.0)
+        else:
+            margin = max(span * 0.25, abs(base_value) * 0.1)
+        min_value = min_value - margin
+        max_value = max_value + margin
+        if column in {"usd_base_amount", "usd_total_amount"}:
+            min_value = max(min_value, 0.0)
+        if math.isclose(min_value, max_value):
+            max_value = min_value + 1.0
+        span = max_value - min_value
+        step = span / 50.0 if span > 0 else max(abs(base_value) * 0.05, 0.25)
         step = max(step, 0.01)
-        count = int(span / step) + 1 if span > 0 else 15
-        count = max(min(count, 60), 10)
+        count = int(span / step) + 1 if span > 0 else 20
+        count = max(min(count, 80), 20)
     return ScenarioRange(min_value=min_value, max_value=max_value, step=step, count=count, base_value=base_value)
 
 

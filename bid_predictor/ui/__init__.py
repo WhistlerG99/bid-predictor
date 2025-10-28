@@ -22,6 +22,7 @@ from .formatting import (
     sort_records_by_bid,
 )
 from .plotting import BAR_COLOR_SEQUENCE, build_prediction_plot
+from .tables import apply_table_edits, build_bid_table
 from .predictions import predict
 from .scenario import (
     ScenarioFeature,
@@ -41,7 +42,9 @@ from .scenario import (
 
 __all__ = [
     "apply_bid_labels",
+    "apply_table_edits",
     "build_prediction_plot",
+    "build_bid_table",
     "BID_IDENTIFIER_COLUMNS",
     "BAR_COLOR_SEQUENCE",
     "compute_bid_label_map",

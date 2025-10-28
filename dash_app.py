@@ -19,7 +19,9 @@ from bid_predictor.ui import (
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
     apply_bid_labels,
+    apply_table_edits,
     build_prediction_plot,
+    build_bid_table,
     build_adjustment_grid,
     build_carrier_options,
     build_feature_options,
@@ -163,7 +165,9 @@ def create_app() -> Dash:
             dcc.Store(id="removed-bids-store"),
             dcc.Store(id="baseline-bid-records-store"),
             dcc.Store(id="baseline-snapshot-meta-store"),
-            dcc.Store(id="scenario-baseline-store"),
+            dcc.Store(id="scenario-records-store"),
+            dcc.Store(id="scenario-original-records-store"),
+            dcc.Store(id="scenario-removed-bids-store"),
             dcc.Tabs(
                 id="main-tabs",
                 value="snapshot",
@@ -588,9 +592,19 @@ def create_app() -> Dash:
                                                 value=[0, 1],
                                                 step=0.1,
                                                 allowCross=False,
-                                                tooltip={"placement": "top", "always_visible": True},
+                                                tooltip={"placement": "top"},
                                                 marks=None,
                                                 disabled=True,
+                                            ),
+                                            html.Div(
+                                                id="scenario-range-values",
+                                                style={
+                                                    "display": "flex",
+                                                    "justifyContent": "space-between",
+                                                    "fontSize": "0.85rem",
+                                                    "color": "#16324f",
+                                                    "marginTop": "0.35rem",
+                                                },
                                             ),
                                             html.Div(
                                                 [
@@ -637,23 +651,154 @@ def create_app() -> Dash:
                                     ),
                                     html.Div(
                                         [
-                                            dcc.Graph(
-                                                id="scenario-graph",
-                                                style={"height": "620px"},
+                                            html.Div(
+                                                [
+                                                    dcc.Graph(
+                                                        id="scenario-graph",
+                                                        style={"height": "620px"},
+                                                    ),
+                                                    html.Div(
+                                                        id="scenario-warning",
+                                                        className="status-message",
+                                                        style={"marginTop": "0.75rem"},
+                                                    ),
+                                                ],
+                                                style={
+                                                    "backgroundColor": "#edf2fb",
+                                                    "borderRadius": "12px",
+                                                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                                    "padding": "1.25rem",
+                                                },
                                             ),
                                             html.Div(
-                                                id="scenario-warning",
-                                                className="status-message",
-                                                style={"marginTop": "0.75rem"},
+                                                [
+                                                    html.Div(
+                                                        [
+                                                            html.Button(
+                                                                "Add bid",
+                                                                id="scenario-add-bid",
+                                                                n_clicks=0,
+                                                                style={
+                                                                    "backgroundColor": "#2ec4b6",
+                                                                    "color": "white",
+                                                                    "border": "none",
+                                                                    "padding": "0.5rem 1rem",
+                                                                    "borderRadius": "6px",
+                                                                    "marginRight": "0.5rem",
+                                                                    "boxShadow": "0 2px 6px rgba(46, 196, 182, 0.4)",
+                                                                },
+                                                            ),
+                                                            html.Button(
+                                                                "Delete selected",
+                                                                id="scenario-delete-bid",
+                                                                n_clicks=0,
+                                                                style={
+                                                                    "backgroundColor": "#e71d36",
+                                                                    "color": "white",
+                                                                    "border": "none",
+                                                                    "padding": "0.5rem 1rem",
+                                                                    "borderRadius": "6px",
+                                                                    "boxShadow": "0 2px 6px rgba(231, 29, 54, 0.4)",
+                                                                },
+                                                            ),
+                                                            html.Button(
+                                                                "Restore bids",
+                                                                id="scenario-restore-bid",
+                                                                n_clicks=0,
+                                                                style={
+                                                                    "backgroundColor": "#1b4965",
+                                                                    "color": "white",
+                                                                    "border": "none",
+                                                                    "padding": "0.5rem 1rem",
+                                                                    "borderRadius": "6px",
+                                                                    "marginLeft": "0.5rem",
+                                                                    "boxShadow": "0 2px 6px rgba(27, 73, 101, 0.35)",
+                                                                },
+                                                            ),
+                                                            html.Button(
+                                                                "Restore defaults",
+                                                                id="scenario-restore-baseline",
+                                                                n_clicks=0,
+                                                                style={
+                                                                    "backgroundColor": "#f4a261",
+                                                                    "color": "#16324f",
+                                                                    "border": "none",
+                                                                    "padding": "0.5rem 1rem",
+                                                                    "borderRadius": "6px",
+                                                                    "marginLeft": "0.5rem",
+                                                                    "boxShadow": "0 2px 6px rgba(244, 162, 97, 0.45)",
+                                                                },
+                                                            ),
+                                                        ],
+                                                        style={"marginBottom": "0.75rem", "display": "flex", "flexWrap": "wrap"},
+                                                    ),
+                                                    dcc.Dropdown(
+                                                        id="scenario-bid-delete-selector",
+                                                        options=[],
+                                                        value=[],
+                                                        multi=True,
+                                                        placeholder="Select bids to delete",
+                                                        style={
+                                                            "marginBottom": "0.75rem",
+                                                            "backgroundColor": "#ffffff",
+                                                        },
+                                                    ),
+                                                    dcc.Dropdown(
+                                                        id="scenario-bid-restore-selector",
+                                                        options=[],
+                                                        value=[],
+                                                        multi=True,
+                                                        placeholder="Select removed bids to restore",
+                                                        style={
+                                                            "marginBottom": "0.75rem",
+                                                            "backgroundColor": "#ffffff",
+                                                        },
+                                                    ),
+                                                    html.Div(
+                                                        id="scenario-table-feedback",
+                                                        className="status-message",
+                                                        style={"marginBottom": "0.75rem"},
+                                                    ),
+                                                    dash_table.DataTable(
+                                                        id="scenario-bid-table",
+                                                        columns=[],
+                                                        data=[],
+                                                        editable=True,
+                                                        column_selectable="multi",
+                                                        style_table={
+                                                            "overflowX": "auto",
+                                                            "borderRadius": "8px",
+                                                            "boxShadow": "0 2px 6px rgba(0,0,0,0.1)",
+                                                        },
+                                                        style_cell={
+                                                            "textAlign": "center",
+                                                            "padding": "0.6rem",
+                                                            "backgroundColor": "#ffffff",
+                                                            "border": "1px solid #f1f5f9",
+                                                        },
+                                                        style_header={
+                                                            "backgroundColor": "#1b4965",
+                                                            "color": "white",
+                                                            "fontWeight": "700",
+                                                            "textAlign": "center",
+                                                        },
+                                                        style_data_conditional=[],
+                                                    ),
+                                                ],
+                                                style={
+                                                    "backgroundColor": "#ffffff",
+                                                    "borderRadius": "12px",
+                                                    "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
+                                                    "padding": "1.25rem",
+                                                },
                                             ),
                                         ],
                                         style={
                                             "flex": "1",
                                             "minWidth": "0",
-                                            "backgroundColor": "#edf2fb",
-                                            "borderRadius": "12px",
-                                            "boxShadow": "0 2px 10px rgba(0, 0, 0, 0.08)",
-                                            "padding": "1.25rem",
+                                            "display": "flex",
+                                            "flexDirection": "column",
+                                            "gap": "1.5rem",
                                         },
                                     ),
                                 ],
@@ -817,7 +962,9 @@ def create_app() -> Dash:
         return options, value
 
     @app.callback(
-        Output("scenario-baseline-store", "data"),
+        Output("scenario-records-store", "data"),
+        Output("scenario-original-records-store", "data"),
+        Output("scenario-removed-bids-store", "data"),
         Output("scenario-snapshot-label", "children"),
         Output("scenario-control-warning", "children"),
         Input("scenario-carrier-dropdown", "value"),
@@ -834,15 +981,16 @@ def create_app() -> Dash:
         dataset_path: Optional[str],
     ):
         if not dataset_path:
-            return None, "Load a dataset to explore scenarios.", "Load a dataset to explore scenarios."
+            warning = "Load a dataset to explore scenarios."
+            return None, None, [], warning, warning
 
         if not carrier or not flight_number or not travel_date or not upgrade_type:
-            return None, "", "Select a flight and upgrade type."
+            return None, None, [], "", "Select a flight and upgrade type."
 
         try:
             dataset = load_dataset_cached(dataset_path)
         except Exception as exc:
-            return None, "", f"Failed to read dataset: {exc}"
+            return None, None, [], "", f"Failed to read dataset: {exc}"
 
         baseline_df, snapshot_label = extract_baseline_snapshot(
             dataset,
@@ -852,24 +1000,39 @@ def create_app() -> Dash:
             upgrade_type,
         )
         if baseline_df.empty:
-            return None, "No matching snapshot found for this selection.", "No bids are available for the chosen flight."
+            return None, None, [], "No bids found for this selection.", "No bids are available for the chosen flight."
 
-        serializable = baseline_df.copy()
-        for column in serializable.columns:
-            if pd.api.types.is_datetime64_any_dtype(serializable[column]):
-                serializable[column] = serializable[column].dt.strftime("%Y-%m-%dT%H:%M:%S")
+        base_records = [prepare_bid_record(record) for record in baseline_df.to_dict("records")]
+        base_records = sort_records_by_bid(base_records)
+        recompute_usd_metrics(base_records)
 
-        baseline_records = serializable.to_dict("records")
-        summary = f"Using {len(baseline_df)} bids"
+        serializable_records: List[Dict[str, object]] = []
+        for record in base_records:
+            converted: Dict[str, object] = {}
+            for key, value in record.items():
+                if isinstance(value, pd.Timestamp):
+                    converted[key] = value.strftime("%Y-%m-%dT%H:%M:%S")
+                elif hasattr(value, "isoformat") and not isinstance(value, (str, bytes, int, float, bool)):
+                    try:
+                        converted[key] = value.isoformat()  # type: ignore[attr-defined]
+                    except Exception:
+                        converted[key] = value
+                else:
+                    converted[key] = value
+            serializable_records.append(converted)
+
+        summary = f"Using {len(serializable_records)} bids"
         if snapshot_label:
-            summary += f" from snapshot {snapshot_label}"
+            summary += f" {snapshot_label}"
 
-        return baseline_records, summary, ""
+        original_records = [dict(record) for record in serializable_records]
+
+        return serializable_records, original_records, [], summary, ""
 
     @app.callback(
         Output("scenario-feature-dropdown", "options"),
         Output("scenario-feature-dropdown", "value"),
-        Input("scenario-baseline-store", "data"),
+        Input("scenario-records-store", "data"),
     )
     def populate_scenario_features(baseline_records: Optional[List[Dict[str, object]]]):
         baseline_df = records_to_dataframe(baseline_records)
@@ -886,7 +1049,8 @@ def create_app() -> Dash:
         Output("scenario-range-slider", "disabled"),
         Output("scenario-step-count", "value"),
         Output("scenario-base-value", "children"),
-        Input("scenario-baseline-store", "data"),
+        Output("scenario-range-values", "children"),
+        Input("scenario-records-store", "data"),
         Input("scenario-feature-dropdown", "value"),
     )
     def configure_scenario_slider(
@@ -897,11 +1061,11 @@ def create_app() -> Dash:
         features = build_feature_options(baseline_df)
         feature = select_feature(features, feature_value)
         if baseline_df.empty or feature is None:
-            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, ""
+            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, "", []
 
         scenario_range: Optional[ScenarioRange] = compute_default_range(baseline_df, feature)
         if scenario_range is None:
-            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, "Feature is not numeric."
+            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, "Feature is not numeric.", []
 
         slider_min = float(scenario_range.min_value)
         slider_max = float(scenario_range.max_value)
@@ -914,20 +1078,32 @@ def create_app() -> Dash:
         base_value = scenario_range.base_value
         if feature.is_integer:
             baseline_text = f"Baseline value: {int(round(base_value))}"
-            range_text = f"Range: {int(round(slider_min))} – {int(round(slider_max))}"
+            lower_display = f"{int(round(slider_min))}"
+            upper_display = f"{int(round(slider_max))}"
         else:
             baseline_text = f"Baseline value: {base_value:.4f}"
-            range_text = f"Range: {slider_min:.4f} – {slider_max:.4f}"
-        base_text = html.Div([
-            html.Div(baseline_text),
-            html.Div(range_text),
-        ])
-        return slider_min, slider_max, slider_value, slider_step, False, step_count, base_text
+            lower_display = f"{slider_min:.4f}"
+            upper_display = f"{slider_max:.4f}"
+        range_children = [
+            html.Span(lower_display),
+            html.Span(upper_display),
+        ]
+        base_text = html.Div(baseline_text)
+        return (
+            slider_min,
+            slider_max,
+            slider_value,
+            slider_step,
+            False,
+            step_count,
+            base_text,
+            range_children,
+        )
 
     @app.callback(
         Output("scenario-graph", "figure"),
         Output("scenario-warning", "children"),
-        Input("scenario-baseline-store", "data"),
+        Input("scenario-records-store", "data"),
         Input("scenario-feature-dropdown", "value"),
         Input("scenario-range-slider", "value"),
         Input("scenario-step-count", "value"),
@@ -997,6 +1173,207 @@ def create_app() -> Dash:
         figure = build_scenario_line_chart(prediction_df, feature.label)
         warning = prediction_df.attrs.get("model_warning", "") or ""
         return figure, warning
+
+    @app.callback(
+        Output("scenario-bid-table", "columns"),
+        Output("scenario-bid-table", "data"),
+        Output("scenario-bid-table", "style_data_conditional"),
+        Input("scenario-records-store", "data"),
+        Input("model-uri-store", "data"),
+    )
+    def render_scenario_table(
+        records: Optional[List[Dict[str, object]]],
+        model_uri: Optional[str],
+    ):
+        predictions: Dict[str, object] = {}
+        if records and model_uri:
+            feature_df = prepare_prediction_dataframe(records)
+            if not feature_df.empty:
+                try:
+                    pred_df = predict(model_uri, feature_df.copy())
+                except Exception:
+                    pred_df = pd.DataFrame()
+                if not pred_df.empty:
+                    for idx, _ in enumerate(records):
+                        column_id = f"bid_{idx}"
+                        if idx < len(pred_df):
+                            value = pred_df.iloc[idx].get("Acceptance Probability")
+                            if value is None or pd.isna(value):
+                                predictions[column_id] = None
+                            else:
+                                try:
+                                    predictions[column_id] = float(value)
+                                except (TypeError, ValueError):
+                                    predictions[column_id] = value
+        return build_bid_table(records, predictions)
+
+    @app.callback(
+        Output("scenario-records-store", "data", allow_duplicate=True),
+        Input("scenario-bid-table", "data_timestamp"),
+        State("scenario-bid-table", "data"),
+        State("scenario-bid-table", "columns"),
+        State("scenario-records-store", "data"),
+        prevent_initial_call=True,
+    )
+    def persist_scenario_table_edits(
+        data_timestamp: Optional[int],
+        table_data: Optional[List[Dict[str, object]]],
+        columns: Optional[List[Dict[str, object]]],
+        records: Optional[List[Dict[str, object]]],
+    ):
+        if not data_timestamp or not table_data or not columns or not records:
+            return no_update
+
+        updated_records = apply_table_edits(records, table_data, columns)
+        if updated_records is None:
+            return no_update
+        return updated_records
+
+    @app.callback(
+        Output("scenario-bid-delete-selector", "options"),
+        Output("scenario-bid-delete-selector", "value"),
+        Input("scenario-records-store", "data"),
+    )
+    def sync_scenario_delete_selector(records: Optional[List[Dict[str, object]]]):
+        if not records:
+            return [], []
+        options = [
+            {
+                "label": f"Bid {record.get('Bid #') or record.get('bid_number') or idx + 1}",
+                "value": idx,
+            }
+            for idx, record in enumerate(records)
+        ]
+        return options, []
+
+    @app.callback(
+        Output("scenario-bid-restore-selector", "options"),
+        Output("scenario-bid-restore-selector", "value"),
+        Input("scenario-removed-bids-store", "data"),
+    )
+    def sync_scenario_restore_selector(
+        removed: Optional[List[Dict[str, object]]]
+    ):
+        if not removed:
+            return [], []
+        options = [
+            {"label": item.get("label") or f"Removed bid {idx + 1}", "value": item.get("id")}
+            for idx, item in enumerate(removed)
+            if item.get("id") is not None
+        ]
+        return options, []
+
+    @app.callback(
+        Output("scenario-records-store", "data", allow_duplicate=True),
+        Output("scenario-removed-bids-store", "data", allow_duplicate=True),
+        Output("scenario-table-feedback", "children"),
+        Input("scenario-add-bid", "n_clicks"),
+        Input("scenario-delete-bid", "n_clicks"),
+        Input("scenario-restore-bid", "n_clicks"),
+        Input("scenario-restore-baseline", "n_clicks"),
+        State("scenario-records-store", "data"),
+        State("scenario-removed-bids-store", "data"),
+        State("scenario-bid-delete-selector", "value"),
+        State("scenario-bid-restore-selector", "value"),
+        State("scenario-original-records-store", "data"),
+        State("scenario-bid-table", "selected_columns"),
+        prevent_initial_call=True,
+    )
+    def update_scenario_records(
+        add_clicks: int,
+        delete_clicks: int,
+        restore_clicks: int,
+        restore_baseline_clicks: int,
+        records: Optional[List[Dict[str, object]]],
+        removed_store: Optional[List[Dict[str, object]]],
+        delete_selector: Optional[List[int]],
+        restore_selector: Optional[List[str]],
+        original_records: Optional[List[Dict[str, object]]],
+        selected_columns: Optional[List[str]],
+    ):
+        triggered = (
+            callback_context.triggered[0]["prop_id"].split(".")[0]
+            if callback_context.triggered
+            else None
+        )
+
+        current_records = [dict(record) for record in records or []]
+        existing_removed = list(removed_store or [])
+
+        if triggered == "scenario-restore-baseline":
+            if not original_records:
+                return no_update, no_update, "No defaults available to restore."
+            restored = [dict(record) for record in original_records]
+            recompute_usd_metrics(restored)
+            return restored, [], "Restored default bids."
+
+        if triggered == "scenario-add-bid":
+            if not current_records:
+                return no_update, no_update, "Load bids before adding new ones."
+            base = current_records[0]
+            new_bid = {key: base.get(key) for key in base}
+            for identifier in BID_IDENTIFIER_COLUMNS:
+                if identifier in new_bid:
+                    new_bid[identifier] = None
+            new_bid["Bid #"] = get_next_bid_label(current_records)
+            new_bid.setdefault("offer_status", "pending")
+            prepared = prepare_bid_record(new_bid)
+            updated = sort_records_by_bid(current_records + [prepared])
+            recompute_usd_metrics(updated)
+            return updated, existing_removed, ""
+
+        if triggered == "scenario-delete-bid":
+            if not current_records:
+                return no_update, no_update, "No bids available to delete."
+            selections: set[int] = set()
+            if selected_columns:
+                selections.update(
+                    int(col_id.replace("bid_", ""))
+                    for col_id in selected_columns
+                    if col_id.startswith("bid_") and col_id.replace("bid_", "").isdigit()
+                )
+            if delete_selector:
+                selections.update(int(idx) for idx in delete_selector)
+            indices_to_remove = sorted(selections, reverse=True)
+            if not indices_to_remove:
+                return no_update, existing_removed, "Select bids to delete."
+            working = list(current_records)
+            removed_entries: List[Dict[str, object]] = []
+            for idx in indices_to_remove:
+                if 0 <= idx < len(working):
+                    removed_record = working.pop(idx)
+                    removed_entries.append(
+                        {
+                            "id": str(uuid4()),
+                            "label": f"Bid {removed_record.get('Bid #') or idx + 1}",
+                            "record": removed_record,
+                        }
+                    )
+            if not removed_entries:
+                return no_update, existing_removed, "No matching bids were removed."
+            working = sort_records_by_bid(working)
+            recompute_usd_metrics(working)
+            updated_removed = existing_removed + removed_entries
+            return working, updated_removed, ""
+
+        if triggered == "scenario-restore-bid":
+            if not restore_selector:
+                return no_update, existing_removed, "Select removed bids to restore."
+            restore_ids = set(restore_selector)
+            restored_records: List[Dict[str, object]] = []
+            remaining_removed: List[Dict[str, object]] = []
+            for item in existing_removed:
+                if item.get("id") in restore_ids:
+                    restored_records.append(prepare_bid_record(item.get("record", {})))
+                else:
+                    remaining_removed.append(item)
+            if not restored_records:
+                return no_update, existing_removed, "No matching removed bids found."
+            working = sort_records_by_bid(current_records + restored_records)
+            recompute_usd_metrics(working)
+            return working, remaining_removed, ""
+
+        return no_update, no_update, ""
 
     @app.callback(
         Output("carrier-dropdown", "options"),
@@ -1612,92 +1989,7 @@ def create_app() -> Dash:
         records: Optional[List[Dict[str, str]]],
         predictions: Optional[Dict[str, float]],
     ):
-        if not records:
-            columns = [
-                {"name": "Feature", "id": "Feature", "editable": False},
-            ]
-            return columns, [], []
-
-        columns = [
-            {"name": "Feature", "id": "Feature", "editable": False},
-        ]
-        data_rows: List[Dict[str, object]] = []
-        style_rules: List[Dict[str, object]] = []
-
-        for idx, record in enumerate(records):
-            bid_label = record.get("Bid #") or record.get("bid_number") or idx + 1
-            column_id = f"bid_{idx}"
-            columns.append({"name": f"Bid {bid_label}", "id": column_id, "editable": True})
-
-        prediction_map = predictions or {}
-
-        for feature in DISPLAY_FEATURE_ROWS:
-            row = {"Feature": feature}
-            for idx, record in enumerate(records):
-                column_id = f"bid_{idx}"
-                if feature == "Acceptance Probability":
-                    value = prediction_map.get(column_id)
-                    if value is None:
-                        row[column_id] = value
-                    else:
-                        try:
-                            row[column_id] = round(float(value), 4)
-                        except (TypeError, ValueError):
-                            row[column_id] = value
-                    continue
-                value = record.get(feature)
-                if feature == "fare_class":
-                    row[column_id] = value
-                elif feature == "item_count":
-                    numeric = safe_float(value)
-                    row[column_id] = int(numeric) if numeric is not None else value
-                elif feature == "offer_time":
-                    numeric = safe_float(value)
-                    row[column_id] = round(numeric, 4) if numeric is not None else value
-                elif feature == "usd_base_amount":
-                    numeric = safe_float(value)
-                    row[column_id] = round(numeric, 2) if numeric is not None else value
-                elif feature in USD_PERCENT_COLUMNS:
-                    numeric = safe_float(value)
-                    row[column_id] = round(numeric, 2) if numeric is not None else value
-                elif feature == USD_MAX_COLUMN:
-                    numeric = safe_float(value)
-                    row[column_id] = round(numeric, 2) if numeric is not None else value
-                elif feature.startswith("multiplier"):
-                    numeric = safe_float(value)
-                    row[column_id] = round(numeric, 4) if numeric is not None else value
-                else:
-                    numeric = safe_float(value)
-                    row[column_id] = numeric if numeric is not None else value
-            data_rows.append(row)
-
-        style_rules.append(
-            {
-                "if": {"filter_query": '{Feature} = "Acceptance Probability"'},
-                "fontWeight": "700",
-                "backgroundColor": "#f1f5f9",
-                "pointerEvents": "none",
-            }
-        )
-
-        for percent_column in USD_PERCENT_COLUMNS:
-            style_rules.append(
-                {
-                    "if": {"filter_query": f'{{Feature}} = "{percent_column}"'},
-                    "backgroundColor": "#f8fafc",
-                    "pointerEvents": "none",
-                }
-            )
-
-        style_rules.append(
-            {
-                "if": {"filter_query": f'{{Feature}} = "{USD_MAX_COLUMN}"'},
-                "backgroundColor": "#f8fafc",
-                "pointerEvents": "none",
-            }
-        )
-
-        return columns, data_rows, style_rules
+        return build_bid_table(records, predictions)
 
     @app.callback(
         Output("bid-delete-selector", "options"),
@@ -1748,45 +2040,9 @@ def create_app() -> Dash:
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
 
-        updated_records = [dict(record) for record in records]
-        feature_map = {row.get("Feature"): row for row in table_data}
-        bid_columns = [col for col in columns if col["id"] != "Feature"]
-
-        for position, column in enumerate(bid_columns):
-            column_id = column["id"]
-            if position >= len(updated_records):
-                continue
-            record = updated_records[position]
-            for feature in DISPLAY_FEATURE_ROWS:
-                if feature == "Acceptance Probability":
-                    continue
-                value_row = feature_map.get(feature)
-                if value_row is not None and column_id in value_row:
-                    value = value_row[column_id]
-                    if feature == "fare_class":
-                        record[feature] = value
-                    elif feature == "item_count":
-                        numeric = safe_float(value)
-                        record[feature] = int(numeric) if numeric is not None else value
-                    elif feature == "offer_time":
-                        numeric = safe_float(value)
-                        record[feature] = round(numeric, 4) if numeric is not None else value
-                    elif feature == "usd_base_amount":
-                        numeric = safe_float(value)
-                        record[feature] = numeric if numeric is not None else value
-                    elif feature in USD_PERCENT_COLUMNS:
-                        # recomputed from usd_base_amount after loop
-                        continue
-                    elif feature == USD_MAX_COLUMN:
-                        continue
-                    elif feature.startswith("multiplier"):
-                        numeric = safe_float(value)
-                        record[feature] = round(numeric, 4) if numeric is not None else value
-                    else:
-                        numeric = safe_float(value)
-                        record[feature] = numeric if numeric is not None else value
-            normalize_offer_time(record)
-        recompute_usd_metrics(updated_records)
+        updated_records = apply_table_edits(records, table_data, columns)
+        if updated_records is None:
+            return no_update
         return updated_records
 
     @app.callback(
