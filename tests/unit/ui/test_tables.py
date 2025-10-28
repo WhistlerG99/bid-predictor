@@ -13,6 +13,7 @@ def test_build_bid_table_formats_predictions():
             "multiplier_loyalty": 1.0,
             "multiplier_success_history": 1.0,
             "multiplier_payment_type": 1.0,
+            "offer_status": "pending",
         }
     ]
     predictions = {"bid_0": 0.87654}
@@ -38,6 +39,7 @@ def test_apply_table_edits_updates_numeric_fields():
             "multiplier_loyalty": 1.0,
             "multiplier_success_history": 1.0,
             "multiplier_payment_type": 1.0,
+            "offer_status": "pending",
         },
         {
             "Bid #": 2,
@@ -49,6 +51,7 @@ def test_apply_table_edits_updates_numeric_fields():
             "multiplier_loyalty": 1.0,
             "multiplier_success_history": 1.0,
             "multiplier_payment_type": 1.0,
+            "offer_status": "pending",
         },
     ]
 
@@ -71,3 +74,47 @@ def test_apply_table_edits_updates_numeric_fields():
     assert updated[0]["usd_base_amount"] == 150.0
     assert updated[1]["fare_class"] == "R"
     assert updated[1]["offer_time"] == 2.5
+
+
+def test_build_bid_table_disables_offer_status_editing():
+    records = [
+        {
+            "Bid #": 1,
+            "offer_status": "pending",
+        }
+    ]
+
+    columns, _, styles = build_bid_table(records, {})
+
+    assert any(column.get("editable", True) for column in columns if column["id"] != "Feature")
+    offer_status_rule = next(
+        rule
+        for rule in styles
+        if rule.get("if", {}).get("filter_query") == '{Feature} = "offer_status"'
+    )
+    assert offer_status_rule["pointerEvents"] == "none"
+
+
+def test_apply_table_edits_ignores_offer_status_changes():
+    records = [
+        {
+            "Bid #": 1,
+            "item_count": 2,
+            "offer_status": "pending",
+        }
+    ]
+
+    table_data = [
+        {"Feature": "item_count", "bid_0": 4},
+        {"Feature": "offer_status", "bid_0": "accepted"},
+    ]
+    columns = [
+        {"id": "Feature", "name": "Feature"},
+        {"id": "bid_0", "name": "Bid 1"},
+    ]
+
+    updated = apply_table_edits(records, table_data, columns)
+
+    assert updated is not None
+    assert updated[0]["item_count"] == 4
+    assert updated[0]["offer_status"] == "pending"

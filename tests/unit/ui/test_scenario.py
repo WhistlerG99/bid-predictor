@@ -1,6 +1,14 @@
 import pandas as pd
+import pytest
 
-from bid_predictor.ui.scenario import extract_baseline_snapshot, records_to_dataframe
+from bid_predictor.ui.scenario import (
+    TIME_TO_DEPARTURE_SCENARIO_KEY,
+    ScenarioFeature,
+    build_adjustment_grid,
+    extract_baseline_snapshot,
+    extract_global_baseline_values,
+    records_to_dataframe,
+)
 
 
 def test_records_to_dataframe_converts_timestamp_columns():
@@ -74,3 +82,105 @@ def test_extract_baseline_snapshot_merges_snapshots():
     # Latest snapshot for bid A should be retained (value 120)
     assert snapshot_df.loc[snapshot_df["Bid #"] == 1, "usd_base_amount"].iloc[0] == 120.0
     assert label == "across 2 snapshots"
+
+
+def test_extract_global_baseline_values_returns_shared_features():
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "seats_available": 5,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 08:00:00"),
+            },
+            {
+                "Bid #": 2,
+                "seats_available": 5,
+                "departure_timestamp": pd.Timestamp("2023-09-01 15:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 11:00:00"),
+            },
+        ]
+    )
+
+    baselines = extract_global_baseline_values(df)
+
+    assert baselines["seats_available"] == 5.0
+    assert baselines[TIME_TO_DEPARTURE_SCENARIO_KEY] == pytest.approx(4.0)
+
+
+def test_build_adjustment_grid_applies_global_overrides():
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "seats_available": 9,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 08:00:00"),
+            },
+            {
+                "Bid #": 2,
+                "seats_available": 9,
+                "departure_timestamp": pd.Timestamp("2023-09-01 15:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 11:00:00"),
+            },
+        ]
+    )
+
+    feature = ScenarioFeature(
+        key="seats_available",
+        scope="global",
+        label="Seats available",
+        is_integer=True,
+    )
+
+    overrides = {TIME_TO_DEPARTURE_SCENARIO_KEY: 6.0}
+    grid = build_adjustment_grid(df, feature, start=8, stop=10, count=3, global_overrides=overrides)
+
+    assert sorted(grid["scenario_feature_value"].unique()) == [8, 9, 10]
+    for _, row in grid.iterrows():
+        expected_current = row["departure_timestamp"] - pd.Timedelta(hours=6)
+        assert row["current_timestamp"] == expected_current
+
+
+def test_build_adjustment_grid_applies_seat_overrides_for_time_feature():
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "seats_available": 9,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 08:00:00"),
+            },
+            {
+                "Bid #": 2,
+                "seats_available": 7,
+                "departure_timestamp": pd.Timestamp("2023-09-01 14:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 10:00:00"),
+            },
+        ]
+    )
+
+    feature = ScenarioFeature(
+        key=TIME_TO_DEPARTURE_SCENARIO_KEY,
+        scope="global",
+        label="Time to departure (hours)",
+        is_integer=False,
+        kind="time_to_departure",
+    )
+
+    grid = build_adjustment_grid(
+        df,
+        feature,
+        start=4.0,
+        stop=6.0,
+        count=3,
+        global_overrides={"seats_available": 12},
+    )
+
+    assert grid["seats_available"].unique().tolist() == [12.0]
+    unique_steps = sorted(grid["scenario_feature_value"].unique())
+    assert unique_steps == [4.0, 5.0, 6.0]
+    for _, row in grid.iterrows():
+        hours = row["scenario_feature_value"]
+        expected_current = row["departure_timestamp"] - pd.Timedelta(hours=hours)
+        assert row["current_timestamp"] == expected_current

@@ -31,6 +31,7 @@ from bid_predictor.ui import (
     build_upgrade_options,
     compute_default_range,
     compute_bid_label_map,
+    extract_global_baseline_values,
     extract_baseline_snapshot,
     get_next_bid_label,
     load_dataset_cached,
@@ -41,6 +42,7 @@ from bid_predictor.ui import (
     predict,
     recompute_usd_metrics,
     select_feature,
+    TIME_TO_DEPARTURE_SCENARIO_KEY,
     records_to_dataframe,
     safe_float,
     sort_records_by_bid,
@@ -584,6 +586,67 @@ def create_app() -> Dash:
                                                 placeholder="Select a feature",
                                                 style={"width": "100%", "marginBottom": "0.75rem"},
                                             ),
+                                            html.Div(
+                                                id="scenario-base-value",
+                                                style={
+                                                    "margin": "0 0 0.75rem 0",
+                                                    "color": "#16324f",
+                                                },
+                                            ),
+                                            html.Div(
+                                                [
+                                                    html.Div(
+                                                        [
+                                                            html.Label(
+                                                                "Baseline seats available",
+                                                                style={"fontWeight": "600"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="scenario-baseline-seats",
+                                                                type="number",
+                                                                min=0,
+                                                                step=1,
+                                                                value=None,
+                                                                style={
+                                                                    "width": "100%",
+                                                                    "marginTop": "0.35rem",
+                                                                    "borderRadius": "6px",
+                                                                    "border": "1px solid #cbd5e1",
+                                                                    "padding": "0.4rem",
+                                                                },
+                                                            ),
+                                                        ],
+                                                        id="scenario-baseline-seats-container",
+                                                        style={"display": "none"},
+                                                    ),
+                                                    html.Div(
+                                                        [
+                                                            html.Label(
+                                                                "Baseline time to departure (hours)",
+                                                                style={"fontWeight": "600"},
+                                                            ),
+                                                            dcc.Input(
+                                                                id="scenario-baseline-time-to-departure",
+                                                                type="number",
+                                                                min=0,
+                                                                step=0.5,
+                                                                value=None,
+                                                                style={
+                                                                    "width": "100%",
+                                                                    "marginTop": "0.35rem",
+                                                                    "borderRadius": "6px",
+                                                                    "border": "1px solid #cbd5e1",
+                                                                    "padding": "0.4rem",
+                                                                },
+                                                            ),
+                                                        ],
+                                                        id="scenario-baseline-time-container",
+                                                        style={"display": "none"},
+                                                    ),
+                                                ],
+                                                id="scenario-baseline-overrides",
+                                                style={"marginBottom": "0.75rem"},
+                                            ),
                                             html.Label("Feature range", style={"fontWeight": "600"}),
                                             html.Div(
                                                 [
@@ -650,10 +713,6 @@ def create_app() -> Dash:
                                                         },
                                                     ),
                                                 ],
-                                            ),
-                                            html.Div(
-                                                id="scenario-base-value",
-                                                style={"marginTop": "0.75rem", "color": "#16324f"},
                                             ),
                                             html.Div(
                                                 id="scenario-control-warning",
@@ -1064,6 +1123,56 @@ def create_app() -> Dash:
         return options, value
 
     @app.callback(
+        Output("scenario-baseline-seats", "value"),
+        Output("scenario-baseline-time-to-departure", "value"),
+        Output("scenario-baseline-seats-container", "style"),
+        Output("scenario-baseline-time-container", "style"),
+        Input("scenario-records-store", "data"),
+        Input("scenario-feature-dropdown", "value"),
+        State("scenario-baseline-seats", "value"),
+        State("scenario-baseline-time-to-departure", "value"),
+    )
+    def update_scenario_baseline_controls(
+        baseline_records: Optional[List[Dict[str, object]]],
+        feature_value: Optional[str],
+        seats_state: Optional[float],
+        time_state: Optional[float],
+    ):
+        baseline_df = records_to_dataframe(baseline_records)
+        defaults = extract_global_baseline_values(baseline_df)
+        seats_default = defaults.get("seats_available")
+        time_default = defaults.get(TIME_TO_DEPARTURE_SCENARIO_KEY)
+
+        triggered_prop = callback_context.triggered[0]["prop_id"] if callback_context.triggered else ""
+        dataset_triggered = triggered_prop.startswith("scenario-records-store")
+
+        seats_value = seats_state
+        time_value = time_state
+        if dataset_triggered:
+            seats_value = seats_default
+            time_value = time_default
+        else:
+            if seats_value is None and seats_default is not None:
+                seats_value = seats_default
+            if time_value is None and time_default is not None:
+                time_value = time_default
+
+        decoded_feature = ScenarioFeature.decode(feature_value)
+        seats_style: Dict[str, object] = {"display": "none"}
+        time_style: Dict[str, object] = {"display": "none"}
+        if decoded_feature is not None:
+            visible_style = {"display": "block", "marginBottom": "0.75rem"}
+            if decoded_feature.key == "seats_available":
+                time_style = visible_style
+            elif decoded_feature.kind == "time_to_departure":
+                seats_style = visible_style
+            else:
+                seats_style = visible_style
+                time_style = visible_style
+
+        return seats_value, time_value, seats_style, time_style
+
+    @app.callback(
         Output("scenario-range-min", "value"),
         Output("scenario-range-max", "value"),
         Output("scenario-range-min", "step"),
@@ -1130,6 +1239,8 @@ def create_app() -> Dash:
         Input("scenario-range-max", "value"),
         Input("scenario-step-count", "value"),
         Input("model-uri-store", "data"),
+        Input("scenario-baseline-seats", "value"),
+        Input("scenario-baseline-time-to-departure", "value"),
     )
     def render_scenario_graph(
         baseline_records: Optional[List[Dict[str, object]]],
@@ -1138,10 +1249,25 @@ def create_app() -> Dash:
         range_max: Optional[float],
         step_count: Optional[int],
         model_uri: Optional[str],
+        baseline_seats: Optional[float],
+        baseline_time_to_departure: Optional[float],
     ):
         baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df)
         feature = select_feature(features, feature_value)
+
+        overrides: Dict[str, float] = {}
+        seats_override = safe_float(baseline_seats)
+        if seats_override is not None:
+            overrides["seats_available"] = float(seats_override)
+        time_override = safe_float(baseline_time_to_departure)
+        if time_override is not None:
+            overrides[TIME_TO_DEPARTURE_SCENARIO_KEY] = float(time_override)
+
+        if feature is not None:
+            if feature.kind == "time_to_departure":
+                overrides.pop(TIME_TO_DEPARTURE_SCENARIO_KEY, None)
+            overrides.pop(feature.key, None)
 
         if baseline_df.empty or feature is None:
             placeholder = go.Figure()
@@ -1172,7 +1298,14 @@ def create_app() -> Dash:
         if count < 2:
             count = 2
 
-        scenario_df = build_adjustment_grid(baseline_df, feature, start, stop, count)
+        scenario_df = build_adjustment_grid(
+            baseline_df,
+            feature,
+            start,
+            stop,
+            count,
+            global_overrides=overrides if overrides else None,
+        )
         if scenario_df.empty:
             empty_fig = go.Figure()
             empty_fig.update_layout(

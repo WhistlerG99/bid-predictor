@@ -29,6 +29,7 @@ from .scenario import (
     ScenarioRange,
     build_adjustment_grid,
     build_carrier_options,
+    extract_global_baseline_values,
     build_feature_options,
     build_flight_number_options,
     build_scenario_line_chart,
@@ -38,6 +39,7 @@ from .scenario import (
     extract_baseline_snapshot,
     records_to_dataframe,
     select_feature,
+    TIME_TO_DEPARTURE_SCENARIO_KEY,
 )
 
 __all__ = [
@@ -62,6 +64,7 @@ __all__ = [
     "ScenarioRange",
     "build_adjustment_grid",
     "build_carrier_options",
+    "extract_global_baseline_values",
     "build_feature_options",
     "build_flight_number_options",
     "build_scenario_line_chart",
@@ -72,6 +75,7 @@ __all__ = [
     "extract_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
+    "TIME_TO_DEPARTURE_SCENARIO_KEY",
     "sort_records_by_bid",
     "USD_MAX_COLUMN",
     "USD_PERCENT_COLUMNS",
