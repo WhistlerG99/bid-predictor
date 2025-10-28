@@ -585,22 +585,44 @@ def create_app() -> Dash:
                                                 style={"width": "100%", "marginBottom": "0.75rem"},
                                             ),
                                             html.Label("Feature range", style={"fontWeight": "600"}),
-                                            dcc.RangeSlider(
-                                                id="scenario-range-slider",
-                                                min=0,
-                                                max=1,
-                                                value=[0, 1],
-                                                step=0.1,
-                                                allowCross=False,
-                                                tooltip={"placement": "top"},
-                                                marks=None,
-                                                disabled=True,
-                                            ),
                                             html.Div(
-                                                id="scenario-range-values",
+                                                [
+                                                    dcc.Input(
+                                                        id="scenario-range-min",
+                                                        type="number",
+                                                        value=None,
+                                                        debounce=False,
+                                                        style={
+                                                            "flex": "1",
+                                                            "minWidth": "0",
+                                                            "padding": "0.4rem",
+                                                            "borderRadius": "6px",
+                                                            "border": "1px solid #cbd5e1",
+                                                        },
+                                                    ),
+                                                    dcc.Input(
+                                                        id="scenario-range-max",
+                                                        type="number",
+                                                        value=None,
+                                                        debounce=False,
+                                                        style={
+                                                            "flex": "1",
+                                                            "minWidth": "0",
+                                                            "padding": "0.4rem",
+                                                            "borderRadius": "6px",
+                                                            "border": "1px solid #cbd5e1",
+                                                        },
+                                                    ),
+                                                ],
                                                 style={
                                                     "display": "flex",
-                                                    "justifyContent": "space-between",
+                                                    "gap": "0.75rem",
+                                                    "alignItems": "center",
+                                                },
+                                            ),
+                                            html.Div(
+                                                id="scenario-range-feedback",
+                                                style={
                                                     "fontSize": "0.85rem",
                                                     "color": "#16324f",
                                                     "marginTop": "0.35rem",
@@ -1042,18 +1064,19 @@ def create_app() -> Dash:
         return options, value
 
     @app.callback(
-        Output("scenario-range-slider", "min"),
-        Output("scenario-range-slider", "max"),
-        Output("scenario-range-slider", "value"),
-        Output("scenario-range-slider", "step"),
-        Output("scenario-range-slider", "disabled"),
+        Output("scenario-range-min", "value"),
+        Output("scenario-range-max", "value"),
+        Output("scenario-range-min", "step"),
+        Output("scenario-range-max", "step"),
+        Output("scenario-range-min", "disabled"),
+        Output("scenario-range-max", "disabled"),
         Output("scenario-step-count", "value"),
         Output("scenario-base-value", "children"),
-        Output("scenario-range-values", "children"),
+        Output("scenario-range-feedback", "children"),
         Input("scenario-records-store", "data"),
         Input("scenario-feature-dropdown", "value"),
     )
-    def configure_scenario_slider(
+    def configure_scenario_range(
         baseline_records: Optional[List[Dict[str, object]]],
         feature_value: Optional[str],
     ):
@@ -1061,43 +1084,41 @@ def create_app() -> Dash:
         features = build_feature_options(baseline_df)
         feature = select_feature(features, feature_value)
         if baseline_df.empty or feature is None:
-            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, "", []
+            return None, None, 1.0, 1.0, True, True, 25, "", ""
 
         scenario_range: Optional[ScenarioRange] = compute_default_range(baseline_df, feature)
         if scenario_range is None:
-            return 0.0, 1.0, [0.0, 1.0], 1.0, True, 25, "Feature is not numeric.", []
+            return None, None, 1.0, 1.0, True, True, 25, "Feature is not numeric.", ""
 
-        slider_min = float(scenario_range.min_value)
-        slider_max = float(scenario_range.max_value)
-        if slider_min == slider_max:
-            slider_max = slider_min + 1.0
-        slider_step = float(scenario_range.step)
-        slider_step = max(slider_step, 1.0 if feature.is_integer else 0.01)
-        slider_value = [slider_min, slider_max]
+        range_min = float(scenario_range.min_value)
+        range_max = float(scenario_range.max_value)
+        if range_min == range_max:
+            range_max = range_min + (1.0 if feature.is_integer else 0.01)
+        step = float(scenario_range.step)
+        step = max(step, 1.0 if feature.is_integer else 0.01)
         step_count = max(int(scenario_range.count), 2)
         base_value = scenario_range.base_value
         if feature.is_integer:
+            range_min_value = int(round(range_min))
+            range_max_value = int(round(range_max))
             baseline_text = f"Baseline value: {int(round(base_value))}"
-            lower_display = f"{int(round(slider_min))}"
-            upper_display = f"{int(round(slider_max))}"
+            helper_text = f"Range: {range_min_value} – {range_max_value}"
         else:
+            range_min_value = float(range_min)
+            range_max_value = float(range_max)
             baseline_text = f"Baseline value: {base_value:.4f}"
-            lower_display = f"{slider_min:.4f}"
-            upper_display = f"{slider_max:.4f}"
-        range_children = [
-            html.Span(lower_display),
-            html.Span(upper_display),
-        ]
+            helper_text = f"Range: {range_min_value:.4f} – {range_max_value:.4f}"
         base_text = html.Div(baseline_text)
         return (
-            slider_min,
-            slider_max,
-            slider_value,
-            slider_step,
+            range_min_value,
+            range_max_value,
+            step,
+            step,
+            False,
             False,
             step_count,
             base_text,
-            range_children,
+            helper_text,
         )
 
     @app.callback(
@@ -1105,14 +1126,16 @@ def create_app() -> Dash:
         Output("scenario-warning", "children"),
         Input("scenario-records-store", "data"),
         Input("scenario-feature-dropdown", "value"),
-        Input("scenario-range-slider", "value"),
+        Input("scenario-range-min", "value"),
+        Input("scenario-range-max", "value"),
         Input("scenario-step-count", "value"),
         Input("model-uri-store", "data"),
     )
     def render_scenario_graph(
         baseline_records: Optional[List[Dict[str, object]]],
         feature_value: Optional[str],
-        slider_range: Optional[List[float]],
+        range_min: Optional[float],
+        range_max: Optional[float],
         step_count: Optional[int],
         model_uri: Optional[str],
     ):
@@ -1131,16 +1154,17 @@ def create_app() -> Dash:
             return placeholder, "Select a flight, upgrade, and feature to explore."
 
         default_range = compute_default_range(baseline_df, feature)
-        if not slider_range or len(slider_range) != 2:
+        parsed_min = safe_float(range_min)
+        parsed_max = safe_float(range_max)
+        if parsed_min is None or parsed_max is None:
             if default_range is not None:
-                slider_range = [
-                    float(default_range.min_value),
-                    float(default_range.max_value),
-                ]
+                parsed_min = float(default_range.min_value)
+                parsed_max = float(default_range.max_value)
             else:
-                slider_range = [0.0, 1.0]
+                parsed_min, parsed_max = 0.0, 1.0
 
-        start, stop = float(slider_range[0]), float(slider_range[1])
+        start = float(parsed_min)
+        stop = float(parsed_max)
         if start > stop:
             start, stop = stop, start
 

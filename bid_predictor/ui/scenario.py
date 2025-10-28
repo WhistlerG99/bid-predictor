@@ -4,16 +4,20 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import yaml
 
 from .formatting import apply_bid_labels, compute_bid_label_map
 from .plotting import BAR_COLOR_SEQUENCE
 
 _TIME_TO_DEPARTURE_KEY = "__time_to_departure_hours__"
+_RANGE_DEFAULTS_PATH = Path(__file__).with_name("feature_range_defaults.yaml")
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,69 @@ class ScenarioRange:
     step: float
     count: int
     base_value: float
+
+
+def _coerce_range_value(value: object) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number):
+        return None
+    return float(number)
+
+
+@lru_cache(maxsize=1)
+def _load_range_defaults() -> Dict[str, Tuple[float, float]]:
+    if not _RANGE_DEFAULTS_PATH.exists():
+        return {}
+    try:
+        with _RANGE_DEFAULTS_PATH.open("r", encoding="utf-8") as handle:
+            payload = yaml.safe_load(handle) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    feature_section = payload.get("feature_ranges")
+    if isinstance(feature_section, dict):
+        raw_ranges = feature_section
+    else:
+        raw_ranges = payload
+
+    ranges: Dict[str, Tuple[float, float]] = {}
+    for key, values in raw_ranges.items():
+        if not isinstance(values, dict):
+            continue
+        min_value = _coerce_range_value(values.get("min"))
+        max_value = _coerce_range_value(values.get("max"))
+        if min_value is None or max_value is None:
+            continue
+        if min_value > max_value:
+            min_value, max_value = max_value, min_value
+        ranges[str(key)] = (float(min_value), float(max_value))
+    return ranges
+
+
+def _lookup_default_range(feature: ScenarioFeature) -> Optional[Tuple[float, float]]:
+    defaults = _load_range_defaults()
+    candidate_keys = [feature.key]
+    if feature.kind == "time_to_departure":
+        candidate_keys.extend(
+            [
+                "time_to_departure",
+                "time_to_departure_hours",
+                "time_to_departure (hours)",
+                _TIME_TO_DEPARTURE_KEY,
+            ]
+        )
+    for key in candidate_keys:
+        if key in defaults:
+            return defaults[key]
+    return None
 
 
 def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
@@ -362,17 +429,29 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
         base_value = float(series.iloc[0])
         min_value = float(series.min())
         max_value = float(series.max())
-        span = max_value - min_value
-        if math.isclose(min_value, max_value):
-            delta = max(abs(base_value) * 0.35, 6.0)
-            min_value = max(base_value - delta, 0.0)
-            max_value = base_value + delta
+
+        override = _lookup_default_range(feature)
+        if override is not None:
+            override_min, override_max = override
+            min_value = min(override_min, base_value)
+            max_value = max(override_max, base_value)
         else:
-            margin = max(span * 0.25, 6.0)
-            min_value = max(min_value - margin, 0.0)
-            max_value = max_value + margin
-        step = max((max_value - min_value) / 30.0, 0.5)
-        count = max(int(round((max_value - min_value) / max(step, 1e-6))) + 1, 20)
+            span = max_value - min_value
+            if math.isclose(min_value, max_value):
+                delta = max(abs(base_value) * 0.35, 6.0)
+                min_value = max(base_value - delta, 0.0)
+                max_value = base_value + delta
+            else:
+                margin = max(span * 0.25, 6.0)
+                min_value = max(min_value - margin, 0.0)
+                max_value = max_value + margin
+
+        span = max(max_value - min_value, 0.0)
+        if math.isclose(span, 0.0):
+            span = 1.0
+            max_value = min_value + span
+        step = max(span / 30.0, 0.5)
+        count = max(int(round(span / max(step, 1e-6))) + 1, 20)
         return ScenarioRange(min_value=min_value, max_value=max_value, step=step, count=count, base_value=base_value)
 
     column = feature.key
@@ -392,30 +471,42 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
     base_value = float(numeric.iloc[0])
     min_value = float(numeric.min())
     max_value = float(numeric.max())
+    override = _lookup_default_range(feature)
+
     if feature.is_integer:
-        span = max_value - min_value
-        margin = max(1.0, math.ceil(span * 0.3))
-        if math.isclose(span, 0.0):
-            margin = max(margin, 2.0)
-        min_value = math.floor(min_value - margin)
-        max_value = math.ceil(max_value + margin)
-        if column in {"item_count", "seats_available", "available_inventory"}:
-            min_value = max(min_value, 0)
+        if override is not None:
+            override_min, override_max = override
+            min_value = min(override_min, base_value)
+            max_value = max(override_max, base_value)
+        else:
+            span = max_value - min_value
+            margin = max(1.0, math.ceil(span * 0.3))
+            if math.isclose(span, 0.0):
+                margin = max(margin, 2.0)
+            min_value = math.floor(min_value - margin)
+            max_value = math.ceil(max_value + margin)
+            if column in {"item_count", "seats_available", "available_inventory"}:
+                min_value = max(min_value, 0)
         if min_value == max_value:
             max_value = min_value + 1
         step = 1.0
         count = int(max_value - min_value) + 1
         count = max(min(count, 60), 8)
     else:
-        span = max_value - min_value
-        if math.isclose(span, 0.0):
-            margin = max(abs(base_value) * 0.35, 1.0)
+        if override is not None:
+            override_min, override_max = override
+            min_value = min(override_min, base_value)
+            max_value = max(override_max, base_value)
         else:
-            margin = max(span * 0.25, abs(base_value) * 0.1)
-        min_value = min_value - margin
-        max_value = max_value + margin
-        if column in {"usd_base_amount", "usd_total_amount"}:
-            min_value = max(min_value, 0.0)
+            span = max_value - min_value
+            if math.isclose(span, 0.0):
+                margin = max(abs(base_value) * 0.35, 1.0)
+            else:
+                margin = max(span * 0.25, abs(base_value) * 0.1)
+            min_value = min_value - margin
+            max_value = max_value + margin
+            if column in {"usd_base_amount", "usd_total_amount"}:
+                min_value = max(min_value, 0.0)
         if math.isclose(min_value, max_value):
             max_value = min_value + 1.0
         span = max_value - min_value

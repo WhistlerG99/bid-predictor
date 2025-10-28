@@ -16,6 +16,7 @@ DISPLAY_FEATURE_ROWS = [
     "usd_base_amount_50%",
     "usd_base_amount_75%",
     "usd_base_amount_max",
+    "offer_status",
     "Acceptance Probability",
 ]
 
