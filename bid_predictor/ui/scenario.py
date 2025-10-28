@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ from .formatting import apply_bid_labels, compute_bid_label_map
 from .plotting import BAR_COLOR_SEQUENCE
 
 _TIME_TO_DEPARTURE_KEY = "__time_to_departure_hours__"
+TIME_TO_DEPARTURE_SCENARIO_KEY = _TIME_TO_DEPARTURE_KEY
 _RANGE_DEFAULTS_PATH = Path(__file__).with_name("feature_range_defaults.yaml")
 
 
@@ -165,6 +166,35 @@ def _lookup_default_range(feature: ScenarioFeature) -> Optional[RangeOverride]:
 
 def _lookup_range_override_for_key(key: str) -> Optional[RangeOverride]:
     return _load_range_defaults().get(key)
+
+
+def extract_global_baseline_values(df: pd.DataFrame) -> Dict[str, Optional[float]]:
+    """Return baseline values for global scenario controls.
+
+    Only ``seats_available`` and the derived ``time to departure`` feature are
+    considered at the moment because they influence every bid in the
+    sensitivity analysis.  The returned dictionary is keyed by the column name
+    used inside :func:`build_adjustment_grid` when applying overrides.
+    """
+
+    baselines: Dict[str, Optional[float]] = {}
+    if df.empty:
+        return baselines
+
+    if "seats_available" in df.columns:
+        seats_series = _coerce_numeric(df["seats_available"])
+        if seats_series is not None:
+            seats_series = seats_series.dropna()
+            if not seats_series.empty:
+                baselines["seats_available"] = float(seats_series.iloc[0])
+
+    time_to_departure = _compute_time_to_departure_hours(df)
+    if time_to_departure is not None:
+        time_to_departure = time_to_departure.dropna()
+        if not time_to_departure.empty:
+            baselines[TIME_TO_DEPARTURE_SCENARIO_KEY] = float(time_to_departure.iloc[0])
+
+    return baselines
 
 
 def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
@@ -572,6 +602,8 @@ def build_adjustment_grid(
     start: float,
     stop: float,
     count: int,
+    *,
+    global_overrides: Optional[Mapping[str, object]] = None,
 ) -> pd.DataFrame:
     if df.empty:
         return df
@@ -579,8 +611,28 @@ def build_adjustment_grid(
     values = _linspace_inclusive(start, stop, count, integer=feature.is_integer)
     frames: List[pd.DataFrame] = []
 
+    overrides: Dict[str, float] = {}
+    if global_overrides:
+        for key, override in global_overrides.items():
+            if override in (None, ""):
+                continue
+            coerced = _coerce_range_value(override)
+            if coerced is None:
+                continue
+            overrides[str(key)] = float(coerced)
+
     for step_index, value in enumerate(values):
         scenario_df = df.copy(deep=True)
+        if overrides:
+            for override_key, override_value in overrides.items():
+                if feature.kind == "time_to_departure" and override_key == TIME_TO_DEPARTURE_SCENARIO_KEY:
+                    continue
+                if feature.key == override_key:
+                    continue
+                if override_key == TIME_TO_DEPARTURE_SCENARIO_KEY:
+                    _apply_time_to_departure(scenario_df, float(override_value))
+                else:
+                    scenario_df[override_key] = float(override_value)
         if feature.kind == "time_to_departure":
             _apply_time_to_departure(scenario_df, float(value))
         elif feature.scope == "global":
@@ -676,6 +728,7 @@ def records_to_dataframe(records: Optional[Sequence[Dict[str, object]]]) -> pd.D
 __all__ = [
     "ScenarioFeature",
     "ScenarioRange",
+    "TIME_TO_DEPARTURE_SCENARIO_KEY",
     "build_adjustment_grid",
     "build_carrier_options",
     "build_feature_options",
@@ -684,6 +737,7 @@ __all__ = [
     "build_travel_date_options",
     "build_upgrade_options",
     "compute_default_range",
+    "extract_global_baseline_values",
     "extract_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
