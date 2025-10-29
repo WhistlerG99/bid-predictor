@@ -17,6 +17,9 @@ _FEATURE_FIELDS = {
     "categorical": False,
     "include_in_model": True,
     "derived": False,
+    "flight_feature": False,
+    "bid_feature": False,
+    "comp_feature": False,
     "impute_value": None,
     "impute_median": False,
     "outlier": None,
@@ -142,10 +145,31 @@ def load_feature_config(config_path=None):
         and (values["bins"] is not None)
     ]
 
+    flight_features = [
+        name
+        for name, values in feature_entries
+        if values["include_in_model"] and values["flight_feature"]
+    ]
+
+    bid_features = [
+        name
+        for name, values in feature_entries
+        if values["include_in_model"] and values["bid_feature"]
+    ]
+
+    comp_features = [
+        name
+        for name, values in feature_entries
+        if values["include_in_model"] and values["comp_feature"]
+    ]
+
     return {
         "pre_features": pre_features,
         "features": selected_features,
         "cat_features": categorical_features,
+        "flight_features": flight_features,
+        "bid_features": bid_features,
+        "comp_features": comp_features,
         "feature_metadata": metadata,
         "impute_value": impute_value,
         "impute_median": impute_median,

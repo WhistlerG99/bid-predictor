@@ -1,21 +1,27 @@
 features:
   carrier_code:
     categorical: true
+    flight_feature: true
     include_in_model: true
   flight_number:
     categorical: true
+    flight_feature: true
     include_in_model: false
   flight_code:
     derived: true
     categorical: true
+    flight_feature: true
     include_in_model: true
 
 
   travel_date:
+    flight_feature: true
     include_in_model: true
   departure_timestamp:
+    flight_feature: true
     include_in_model: false
   current_timestamp:
+    flight_feature: true
     include_in_model: false
   days_before_departure:
     categorical: true
@@ -24,8 +30,9 @@ features:
       max: 5
       nsteps: 76
       # nsteps: 121
-    include_in_model: true
+    flight_feature: true
     derived: true
+    include_in_model: true
 
   seats_available:
     categorical: true
@@ -34,12 +41,14 @@ features:
       min: -1
       max: 30
       interval: 1
+    flight_feature: true
     include_in_model: true
 
   item_count:
     categorical: true
     outlier:
       max: 5
+    bid_feature: true
     include_in_model: true
   usd_base_amount:
     categorical: true
@@ -48,9 +57,11 @@ features:
       max: 1700
       interval: 10
       # interval: 100
+    bid_feature: true
     include_in_model: true
   fare_class:
     categorical: true
+    bid_feature: true
     include_in_model: true
   offer_time:
     categorical: true
@@ -58,21 +69,31 @@ features:
       min: 0
       max: 30
       interval: 1  
+    bid_feature: true
     include_in_model: true
   multiplier_fare_class:
     impute_value: 1.0
+    bid_feature: true
     include_in_model: true
   multiplier_loyalty:
     impute_value: 1.0
+    bid_feature: true
     include_in_model: true
   multiplier_success_history:
     impute_value: 1.0
+    bid_feature: true
     include_in_model: true
   multiplier_payment_type:
     impute_value: 1.0
+    bid_feature: true
     include_in_model: true
+  from_cabin:
+    categorical: true
+    bid_feature: true
+    include_in_model: false
   upgrade_type:
     categorical: true
+    bid_feature: true
     include_in_model: true
 
   snapshot_num:
@@ -80,20 +101,25 @@ features:
 
   usd_base_amount_25%:
     derived: true
+    comp_feature: true
     include_in_model: true
   usd_base_amount_50%:
     derived: true
+    comp_feature: true
     include_in_model: true
   usd_base_amount_75%:
     derived: true
+    comp_feature: true
     include_in_model: true
   usd_base_amount_max:
     derived: true
+    comp_feature: true
     include_in_model: true
   num_offers:
     derived: true
     categorical: true
     outlier:
       max: 16
+    comp_feature: true
     include_in_model: true
 
