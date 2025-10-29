@@ -1,9 +1,12 @@
+import copy
+from typing import Any, ClassVar, Mapping, MutableMapping
+
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.utils.validation import check_is_fitted
 from sklearn.pipeline import Pipeline
+from sklearn.utils.validation import check_is_fitted
 from .transform import (
     ArbitraryOutlierCapperCustom,
     ArbitraryDiscretiserCustom,
@@ -19,6 +22,46 @@ from .transform import (
 from .tracking import MlflowCallback
 from .utils import detect_execution_environment, get_output_dir
 from .feature_config import _DEFAULT_FEATURE_CONFIG
+
+
+class FeatureConfiguredPipeline(Pipeline):
+    """Pipeline that persists feature configuration metadata."""
+
+    feature_config: ClassVar[Mapping[str, Any] | None] = None
+
+    def __init__(
+        self,
+        steps,
+        *,
+        feature_config: Mapping[str, Any] | None = None,
+        transform_input=None,
+        **kwargs,
+    ) -> None:
+        self.feature_config: Mapping[str, Any] | None = feature_config
+        self.feature_config_: Mapping[str, Any] | None = None
+        super().__init__(steps, transform_input=transform_input, **kwargs)
+        if feature_config is not None:
+            self._assign_feature_config(feature_config)
+
+    def _assign_feature_config(self, feature_config: Mapping[str, Any]) -> None:
+        cloned = copy.deepcopy(feature_config)
+        type(self).feature_config = cloned
+        self.feature_config_ = cloned
+
+    def __getstate__(self) -> MutableMapping[str, Any]:
+        state = super().__getstate__()
+        state["_feature_config"] = self.feature_config_
+        state["feature_config"] = self.feature_config
+        return state
+
+    def __setstate__(self, state: MutableMapping[str, Any]) -> None:
+        feature_config = state.pop("_feature_config", None)
+        original_config = state.pop("feature_config", None)
+        super().__setstate__(state)
+        self.feature_config = original_config
+        self.feature_config_ = feature_config
+        if feature_config is not None:
+            type(self).feature_config = feature_config
 
 
 # ---- 1) Minimal routing-aware wrapper
@@ -216,8 +259,9 @@ def build_pipeline(feature_config=None, **kw):
     ).set_fit_request(eval_set=True)
     steps.append(("clf", clf))
 
-    pipeline = Pipeline(
+    pipeline = FeatureConfiguredPipeline(
         steps=steps,
         transform_input=["eval_set"],
+        feature_config=feature_config,
     )
     return pipeline

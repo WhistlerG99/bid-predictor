@@ -8,7 +8,6 @@ import pandas as pd
 
 from .constants import (
     BID_IDENTIFIER_COLUMNS,
-    DISPLAY_FEATURE_ROWS,
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
 )
@@ -175,5 +174,4 @@ __all__ = [
     "recompute_usd_metrics",
     "safe_float",
     "sort_records_by_bid",
-    "DISPLAY_FEATURE_ROWS",
 ]

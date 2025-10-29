@@ -1,13 +1,19 @@
 """Interactive Dash UI to explore bid acceptance predictions from an MLflow model."""
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Optional
 
 import mlflow
 from dash import Dash, Input, Output, State, dcc, html
 from mlflow.exceptions import MlflowException
 
-from bid_predictor.ui import load_dataset_cached, load_model_cached
+from bid_predictor.ui import (
+    DEFAULT_UI_FEATURE_CONFIG,
+    build_ui_feature_config,
+    load_dataset_cached,
+    load_model_cached,
+)
 from bid_predictor.ui.feature_sensitivity import (
     build_feature_sensitivity_tab,
     register_feature_sensitivity_callbacks,
@@ -161,6 +167,10 @@ def create_app() -> Dash:
             dcc.Store(id="scenario-records-store"),
             dcc.Store(id="scenario-original-records-store"),
             dcc.Store(id="scenario-removed-bids-store"),
+            dcc.Store(
+                id="feature-config-store",
+                data=deepcopy(DEFAULT_UI_FEATURE_CONFIG),
+            ),
             dcc.Tabs(
                 id="main-tabs",
                 value="snapshot",
@@ -205,6 +215,7 @@ def create_app() -> Dash:
     @app.callback(
         Output("model-status", "children"),
         Output("model-uri-store", "data"),
+        Output("feature-config-store", "data"),
         Input("load-model", "n_clicks"),
         State("mlflow-tracking-uri", "value"),
         State("model-name", "value"),
@@ -226,13 +237,25 @@ def create_app() -> Dash:
                     model_uri = f"models:/{model_name}/{stage_or_version}"
             else:
                 model_uri = f"models:/{model_name}/Production"
-            load_model_cached(model_uri)
+            model = load_model_cached(model_uri)
+            raw_config = getattr(model, "feature_config_", None) or getattr(
+                model, "feature_config", None
+            )
+            ui_feature_config = build_ui_feature_config(raw_config)
         except MlflowException as exc:  # pragma: no cover - user feedback
-            return f"Failed to load model: {exc}", None
+            return (
+                f"Failed to load model: {exc}",
+                None,
+                deepcopy(DEFAULT_UI_FEATURE_CONFIG),
+            )
         except Exception as exc:  # pragma: no cover
-            return f"Unexpected error while loading model: {exc}", None
+            return (
+                f"Unexpected error while loading model: {exc}",
+                None,
+                deepcopy(DEFAULT_UI_FEATURE_CONFIG),
+            )
 
-        return f"Loaded model from {model_uri}", model_uri
+        return f"Loaded model from {model_uri}", model_uri, ui_feature_config
 
     return app
 

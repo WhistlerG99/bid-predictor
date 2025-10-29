@@ -1,9 +1,9 @@
 """Range configuration callbacks for the scenario tab."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Optional
 
-from dash import Dash, Input, Output, html
+from dash import Dash, Input, Output, State, html
 
 from ..scenario import (
     ScenarioRange,
@@ -29,13 +29,17 @@ def register_range_callback(app: Dash) -> None:
         Output("scenario-range-feedback", "children"),
         Input("scenario-records-store", "data"),
         Input("scenario-feature-dropdown", "value"),
+        State("feature-config-store", "data"),
     )
     def configure_scenario_range(
         baseline_records: Optional[list],
         feature_value: Optional[str],
+        feature_config: Optional[Dict[str, object]],
     ):
         baseline_df = records_to_dataframe(baseline_records)
-        features = build_feature_options(baseline_df)
+        features = build_feature_options(
+            baseline_df, feature_config=feature_config
+        )
         feature = select_feature(features, feature_value)
         if baseline_df.empty or feature is None:
             return None, None, 1.0, 1.0, True, True, 25, "", ""

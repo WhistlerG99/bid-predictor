@@ -2,7 +2,7 @@ import pandas as pd
 
 from bid_predictor.ui import (
     BID_IDENTIFIER_COLUMNS,
-    DISPLAY_FEATURE_ROWS,
+    DEFAULT_UI_FEATURE_CONFIG,
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
     apply_bid_labels,
@@ -67,5 +67,6 @@ def test_safe_float_handles_invalid():
     assert safe_float(None) is None
 
 
-def test_display_feature_rows_contains_probability():
-    assert "Acceptance Probability" in DISPLAY_FEATURE_ROWS
+def test_default_display_features_include_probability():
+    display_features = DEFAULT_UI_FEATURE_CONFIG.get("display_features", [])
+    assert "Acceptance Probability" in display_features

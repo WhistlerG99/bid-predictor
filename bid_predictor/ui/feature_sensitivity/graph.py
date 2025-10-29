@@ -34,6 +34,7 @@ def register_graph_callback(app: Dash) -> None:
         Input("model-uri-store", "data"),
         Input("scenario-baseline-seats", "value"),
         Input("scenario-baseline-time-to-departure", "value"),
+        State("feature-config-store", "data"),
     )
     def render_scenario_graph(
         baseline_records: Optional[list],
@@ -44,9 +45,10 @@ def register_graph_callback(app: Dash) -> None:
         model_uri: Optional[str],
         baseline_seats: Optional[float],
         baseline_time_to_departure: Optional[float],
+        feature_config: Optional[Dict[str, object]],
     ):
         baseline_df = records_to_dataframe(baseline_records)
-        features = build_feature_options(baseline_df)
+        features = build_feature_options(baseline_df, feature_config=feature_config)
         feature = select_feature(features, feature_value)
 
         overrides: Dict[str, float] = {}
@@ -114,7 +116,11 @@ def register_graph_callback(app: Dash) -> None:
             return empty_fig, "Load a model to generate acceptance probabilities."
 
         try:
-            prediction_df = predict(model_uri, scenario_df.copy())
+            prediction_df = predict(
+                model_uri,
+                scenario_df.copy(),
+                feature_config=feature_config,
+            )
         except Exception as exc:  # pragma: no cover - user feedback
             error_fig = go.Figure()
             error_fig.update_layout(title=f"Prediction failed: {exc}")

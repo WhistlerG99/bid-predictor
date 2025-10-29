@@ -15,6 +15,7 @@ import yaml
 
 from .formatting import apply_bid_labels, compute_bid_label_map
 from .plotting import BAR_COLOR_SEQUENCE
+from .feature_config import DEFAULT_UI_FEATURE_CONFIG
 
 _TIME_TO_DEPARTURE_KEY = "__time_to_departure_hours__"
 TIME_TO_DEPARTURE_SCENARIO_KEY = _TIME_TO_DEPARTURE_KEY
@@ -168,7 +169,10 @@ def _lookup_range_override_for_key(key: str) -> Optional[RangeOverride]:
     return _load_range_defaults().get(key)
 
 
-def extract_global_baseline_values(df: pd.DataFrame) -> Dict[str, Optional[float]]:
+def extract_global_baseline_values(
+    df: pd.DataFrame,
+    feature_config: Optional[Mapping[str, Sequence[str]]] = None,
+) -> Dict[str, Optional[float]]:
     """Return baseline values for global scenario controls.
 
     Only ``seats_available`` and the derived ``time to departure`` feature are
@@ -181,12 +185,27 @@ def extract_global_baseline_values(df: pd.DataFrame) -> Dict[str, Optional[float
     if df.empty:
         return baselines
 
-    if "seats_available" in df.columns:
-        seats_series = _coerce_numeric(df["seats_available"])
-        if seats_series is not None:
-            seats_series = seats_series.dropna()
-            if not seats_series.empty:
-                baselines["seats_available"] = float(seats_series.iloc[0])
+    config = feature_config or DEFAULT_UI_FEATURE_CONFIG
+    snapshot_features = config.get("snapshot_control_features", []) or []
+    if not snapshot_features:
+        snapshot_features = DEFAULT_UI_FEATURE_CONFIG.get(
+            "snapshot_control_features", []
+        )
+
+    for feature in snapshot_features:
+        if feature not in df.columns:
+            continue
+        series = df[feature]
+        numeric = _coerce_numeric(series)
+        working = numeric if numeric is not None else series
+        working = working.dropna()
+        if working.empty:
+            continue
+        value = working.iloc[0]
+        if numeric is not None:
+            baselines[feature] = float(value)
+        else:
+            baselines[feature] = value
 
     time_to_departure = _compute_time_to_departure_hours(df)
     if time_to_departure is not None:
@@ -474,31 +493,40 @@ def _compute_time_to_departure_hours(df: pd.DataFrame) -> Optional[pd.Series]:
     return delta
 
 
-def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
+def build_feature_options(
+    df: pd.DataFrame,
+    feature_config: Optional[Mapping[str, Sequence[str]]] = None,
+) -> List[ScenarioFeature]:
     if df.empty:
         return []
 
     options: List[ScenarioFeature] = []
-    numeric_candidates = [
-        "item_count",
-        "usd_base_amount",
-        "offer_time",
-        "multiplier_fare_class",
-        "multiplier_loyalty",
-        "multiplier_success_history",
-        "multiplier_payment_type",
-        "usd_total_amount",
-    ]
-    global_candidates = [
-        "seats_available",
-        "available_inventory",
-    ]
+    config = feature_config or DEFAULT_UI_FEATURE_CONFIG
+
+    bid_candidates = list(config.get("bid_features", []) or [])
+    if not bid_candidates:
+        bid_candidates = list(DEFAULT_UI_FEATURE_CONFIG.get("bid_features", []))
+
+    global_candidates = list(
+        config.get("snapshot_control_features", [])
+        or config.get("flight_features", [])
+        or []
+    )
+    if not global_candidates:
+        global_candidates = list(
+            DEFAULT_UI_FEATURE_CONFIG.get("snapshot_control_features", [])
+        )
 
     available_columns = set(df.columns)
     label_series = df.get("Bid #")
 
     # Global numeric features that are consistent across bids
+    seen_global: set[str] = set()
     for column in global_candidates:
+        column = str(column)
+        if column in seen_global:
+            continue
+        seen_global.add(column)
         if column not in available_columns:
             continue
         numeric = _coerce_numeric(df[column])
@@ -535,7 +563,12 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
 
     # Bid specific numeric features
     if label_series is not None and not label_series.dropna().empty:
-        for column in numeric_candidates:
+        seen_bid: set[str] = set()
+        for column in bid_candidates:
+            column = str(column)
+            if column in seen_bid:
+                continue
+            seen_bid.add(column)
             if column not in available_columns:
                 continue
             numeric = _coerce_numeric(df[column])

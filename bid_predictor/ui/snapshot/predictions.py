@@ -28,6 +28,7 @@ def register_prediction_callbacks(app: Dash) -> None:
         State("travel-date-dropdown", "value"),
         State("upgrade-dropdown", "value"),
         State("snapshot-meta-store", "data"),
+        State("feature-config-store", "data"),
     )
     def run_predictions(
         records: Optional[List[Dict[str, object]]],
@@ -38,11 +39,14 @@ def register_prediction_callbacks(app: Dash) -> None:
         travel_date: Optional[str],
         upgrade_type: Optional[str],
         snapshot_meta: Optional[Dict[str, object]],
+        feature_config: Optional[Dict[str, object]],
     ):
         if not records:
             return build_prediction_plot(pd.DataFrame()), {}, ""
 
-        selected_df = prepare_prediction_dataframe(records)
+        selected_df = prepare_prediction_dataframe(
+            records, feature_config=feature_config
+        )
 
         if not model_uri:
             empty_fig = build_prediction_plot(pd.DataFrame())
@@ -95,8 +99,12 @@ def register_prediction_callbacks(app: Dash) -> None:
             combined_df = pd.concat([plot_source, selected_df], ignore_index=True, sort=False)
 
         try:
-            plot_pred_df = predict(model_uri, combined_df.copy())
-            table_pred_df = predict(model_uri, selected_df.copy())
+            plot_pred_df = predict(
+                model_uri, combined_df.copy(), feature_config=feature_config
+            )
+            table_pred_df = predict(
+                model_uri, selected_df.copy(), feature_config=feature_config
+            )
         except Exception as exc:  # pragma: no cover - user feedback
             empty_fig = go.Figure()
             empty_fig.update_layout(title=f"Prediction failed: {exc}")
