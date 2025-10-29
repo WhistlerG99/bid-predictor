@@ -118,3 +118,50 @@ def test_apply_table_edits_ignores_offer_status_changes():
     assert updated is not None
     assert updated[0]["item_count"] == 4
     assert updated[0]["offer_status"] == "pending"
+
+
+def test_build_bid_table_locks_bid_specific_cells():
+    records = [
+        {"Bid #": 1, "item_count": 2},
+        {"Bid #": 2, "item_count": 3},
+    ]
+
+    columns, _, styles = build_bid_table(
+        records,
+        {},
+        locked_cells={"bid_1": ["item_count"]},
+    )
+
+    bid_two = next(column for column in columns if column["id"] == "bid_1")
+    assert "item_count" in bid_two.get("locked_features", [])
+    assert any(
+        rule.get("if", {}).get("column_id") == "bid_1" and
+        rule.get("if", {}).get("filter_query") == '{Feature} = "item_count"'
+        for rule in styles
+    )
+
+
+def test_apply_table_edits_skips_locked_features():
+    records = [
+        {
+            "Bid #": 1,
+            "item_count": 2,
+            "usd_base_amount": 100.0,
+        }
+    ]
+
+    table_data = [
+        {"Feature": "item_count", "bid_0": 5},
+        {"Feature": "usd_base_amount", "bid_0": 150.0},
+    ]
+
+    columns = [
+        {"id": "Feature", "name": "Feature"},
+        {"id": "bid_0", "name": "Bid 1", "locked_features": ["item_count"]},
+    ]
+
+    updated = apply_table_edits(records, table_data, columns)
+
+    assert updated is not None
+    assert updated[0]["item_count"] == 2
+    assert updated[0]["usd_base_amount"] == 150.0

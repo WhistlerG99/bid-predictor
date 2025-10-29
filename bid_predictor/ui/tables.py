@@ -1,7 +1,7 @@
 """Shared helpers for rendering and editing bid tables in the Dash UI."""
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Optional, Sequence
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
 from .constants import DISPLAY_FEATURE_ROWS, USD_MAX_COLUMN, USD_PERCENT_COLUMNS
 from .formatting import normalize_offer_time, recompute_usd_metrics, safe_float
@@ -10,6 +10,8 @@ from .formatting import normalize_offer_time, recompute_usd_metrics, safe_float
 def build_bid_table(
     records: Optional[Sequence[Dict[str, object]]],
     predictions: Optional[Dict[str, object]],
+    *,
+    locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
     """Return Dash DataTable configuration for bid feature editing."""
 
@@ -23,10 +25,22 @@ def build_bid_table(
     data_rows: List[Dict[str, object]] = []
     style_rules: List[Dict[str, object]] = []
 
+    locked_map: Dict[str, set[str]] = {}
+    if locked_cells:
+        for column_id, features in locked_cells.items():
+            locked_map[column_id] = {str(feature) for feature in features}
+
     for idx, record in enumerate(records):
         bid_label = record.get("Bid #") or record.get("bid_number") or idx + 1
         column_id = f"bid_{idx}"
-        columns.append({"name": f"Bid {bid_label}", "id": column_id, "editable": True})
+        column_config: Dict[str, object] = {
+            "name": f"Bid {bid_label}",
+            "id": column_id,
+            "editable": True,
+        }
+        if column_id in locked_map:
+            column_config["locked_features"] = sorted(locked_map[column_id])
+        columns.append(column_config)
 
     prediction_map = predictions or {}
 
@@ -105,6 +119,20 @@ def build_bid_table(
         }
     )
 
+    for column_id, features in locked_map.items():
+        for feature in features:
+            style_rules.append(
+                {
+                    "if": {
+                        "filter_query": f'{{Feature}} = "{feature}"',
+                        "column_id": column_id,
+                    },
+                    "pointerEvents": "none",
+                    "backgroundColor": "#f8fafc",
+                    "color": "#94a3b8",
+                }
+            )
+
     return columns, data_rows, style_rules
 
 
@@ -127,8 +155,11 @@ def apply_table_edits(
         if column_id is None or position >= len(updated_records):
             continue
         record = updated_records[position]
+        locked_features = set(column.get("locked_features", []))
         for feature in DISPLAY_FEATURE_ROWS:
             if feature == "Acceptance Probability":
+                continue
+            if feature in locked_features:
                 continue
             value_row = feature_map.get(feature)
             if value_row is None or column_id not in value_row:

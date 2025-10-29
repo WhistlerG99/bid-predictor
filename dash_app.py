@@ -1206,6 +1206,20 @@ def create_app() -> Dash:
                 seats_style = visible_style
                 time_style = visible_style
 
+        seats_numeric = safe_float(seats_value)
+        if seats_numeric is not None:
+            if float(seats_numeric).is_integer():
+                seats_value = int(round(seats_numeric))
+            else:
+                seats_value = round(float(seats_numeric), 4)
+
+        time_numeric = safe_float(time_value)
+        if time_numeric is not None:
+            if float(time_numeric).is_integer():
+                time_value = int(round(time_numeric))
+            else:
+                time_value = round(float(time_numeric), 4)
+
         return seats_value, time_value, seats_style, time_style
 
     @app.callback(
@@ -1457,10 +1471,12 @@ def create_app() -> Dash:
         Output("scenario-bid-table", "style_data_conditional"),
         Input("scenario-records-store", "data"),
         Input("model-uri-store", "data"),
+        Input("scenario-feature-dropdown", "value"),
     )
     def render_scenario_table(
         records: Optional[List[Dict[str, object]]],
         model_uri: Optional[str],
+        feature_value: Optional[str],
     ):
         predictions: Dict[str, object] = {}
         if records and model_uri:
@@ -1482,6 +1498,25 @@ def create_app() -> Dash:
                                     predictions[column_id] = float(value)
                                 except (TypeError, ValueError):
                                     predictions[column_id] = value
+        locked_cells: Dict[str, List[str]] = {}
+        decoded_feature = ScenarioFeature.decode(feature_value)
+        if (
+            records
+            and decoded_feature is not None
+            and decoded_feature.scope == "bid"
+            and decoded_feature.bid_label is not None
+        ):
+            target_label = str(decoded_feature.bid_label)
+            for idx, record in enumerate(records):
+                label = record.get("Bid #") or record.get("bid_number")
+                if label is None:
+                    continue
+                if str(label) == target_label:
+                    locked_cells[f"bid_{idx}"] = [decoded_feature.key]
+                    break
+
+        if locked_cells:
+            return build_bid_table(records, predictions, locked_cells=locked_cells)
         return build_bid_table(records, predictions)
 
     @app.callback(
