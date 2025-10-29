@@ -1142,13 +1142,21 @@ def create_app() -> Dash:
         Output("scenario-feature-dropdown", "options"),
         Output("scenario-feature-dropdown", "value"),
         Input("scenario-records-store", "data"),
+        State("scenario-feature-dropdown", "value"),
     )
-    def populate_scenario_features(baseline_records: Optional[List[Dict[str, object]]]):
+    def populate_scenario_features(
+        baseline_records: Optional[List[Dict[str, object]]],
+        current_value: Optional[str],
+    ):
         baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df)
         options = [{"label": feature.label, "value": feature.encode()} for feature in features]
-        value = options[0]["value"] if options else None
-        return options, value
+        selected_value = None
+        if current_value and any(option["value"] == current_value for option in options):
+            selected_value = current_value
+        elif options:
+            selected_value = options[0]["value"]
+        return options, selected_value
 
     @app.callback(
         Output("scenario-baseline-seats", "value"),
