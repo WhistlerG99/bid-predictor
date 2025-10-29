@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
-from .constants import DISPLAY_FEATURE_ROWS, USD_MAX_COLUMN, USD_PERCENT_COLUMNS
+from .constants import USD_MAX_COLUMN, USD_PERCENT_COLUMNS
+from .feature_config import DEFAULT_UI_FEATURE_CONFIG
 from .formatting import normalize_offer_time, recompute_usd_metrics, safe_float
 
 
@@ -11,6 +12,7 @@ def build_bid_table(
     records: Optional[Sequence[Dict[str, object]]],
     predictions: Optional[Dict[str, object]],
     *,
+    feature_config: Optional[Mapping[str, Sequence[str]]] = None,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
     """Return Dash DataTable configuration for bid feature editing."""
@@ -24,6 +26,18 @@ def build_bid_table(
     ]
     data_rows: List[Dict[str, object]] = []
     style_rules: List[Dict[str, object]] = []
+
+    config = feature_config or DEFAULT_UI_FEATURE_CONFIG
+    display_features = list(config.get("display_features", []))
+    if not display_features:
+        display_features = list(DEFAULT_UI_FEATURE_CONFIG.get("display_features", []))
+    if "Acceptance Probability" not in display_features:
+        display_features.append("Acceptance Probability")
+
+    editable_features = set(config.get("bid_features", []))
+    readonly_features = set(config.get("readonly_features", []))
+    readonly_features.update(config.get("comp_features", []))
+    readonly_features.discard("Acceptance Probability")
 
     locked_map: Dict[str, set[str]] = {}
     if locked_cells:
@@ -42,7 +56,7 @@ def build_bid_table(
 
     prediction_map = predictions or {}
 
-    for feature in DISPLAY_FEATURE_ROWS:
+    for feature in display_features:
         row = {"Feature": feature}
         for idx, record in enumerate(records):
             column_id = f"bid_{idx}"
@@ -117,6 +131,17 @@ def build_bid_table(
         }
     )
 
+    for readonly_feature in readonly_features:
+        if readonly_feature in {"Acceptance Probability"}:
+            continue
+        style_rules.append(
+            {
+                "if": {"filter_query": f'{{Feature}} = "{readonly_feature}"'},
+                "backgroundColor": "#f8fafc",
+                "pointerEvents": "none",
+            }
+        )
+
     for column_id, features in locked_map.items():
         for feature in features:
             style_rules.append(
@@ -139,6 +164,7 @@ def apply_table_edits(
     table_data: Optional[Sequence[Dict[str, object]]],
     columns: Optional[Sequence[Dict[str, object]]],
     *,
+    feature_config: Optional[Mapping[str, Sequence[str]]] = None,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Optional[List[Dict[str, object]]]:
     """Update bid records based on edited Dash DataTable values."""
@@ -155,16 +181,25 @@ def apply_table_edits(
         for column_id, features in locked_cells.items():
             locked_map[column_id] = {str(feature) for feature in features}
 
+    config = feature_config or DEFAULT_UI_FEATURE_CONFIG
+    display_features = list(config.get("display_features", []))
+    if not display_features:
+        display_features = list(DEFAULT_UI_FEATURE_CONFIG.get("display_features", []))
+    editable_features = set(config.get("bid_features", []))
+
     for position, column in enumerate(bid_columns):
         column_id = column.get("id")
         if column_id is None or position >= len(updated_records):
             continue
         record = updated_records[position]
         locked_features = locked_map.get(str(column_id), set())
-        for feature in DISPLAY_FEATURE_ROWS:
+
+        for feature in display_features:
             if feature == "Acceptance Probability":
                 continue
             if feature in locked_features:
+                continue
+            if feature not in editable_features:
                 continue
             value_row = feature_map.get(feature)
             if value_row is None or column_id not in value_row:

@@ -56,12 +56,7 @@ def test_load_dataset_cached_missing_columns(monkeypatch):
         load_dataset_cached("/tmp/missing.parquet")
 
 
-def test_prepare_prediction_dataframe_converts_types(monkeypatch):
-    monkeypatch.setattr(
-        "bid_predictor.data.get_feature_columns",
-        lambda: (["usd_base_amount", "travel_date"], []),
-    )
-
+def test_prepare_prediction_dataframe_converts_types():
     records = [
         {
             "usd_base_amount": "120.567",
@@ -70,7 +65,10 @@ def test_prepare_prediction_dataframe_converts_types(monkeypatch):
         }
     ]
 
-    df = prepare_prediction_dataframe(records)
+    df = prepare_prediction_dataframe(
+        records,
+        feature_config={"pre_features": ["usd_base_amount", "travel_date"]},
+    )
     assert df["usd_base_amount"].iloc[0] == pytest.approx(120.567)
     assert pd.api.types.is_datetime64_dtype(df["travel_date"])
     assert "extra_col" in df.columns

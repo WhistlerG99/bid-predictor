@@ -22,18 +22,26 @@ def register_table_callbacks(app: Dash) -> None:
         Input("scenario-records-store", "data"),
         Input("model-uri-store", "data"),
         Input("scenario-feature-dropdown", "value"),
+        State("feature-config-store", "data"),
     )
     def render_scenario_table(
         records: Optional[List[Dict[str, object]]],
         model_uri: Optional[str],
         feature_value: Optional[str],
+        feature_config: Optional[Dict[str, object]],
     ):
         predictions: Dict[str, object] = {}
         if records and model_uri:
-            feature_df = prepare_prediction_dataframe(records)
+            feature_df = prepare_prediction_dataframe(
+                records, feature_config=feature_config
+            )
             if not feature_df.empty:
                 try:
-                    pred_df = predict(model_uri, feature_df.copy())
+                    pred_df = predict(
+                        model_uri,
+                        feature_df.copy(),
+                        feature_config=feature_config,
+                    )
                 except Exception:
                     pred_df = pd.DataFrame()
                 if not pred_df.empty:
@@ -52,8 +60,13 @@ def register_table_callbacks(app: Dash) -> None:
         locked_cells = resolve_locked_cells(records, decoded_feature)
 
         if locked_cells:
-            return build_bid_table(records, predictions, locked_cells=locked_cells)
-        return build_bid_table(records, predictions)
+            return build_bid_table(
+                records,
+                predictions,
+                feature_config=feature_config,
+                locked_cells=locked_cells,
+            )
+        return build_bid_table(records, predictions, feature_config=feature_config)
 
     @app.callback(
         Output("scenario-bid-delete-selector", "options"),
@@ -96,6 +109,7 @@ def register_table_callbacks(app: Dash) -> None:
         State("scenario-bid-table", "columns"),
         State("scenario-records-store", "data"),
         State("scenario-feature-dropdown", "value"),
+        State("feature-config-store", "data"),
         prevent_initial_call=True,
     )
     def persist_scenario_table_edits(
@@ -104,6 +118,7 @@ def register_table_callbacks(app: Dash) -> None:
         columns: Optional[List[Dict[str, object]]],
         records: Optional[List[Dict[str, object]]],
         feature_value: Optional[str],
+        feature_config: Optional[Dict[str, object]],
     ):
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
@@ -116,6 +131,7 @@ def register_table_callbacks(app: Dash) -> None:
             table_data,
             columns,
             locked_cells=locked_cells if locked_cells else None,
+            feature_config=feature_config,
         )
         if updated_records is None:
             return no_update
