@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 import pandas as pd
 from dash import Dash, Input, Output, State
 
-from ..data import load_dataset_cached
+from ...data import load_dataset_cached
 
 
 def _options_from_series(values: pd.Series) -> Tuple[List[dict], Optional[str]]:

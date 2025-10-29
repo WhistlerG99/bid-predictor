@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from dash import Dash, Input, Output, State, no_update
 
-from ..data import prepare_prediction_dataframe
+from ...data import prepare_prediction_dataframe
 from ..predictions import predict
 from ..scenario import ScenarioFeature, resolve_locked_cells
 from ..tables import apply_table_edits, build_bid_table

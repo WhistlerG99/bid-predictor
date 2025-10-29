@@ -5,7 +5,7 @@ from typing import Optional
 
 from dash import Dash, Input, Output, State
 
-from ..data import load_dataset_cached
+from ...data import load_dataset_cached
 from ..scenario import (
     build_carrier_options,
     build_flight_number_options,
