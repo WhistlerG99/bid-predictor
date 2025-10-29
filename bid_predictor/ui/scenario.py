@@ -197,6 +197,33 @@ def extract_global_baseline_values(df: pd.DataFrame) -> Dict[str, Optional[float
     return baselines
 
 
+def resolve_locked_cells(
+    records: Optional[Sequence[Mapping[str, object]]],
+    feature: Optional[ScenarioFeature],
+) -> Dict[str, List[str]]:
+    """Return a mapping of bid column identifiers to locked feature names."""
+
+    locked: Dict[str, List[str]] = {}
+    if (
+        not records
+        or feature is None
+        or feature.scope != "bid"
+        or feature.bid_label is None
+        or not feature.key
+    ):
+        return locked
+
+    target_label = str(feature.bid_label)
+    for idx, record in enumerate(records):
+        label = record.get("Bid #") or record.get("bid_number")
+        if label is None:
+            continue
+        if str(label) == target_label:
+            locked[f"bid_{idx}"] = [feature.key]
+            break
+    return locked
+
+
 def select_baseline_snapshot(
     df: pd.DataFrame, baseline_time_hours: Optional[float]
 ) -> Optional[object]:

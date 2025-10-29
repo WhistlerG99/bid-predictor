@@ -8,6 +8,7 @@ from bid_predictor.ui.scenario import (
     extract_baseline_snapshot,
     extract_global_baseline_values,
     select_baseline_snapshot,
+    resolve_locked_cells,
     records_to_dataframe,
 )
 
@@ -153,6 +154,30 @@ def test_select_baseline_snapshot_falls_back_to_first_snapshot():
     selected = select_baseline_snapshot(df, baseline_time_hours=None)
 
     assert selected == 5
+
+
+def test_resolve_locked_cells_identifies_matching_bid():
+    feature = ScenarioFeature(
+        key="item_count",
+        scope="bid",
+        label="Item count",
+        bid_label=2,
+    )
+    records = [
+        {"Bid #": 1, "item_count": 2},
+        {"Bid #": 2, "item_count": 3},
+    ]
+
+    locked = resolve_locked_cells(records, feature)
+
+    assert locked == {"bid_1": ["item_count"]}
+
+
+def test_resolve_locked_cells_returns_empty_for_non_bid_feature():
+    feature = ScenarioFeature(key="seats_available", scope="global", label="Seats")
+    records = [{"Bid #": 1, "item_count": 2}]
+
+    assert resolve_locked_cells(records, feature) == {}
 
 
 def test_build_adjustment_grid_applies_global_overrides():

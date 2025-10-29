@@ -132,8 +132,6 @@ def test_build_bid_table_locks_bid_specific_cells():
         locked_cells={"bid_1": ["item_count"]},
     )
 
-    bid_two = next(column for column in columns if column["id"] == "bid_1")
-    assert "item_count" in bid_two.get("locked_features", [])
     assert any(
         rule.get("if", {}).get("column_id") == "bid_1" and
         rule.get("if", {}).get("filter_query") == '{Feature} = "item_count"'
@@ -157,10 +155,15 @@ def test_apply_table_edits_skips_locked_features():
 
     columns = [
         {"id": "Feature", "name": "Feature"},
-        {"id": "bid_0", "name": "Bid 1", "locked_features": ["item_count"]},
+        {"id": "bid_0", "name": "Bid 1"},
     ]
 
-    updated = apply_table_edits(records, table_data, columns)
+    updated = apply_table_edits(
+        records,
+        table_data,
+        columns,
+        locked_cells={"bid_0": ["item_count"]},
+    )
 
     assert updated is not None
     assert updated[0]["item_count"] == 2

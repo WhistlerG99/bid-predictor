@@ -43,6 +43,7 @@ from bid_predictor.ui import (
     predict,
     recompute_usd_metrics,
     select_feature,
+    resolve_locked_cells,
     TIME_TO_DEPARTURE_SCENARIO_KEY,
     records_to_dataframe,
     safe_float,
@@ -1498,22 +1499,8 @@ def create_app() -> Dash:
                                     predictions[column_id] = float(value)
                                 except (TypeError, ValueError):
                                     predictions[column_id] = value
-        locked_cells: Dict[str, List[str]] = {}
         decoded_feature = ScenarioFeature.decode(feature_value)
-        if (
-            records
-            and decoded_feature is not None
-            and decoded_feature.scope == "bid"
-            and decoded_feature.bid_label is not None
-        ):
-            target_label = str(decoded_feature.bid_label)
-            for idx, record in enumerate(records):
-                label = record.get("Bid #") or record.get("bid_number")
-                if label is None:
-                    continue
-                if str(label) == target_label:
-                    locked_cells[f"bid_{idx}"] = [decoded_feature.key]
-                    break
+        locked_cells = resolve_locked_cells(records, decoded_feature)
 
         if locked_cells:
             return build_bid_table(records, predictions, locked_cells=locked_cells)
@@ -1525,6 +1512,7 @@ def create_app() -> Dash:
         State("scenario-bid-table", "data"),
         State("scenario-bid-table", "columns"),
         State("scenario-records-store", "data"),
+        State("scenario-feature-dropdown", "value"),
         prevent_initial_call=True,
     )
     def persist_scenario_table_edits(
@@ -1532,11 +1520,20 @@ def create_app() -> Dash:
         table_data: Optional[List[Dict[str, object]]],
         columns: Optional[List[Dict[str, object]]],
         records: Optional[List[Dict[str, object]]],
+        feature_value: Optional[str],
     ):
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
 
-        updated_records = apply_table_edits(records, table_data, columns)
+        decoded_feature = ScenarioFeature.decode(feature_value)
+        locked_cells = resolve_locked_cells(records, decoded_feature)
+
+        updated_records = apply_table_edits(
+            records,
+            table_data,
+            columns,
+            locked_cells=locked_cells if locked_cells else None,
+        )
         if updated_records is None:
             return no_update
         return updated_records

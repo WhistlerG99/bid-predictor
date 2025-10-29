@@ -40,6 +40,7 @@ from .scenario import (
     select_baseline_snapshot,
     records_to_dataframe,
     select_feature,
+    resolve_locked_cells,
     TIME_TO_DEPARTURE_SCENARIO_KEY,
 )
 
@@ -77,6 +78,7 @@ __all__ = [
     "select_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
+    "resolve_locked_cells",
     "TIME_TO_DEPARTURE_SCENARIO_KEY",
     "sort_records_by_bid",
     "USD_MAX_COLUMN",

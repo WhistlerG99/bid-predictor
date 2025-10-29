@@ -38,8 +38,6 @@ def build_bid_table(
             "id": column_id,
             "editable": True,
         }
-        if column_id in locked_map:
-            column_config["locked_features"] = sorted(locked_map[column_id])
         columns.append(column_config)
 
     prediction_map = predictions or {}
@@ -140,6 +138,8 @@ def apply_table_edits(
     records: Optional[Iterable[Dict[str, object]]],
     table_data: Optional[Sequence[Dict[str, object]]],
     columns: Optional[Sequence[Dict[str, object]]],
+    *,
+    locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Optional[List[Dict[str, object]]]:
     """Update bid records based on edited Dash DataTable values."""
 
@@ -150,12 +150,17 @@ def apply_table_edits(
     feature_map = {row.get("Feature"): row for row in table_data}
     bid_columns = [column for column in columns if column.get("id") != "Feature"]
 
+    locked_map: Dict[str, set[str]] = {}
+    if locked_cells:
+        for column_id, features in locked_cells.items():
+            locked_map[column_id] = {str(feature) for feature in features}
+
     for position, column in enumerate(bid_columns):
         column_id = column.get("id")
         if column_id is None or position >= len(updated_records):
             continue
         record = updated_records[position]
-        locked_features = set(column.get("locked_features", []))
+        locked_features = locked_map.get(str(column_id), set())
         for feature in DISPLAY_FEATURE_ROWS:
             if feature == "Acceptance Probability":
                 continue
