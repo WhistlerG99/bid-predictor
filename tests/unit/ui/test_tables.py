@@ -47,6 +47,18 @@ class _ReduceTransformer:
         return df[self.columns]
 
 
+class _NumpyReduceTransformer:
+    def __init__(self, columns):
+        self.columns = columns
+
+    def transform(self, data):
+        df = _to_frame(data)
+        for column in self.columns:
+            if column not in df.columns:
+                df[column] = None
+        return df[self.columns].to_numpy()
+
+
 def _fake_model():
     return SimpleNamespace(
         steps=[
@@ -307,3 +319,40 @@ def test_apply_table_edits_recomputes_competitor_features(monkeypatch):
     # competitor feature recomputed from updated amounts (other bid's median)
     assert updated[0]["usd_base_amount_50%"] == 90.0
     assert updated[1]["usd_base_amount_50%"] == 120.0
+
+
+def test_build_bid_table_uses_model_feature_names_when_array_output(monkeypatch):
+    def _array_model():
+        return SimpleNamespace(
+            steps=[
+                ("identity", _IdentityTransformer()),
+                ("reduce", _NumpyReduceTransformer(["usd_base_amount", "item_count"])),
+                ("clf", object()),
+            ]
+        )
+
+    monkeypatch.setattr(
+        "bid_predictor.ui.tables.load_model_cached", lambda uri: _array_model()
+    )
+
+    records = [
+        {
+            "Bid #": 1,
+            "item_count": 2,
+            "usd_base_amount": 100.0,
+            "conf_num": "ABC",
+        },
+        {
+            "Bid #": 2,
+            "item_count": 3,
+            "usd_base_amount": 80.0,
+            "conf_num": "DEF",
+        },
+    ]
+
+    columns, data_rows, _ = build_bid_table(records, {}, model_uri="model://array")
+
+    assert [column["id"] for column in columns] == ["Feature", "bid_0", "bid_1"]
+    features = [row["Feature"] for row in data_rows]
+    assert "conf_num" not in features
+    assert features[:2] == ["usd_base_amount", "item_count"]

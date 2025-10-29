@@ -54,38 +54,106 @@ def _looks_like_flight_feature(name: str) -> bool:
     return False
 
 
+def _collect_model_feature_names(model: object) -> List[str]:
+    """Best-effort extraction of feature names from a fitted pipeline."""
+
+    features: List[str] = []
+    if model is None:
+        return features
+
+    steps = getattr(model, "steps", None)
+    if not steps:
+        names = getattr(model, "feature_names_in_", None)
+        if names is not None:
+            return list(names)
+        return features
+
+    def _normalize(names: Iterable[str]) -> List[str]:
+        return [str(name) for name in names]
+
+    for _, transformer in reversed(list(steps)):
+        candidates: Optional[Iterable[str]] = None
+
+        getter = getattr(transformer, "get_feature_names_out", None)
+        if callable(getter):
+            try:
+                output = getter()
+            except TypeError:
+                # Some implementations expect an input array; fall back to
+                # feature_names_in_ if available.
+                output = getattr(transformer, "feature_names_in_", None)
+            if output is not None:
+                candidates = output
+
+        if candidates is None:
+            for attr in (
+                "feature_names_out_",
+                "feature_names_in_",
+                "columns",
+                "selected_features",
+                "_existing_features",
+            ):
+                value = getattr(transformer, attr, None)
+                if value:
+                    candidates = value
+                    break
+
+        if candidates is not None:
+            normalized = _normalize(candidates)
+            if normalized:
+                features = normalized
+                break
+
+        if not hasattr(transformer, "transform"):
+            continue
+
+    return features
+
+
 def _transform_records_with_model(
     model_uri: Optional[str],
     df: pd.DataFrame,
-) -> Optional[pd.DataFrame]:
+) -> tuple[Optional[pd.DataFrame], List[str]]:
     if not model_uri or df.empty:
-        return None
+        return None, []
 
     try:
         model = load_model_cached(model_uri)
     except Exception:
-        return None
+        return None, []
 
+    model_features = _collect_model_feature_names(model)
     steps = getattr(model, "steps", None)
     if not steps:
-        return None
+        return None, model_features
 
-    current = df.copy()
+    current: object = df.copy()
     try:
         for _, transformer in steps:
             if not hasattr(transformer, "transform"):
                 break
             current = transformer.transform(current)
-            if isinstance(current, pd.DataFrame):
-                current = current.copy()
-            else:
-                return None
     except Exception:
-        return None
+        return None, model_features
 
-    if not isinstance(current, pd.DataFrame):
-        return None
-    return current.reset_index(drop=True)
+    frame: Optional[pd.DataFrame]
+    if isinstance(current, pd.DataFrame):
+        frame = current.copy()
+    else:
+        frame = None
+        if model_features:
+            try:
+                frame = pd.DataFrame(current, columns=model_features)
+            except Exception:
+                frame = None
+
+    if frame is not None and model_features:
+        frame = frame.reindex(columns=_unique(model_features))
+
+    if frame is not None:
+        frame = frame.reset_index(drop=True)
+
+    return frame, model_features
 
 
 @dataclass(frozen=True)
@@ -106,23 +174,29 @@ def _prepare_feature_plan(
         return None
 
     df = pd.DataFrame(list(records))
-    feature_frame = _transform_records_with_model(model_uri, df)
+    feature_frame, model_columns = _transform_records_with_model(model_uri, df)
+    if not model_columns and feature_frame is not None:
+        model_columns = list(feature_frame.columns)
+    model_columns = _unique(model_columns)
 
+    frame_records: List[Mapping[str, object]]
     if feature_frame is not None:
         frame_records = feature_frame.to_dict("records")
-        enriched: List[Dict[str, object]] = []
-        for idx, record in enumerate(records):
-            merged = dict(record)
-            if idx < len(frame_records):
-                for key, value in frame_records[idx].items():
-                    if key not in merged or merged[key] in (None, ""):
-                        merged[key] = value
-            enriched.append(merged)
-        roles = feature_roles or infer_feature_roles(enriched)
-        model_columns = list(feature_frame.columns)
     else:
-        roles = feature_roles or infer_feature_roles(records)
-        model_columns = []
+        frame_records = [{} for _ in records]
+
+    enriched: List[Dict[str, object]] = []
+    for idx, record in enumerate(records):
+        merged = dict(record)
+        supplemental = frame_records[idx] if idx < len(frame_records) else {}
+        for key, value in supplemental.items():
+            if key not in merged or merged[key] in (None, ""):
+                merged[key] = value
+        for feature in model_columns:
+            merged.setdefault(feature, supplemental.get(feature))
+        enriched.append(merged)
+
+    roles = feature_roles or infer_feature_roles(enriched)
 
     model_feature_set = set(model_columns) if model_columns else None
 
@@ -136,6 +210,17 @@ def _prepare_feature_plan(
         for feature in roles.competitor_features
         if model_feature_set is None or feature in model_feature_set
     ]
+
+    if model_feature_set is not None:
+        supplemental_bid = [
+            feature
+            for feature in model_columns
+            if feature not in bid_features
+            and feature not in competitor_features
+            and feature not in roles.flight_features
+        ]
+        if supplemental_bid:
+            bid_features = _unique(list(bid_features) + supplemental_bid)
 
     if not bid_features:
         fallback_candidates = [
