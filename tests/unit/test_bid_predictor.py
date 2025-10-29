@@ -1,3 +1,5 @@
+import cloudpickle
+
 from bid_predictor import bid_predictor
 
 
@@ -26,3 +28,20 @@ def test_build_pipeline_returns_expected_steps(sample_feature_config):
     step_names = [name for name, _ in pipeline.steps]
     assert step_names[0:3] == ["flight_code", "depart", "group"]
     assert step_names[-1] == "clf"
+
+
+def test_pipeline_persists_feature_config(sample_feature_config, tmp_path):
+    pipeline = bid_predictor.build_pipeline(feature_config=sample_feature_config)
+
+    assert pipeline.feature_config_ == sample_feature_config
+    assert pipeline.__class__.feature_config == sample_feature_config
+
+    model_path = tmp_path / "pipeline.pkl"
+    with model_path.open("wb") as handle:
+        cloudpickle.dump(pipeline, handle)
+
+    with model_path.open("rb") as handle:
+        loaded = cloudpickle.load(handle)
+
+    assert loaded.feature_config_ == sample_feature_config
+    assert loaded.__class__.feature_config == sample_feature_config
