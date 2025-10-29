@@ -217,7 +217,6 @@ def _prepare_feature_plan(
             for feature in model_columns
             if feature not in bid_features
             and feature not in competitor_features
-            and feature not in roles.flight_features
         ]
         if supplemental_bid:
             bid_features = _unique(list(bid_features) + supplemental_bid)
@@ -242,6 +241,7 @@ def _prepare_feature_plan(
         ordered = bid_features + competitor_features
 
     display_features = _unique(ordered)
+    display_features = [feature for feature in display_features if feature != "num_offers"]
 
     return _TableFeaturePlan(
         roles=roles,

@@ -64,7 +64,18 @@ def _fake_model():
         steps=[
             ("identity", _IdentityTransformer()),
             ("competitor", _CompetitorTransformer()),
-            ("reduce", _ReduceTransformer(["usd_base_amount", "item_count", "usd_base_amount_50%"])),
+            (
+                "reduce",
+                _ReduceTransformer(
+                    [
+                        "usd_base_amount",
+                        "item_count",
+                        "multiplier_loyalty",
+                        "usd_base_amount_50%",
+                        "num_offers",
+                    ]
+                ),
+            ),
             ("clf", object()),
         ]
     )
@@ -248,12 +259,16 @@ def test_build_bid_table_uses_model_features_and_locks_competitors(monkeypatch):
             "Bid #": 1,
             "item_count": 2,
             "usd_base_amount": 100.0,
+            "multiplier_loyalty": 1.0,
+            "num_offers": 2,
             "conf_num": "ABC",
         },
         {
             "Bid #": 2,
             "item_count": 3,
             "usd_base_amount": 80.0,
+            "multiplier_loyalty": 1.0,
+            "num_offers": 2,
             "conf_num": "DEF",
         },
     ]
@@ -263,6 +278,8 @@ def test_build_bid_table_uses_model_features_and_locks_competitors(monkeypatch):
     features = [row["Feature"] for row in data_rows]
     assert "conf_num" not in features
     assert "usd_base_amount_50%" in features
+    assert "multiplier_loyalty" in features
+    assert "num_offers" not in features
 
     competitor_rule = next(
         rule
@@ -274,6 +291,42 @@ def test_build_bid_table_uses_model_features_and_locks_competitors(monkeypatch):
     competitor_row = next(row for row in data_rows if row["Feature"] == "usd_base_amount_50%")
     assert competitor_row["bid_0"] == 80.0
     assert competitor_row["bid_1"] == 100.0
+
+
+def test_build_bid_table_keeps_uniform_model_features(monkeypatch):
+    monkeypatch.setattr("bid_predictor.ui.tables.load_model_cached", lambda uri: _fake_model())
+    model_uri = "model://fake"
+
+    records = [
+        {
+            "Bid #": 1,
+            "item_count": 2,
+            "usd_base_amount": 100.0,
+            "multiplier_loyalty": 1.0,
+            "num_offers": 2,
+        },
+        {
+            "Bid #": 2,
+            "item_count": 3,
+            "usd_base_amount": 90.0,
+            "multiplier_loyalty": 1.0,
+            "num_offers": 2,
+        },
+    ]
+
+    columns, data_rows, _ = build_bid_table(records, {}, model_uri=model_uri)
+
+    loyalty_row = next(row for row in data_rows if row["Feature"] == "multiplier_loyalty")
+    assert loyalty_row["bid_0"] == 1.0
+    assert loyalty_row["bid_1"] == 1.0
+
+    table_data = [{"Feature": "multiplier_loyalty", "bid_0": 1.5, "bid_1": 1.5}]
+
+    updated = apply_table_edits(records, table_data, columns, model_uri=model_uri)
+
+    assert updated is not None
+    assert updated[0]["multiplier_loyalty"] == 1.5
+    assert updated[1]["multiplier_loyalty"] == 1.5
 
 
 def test_apply_table_edits_recomputes_competitor_features(monkeypatch):
