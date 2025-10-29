@@ -7,6 +7,8 @@ from bid_predictor.ui.scenario import (
     build_adjustment_grid,
     extract_baseline_snapshot,
     extract_global_baseline_values,
+    select_baseline_snapshot,
+    resolve_locked_cells,
     records_to_dataframe,
 )
 
@@ -106,6 +108,76 @@ def test_extract_global_baseline_values_returns_shared_features():
 
     assert baselines["seats_available"] == 5.0
     assert baselines[TIME_TO_DEPARTURE_SCENARIO_KEY] == pytest.approx(4.0)
+
+
+def test_select_baseline_snapshot_matches_baseline_time():
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "snapshot_num": 1,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 07:00:00"),
+            },
+            {
+                "Bid #": 2,
+                "snapshot_num": 7,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 08:00:00"),
+            },
+        ]
+    )
+
+    selected = select_baseline_snapshot(df, baseline_time_hours=4.0)
+
+    assert selected == 7
+
+
+def test_select_baseline_snapshot_falls_back_to_first_snapshot():
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "snapshot_num": None,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 08:00:00"),
+            },
+            {
+                "Bid #": 2,
+                "snapshot_num": 5,
+                "departure_timestamp": pd.Timestamp("2023-09-01 13:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 10:00:00"),
+            },
+        ]
+    )
+
+    selected = select_baseline_snapshot(df, baseline_time_hours=None)
+
+    assert selected == 5
+
+
+def test_resolve_locked_cells_identifies_matching_bid():
+    feature = ScenarioFeature(
+        key="item_count",
+        scope="bid",
+        label="Item count",
+        bid_label=2,
+    )
+    records = [
+        {"Bid #": 1, "item_count": 2},
+        {"Bid #": 2, "item_count": 3},
+    ]
+
+    locked = resolve_locked_cells(records, feature)
+
+    assert locked == {"bid_1": ["item_count"]}
+
+
+def test_resolve_locked_cells_returns_empty_for_non_bid_feature():
+    feature = ScenarioFeature(key="seats_available", scope="global", label="Seats")
+    records = [{"Bid #": 1, "item_count": 2}]
+
+    assert resolve_locked_cells(records, feature) == {}
 
 
 def test_build_adjustment_grid_applies_global_overrides():

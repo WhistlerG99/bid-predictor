@@ -33,6 +33,7 @@ from bid_predictor.ui import (
     compute_bid_label_map,
     extract_global_baseline_values,
     extract_baseline_snapshot,
+    select_baseline_snapshot,
     get_next_bid_label,
     load_dataset_cached,
     load_model_cached,
@@ -42,6 +43,7 @@ from bid_predictor.ui import (
     predict,
     recompute_usd_metrics,
     select_feature,
+    resolve_locked_cells,
     TIME_TO_DEPARTURE_SCENARIO_KEY,
     records_to_dataframe,
     safe_float,
@@ -1085,6 +1087,33 @@ def create_app() -> Dash:
 
         base_records = [prepare_bid_record(record) for record in baseline_df.to_dict("records")]
         base_records = sort_records_by_bid(base_records)
+        defaults = extract_global_baseline_values(baseline_df)
+        seats_default = defaults.get("seats_available")
+        if seats_default is not None:
+            seats_default = float(seats_default)
+        time_default = defaults.get(TIME_TO_DEPARTURE_SCENARIO_KEY)
+        if time_default is not None:
+            time_default = float(time_default)
+        baseline_snapshot_value = select_baseline_snapshot(baseline_df, time_default)
+        if (
+            seats_default is not None
+            or time_default is not None
+            or baseline_snapshot_value is not None
+        ):
+            for record in base_records:
+                if seats_default is not None:
+                    record["seats_available"] = seats_default
+                if time_default is not None:
+                    departure_value = record.get("departure_timestamp")
+                    if departure_value is None:
+                        continue
+                    departure_ts = pd.to_datetime(departure_value, errors="coerce")
+                    if pd.isna(departure_ts):
+                        continue
+                    current_ts = departure_ts - pd.to_timedelta(time_default, unit="hour")
+                    record["current_timestamp"] = current_ts
+                if baseline_snapshot_value is not None:
+                    record["snapshot_num"] = baseline_snapshot_value
         recompute_usd_metrics(base_records)
 
         serializable_records: List[Dict[str, object]] = []
@@ -1114,13 +1143,21 @@ def create_app() -> Dash:
         Output("scenario-feature-dropdown", "options"),
         Output("scenario-feature-dropdown", "value"),
         Input("scenario-records-store", "data"),
+        State("scenario-feature-dropdown", "value"),
     )
-    def populate_scenario_features(baseline_records: Optional[List[Dict[str, object]]]):
+    def populate_scenario_features(
+        baseline_records: Optional[List[Dict[str, object]]],
+        current_value: Optional[str],
+    ):
         baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df)
         options = [{"label": feature.label, "value": feature.encode()} for feature in features]
-        value = options[0]["value"] if options else None
-        return options, value
+        selected_value = None
+        if current_value and any(option["value"] == current_value for option in options):
+            selected_value = current_value
+        elif options:
+            selected_value = options[0]["value"]
+        return options, selected_value
 
     @app.callback(
         Output("scenario-baseline-seats", "value"),
@@ -1170,7 +1207,105 @@ def create_app() -> Dash:
                 seats_style = visible_style
                 time_style = visible_style
 
+        seats_numeric = safe_float(seats_value)
+        if seats_numeric is not None:
+            if float(seats_numeric).is_integer():
+                seats_value = int(round(seats_numeric))
+            else:
+                seats_value = round(float(seats_numeric), 4)
+
+        time_numeric = safe_float(time_value)
+        if time_numeric is not None:
+            if float(time_numeric).is_integer():
+                time_value = int(round(time_numeric))
+            else:
+                time_value = round(float(time_numeric), 4)
+
         return seats_value, time_value, seats_style, time_style
+
+    @app.callback(
+        Output("scenario-records-store", "data", allow_duplicate=True),
+        Input("scenario-baseline-seats", "value"),
+        Input("scenario-baseline-time-to-departure", "value"),
+        State("scenario-records-store", "data"),
+        prevent_initial_call=True,
+    )
+    def apply_scenario_baseline_overrides(
+        seats_value: Optional[float],
+        time_to_departure_value: Optional[float],
+        records: Optional[List[Dict[str, object]]],
+    ):
+        if not records:
+            return no_update
+
+        triggered = (
+            callback_context.triggered[0]["prop_id"].split(".")[0]
+            if callback_context.triggered
+            else None
+        )
+        if triggered not in {
+            "scenario-baseline-seats",
+            "scenario-baseline-time-to-departure",
+        }:
+            return no_update
+
+        seats_override = safe_float(seats_value)
+        time_override = safe_float(time_to_departure_value)
+
+        updated_records: List[Dict[str, object]] = []
+        changed = False
+
+        for record in records:
+            updated = dict(record)
+            if seats_override is not None:
+                existing_seats = safe_float(updated.get("seats_available"))
+                if (
+                    existing_seats is None
+                    or abs(existing_seats - seats_override) > 1e-6
+                ):
+                    changed = True
+                updated["seats_available"] = seats_value
+
+            current_value = updated.get("current_timestamp")
+            if isinstance(current_value, pd.Timestamp):
+                updated["current_timestamp"] = current_value.isoformat()
+
+            if time_override is not None:
+                departure_raw = updated.get("departure_timestamp")
+                if departure_raw in (None, ""):
+                    updated_records.append(updated)
+                    continue
+                departure_ts = pd.to_datetime(departure_raw, errors="coerce")
+                if pd.isna(departure_ts):
+                    updated_records.append(updated)
+                    continue
+                new_current_ts = departure_ts - pd.to_timedelta(
+                    time_override, unit="hour"
+                )
+                new_iso = new_current_ts.isoformat()
+                existing_current = updated.get("current_timestamp")
+                if isinstance(existing_current, pd.Timestamp):
+                    existing_iso = existing_current.isoformat()
+                elif existing_current in (None, ""):
+                    existing_iso = existing_current
+                else:
+                    existing_iso = str(existing_current)
+                if existing_iso != new_iso:
+                    changed = True
+                updated["current_timestamp"] = new_iso
+
+            updated_records.append(updated)
+
+        if not changed:
+            for original, updated in zip(records, updated_records):
+                if original != updated:
+                    changed = True
+                    break
+
+        if not changed:
+            return no_update
+
+        return updated_records
 
     @app.callback(
         Output("scenario-range-min", "value"),
@@ -1337,10 +1472,12 @@ def create_app() -> Dash:
         Output("scenario-bid-table", "style_data_conditional"),
         Input("scenario-records-store", "data"),
         Input("model-uri-store", "data"),
+        Input("scenario-feature-dropdown", "value"),
     )
     def render_scenario_table(
         records: Optional[List[Dict[str, object]]],
         model_uri: Optional[str],
+        feature_value: Optional[str],
     ):
         predictions: Dict[str, object] = {}
         if records and model_uri:
@@ -1362,6 +1499,11 @@ def create_app() -> Dash:
                                     predictions[column_id] = float(value)
                                 except (TypeError, ValueError):
                                     predictions[column_id] = value
+        decoded_feature = ScenarioFeature.decode(feature_value)
+        locked_cells = resolve_locked_cells(records, decoded_feature)
+
+        if locked_cells:
+            return build_bid_table(records, predictions, locked_cells=locked_cells)
         return build_bid_table(records, predictions)
 
     @app.callback(
@@ -1370,6 +1512,7 @@ def create_app() -> Dash:
         State("scenario-bid-table", "data"),
         State("scenario-bid-table", "columns"),
         State("scenario-records-store", "data"),
+        State("scenario-feature-dropdown", "value"),
         prevent_initial_call=True,
     )
     def persist_scenario_table_edits(
@@ -1377,11 +1520,20 @@ def create_app() -> Dash:
         table_data: Optional[List[Dict[str, object]]],
         columns: Optional[List[Dict[str, object]]],
         records: Optional[List[Dict[str, object]]],
+        feature_value: Optional[str],
     ):
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
 
-        updated_records = apply_table_edits(records, table_data, columns)
+        decoded_feature = ScenarioFeature.decode(feature_value)
+        locked_cells = resolve_locked_cells(records, decoded_feature)
+
+        updated_records = apply_table_edits(
+            records,
+            table_data,
+            columns,
+            locked_cells=locked_cells if locked_cells else None,
+        )
         if updated_records is None:
             return no_update
         return updated_records

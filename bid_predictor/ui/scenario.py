@@ -197,6 +197,91 @@ def extract_global_baseline_values(df: pd.DataFrame) -> Dict[str, Optional[float
     return baselines
 
 
+def resolve_locked_cells(
+    records: Optional[Sequence[Mapping[str, object]]],
+    feature: Optional[ScenarioFeature],
+) -> Dict[str, List[str]]:
+    """Return a mapping of bid column identifiers to locked feature names."""
+
+    locked: Dict[str, List[str]] = {}
+    if (
+        not records
+        or feature is None
+        or feature.scope != "bid"
+        or feature.bid_label is None
+        or not feature.key
+    ):
+        return locked
+
+    target_label = str(feature.bid_label)
+    for idx, record in enumerate(records):
+        label = record.get("Bid #") or record.get("bid_number")
+        if label is None:
+            continue
+        if str(label) == target_label:
+            locked[f"bid_{idx}"] = [feature.key]
+            break
+    return locked
+
+
+def select_baseline_snapshot(
+    df: pd.DataFrame, baseline_time_hours: Optional[float]
+) -> Optional[object]:
+    """Return the snapshot number aligned with the baseline current time.
+
+    The feature-sensitivity table should operate on a single snapshot so that all
+    bids share the same context.  We look for the snapshot whose time to
+    departure matches the global baseline override.  If the computed baseline
+    time does not correspond to any row, we fall back to the snapshot associated
+    with the first non-null ``current_timestamp`` value, or simply the first
+    available snapshot.
+    """
+
+    if df.empty or "snapshot_num" not in df.columns:
+        return None
+
+    snapshot_series = df["snapshot_num"]
+    valid_snapshots = snapshot_series.dropna()
+    if valid_snapshots.empty:
+        return None
+
+    def _to_python(value: object) -> object:
+        if isinstance(value, (np.generic, np.ndarray)):
+            try:
+                return value.item()
+            except Exception:
+                return value
+        return value
+
+    selected_snapshot: object = _to_python(valid_snapshots.iloc[0])
+
+    if baseline_time_hours is None:
+        return selected_snapshot
+
+    if {"departure_timestamp", "current_timestamp"}.issubset(df.columns):
+        departure = pd.to_datetime(df["departure_timestamp"], errors="coerce")
+        current = pd.to_datetime(df["current_timestamp"], errors="coerce")
+
+        if not departure.isna().all() and not current.isna().all():
+            deltas = (departure - current).dt.total_seconds() / 3600.0
+            differences = deltas.sub(float(baseline_time_hours)).abs()
+            match_mask = differences <= 1e-6
+            if match_mask.any():
+                matching = snapshot_series[match_mask].dropna()
+                if not matching.empty:
+                    return _to_python(matching.iloc[0])
+
+            current_values = current.dropna()
+            if not current_values.empty:
+                baseline_current = current_values.iloc[0]
+                time_match_mask = current == baseline_current
+                matching = snapshot_series[time_match_mask].dropna()
+                if not matching.empty:
+                    return _to_python(matching.iloc[0])
+
+    return selected_snapshot
+
+
 def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
     """Return carrier dropdown options for the scenario explorer."""
 
@@ -740,6 +825,7 @@ __all__ = [
     "compute_default_range",
     "extract_global_baseline_values",
     "extract_baseline_snapshot",
+    "select_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
 ]

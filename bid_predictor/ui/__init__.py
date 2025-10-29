@@ -37,8 +37,10 @@ from .scenario import (
     build_upgrade_options,
     compute_default_range,
     extract_baseline_snapshot,
+    select_baseline_snapshot,
     records_to_dataframe,
     select_feature,
+    resolve_locked_cells,
     TIME_TO_DEPARTURE_SCENARIO_KEY,
 )
 
@@ -73,8 +75,10 @@ __all__ = [
     "safe_float",
     "compute_default_range",
     "extract_baseline_snapshot",
+    "select_baseline_snapshot",
     "records_to_dataframe",
     "select_feature",
+    "resolve_locked_cells",
     "TIME_TO_DEPARTURE_SCENARIO_KEY",
     "sort_records_by_bid",
     "USD_MAX_COLUMN",
