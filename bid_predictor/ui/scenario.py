@@ -13,6 +13,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import yaml
 
+from .feature_roles import infer_feature_roles
 from .formatting import apply_bid_labels, compute_bid_label_map
 from .plotting import BAR_COLOR_SEQUENCE
 
@@ -171,22 +172,30 @@ def _lookup_range_override_for_key(key: str) -> Optional[RangeOverride]:
 def extract_global_baseline_values(df: pd.DataFrame) -> Dict[str, Optional[float]]:
     """Return baseline values for global scenario controls.
 
-    Only ``seats_available`` and the derived ``time to departure`` feature are
-    considered at the moment because they influence every bid in the
-    sensitivity analysis.  The returned dictionary is keyed by the column name
-    used inside :func:`build_adjustment_grid` when applying overrides.
+    The returned dictionary is keyed by the column name used inside
+    :func:`build_adjustment_grid` when applying overrides. All detected global
+    features (flight-wide values and competitor summaries) are included to
+    ensure they can be overridden consistently.
     """
 
     baselines: Dict[str, Optional[float]] = {}
     if df.empty:
         return baselines
 
-    if "seats_available" in df.columns:
-        seats_series = _coerce_numeric(df["seats_available"])
-        if seats_series is not None:
-            seats_series = seats_series.dropna()
-            if not seats_series.empty:
-                baselines["seats_available"] = float(seats_series.iloc[0])
+    roles = infer_feature_roles(df.to_dict("records"))
+
+    for column in roles.global_features:
+        if column not in df.columns:
+            continue
+        numeric = _coerce_numeric(df[column])
+        if numeric is not None:
+            numeric = numeric.dropna()
+            if not numeric.empty:
+                baselines[column] = float(numeric.iloc[0])
+            continue
+        series = df[column].dropna()
+        if not series.empty:
+            baselines[column] = series.iloc[0]
 
     time_to_departure = _compute_time_to_departure_hours(df)
     if time_to_departure is not None:
@@ -479,26 +488,12 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
         return []
 
     options: List[ScenarioFeature] = []
-    numeric_candidates = [
-        "item_count",
-        "usd_base_amount",
-        "offer_time",
-        "multiplier_fare_class",
-        "multiplier_loyalty",
-        "multiplier_success_history",
-        "multiplier_payment_type",
-        "usd_total_amount",
-    ]
-    global_candidates = [
-        "seats_available",
-        "available_inventory",
-    ]
-
+    roles = infer_feature_roles(df.to_dict("records"))
     available_columns = set(df.columns)
     label_series = df.get("Bid #")
 
     # Global numeric features that are consistent across bids
-    for column in global_candidates:
+    for column in roles.global_features:
         if column not in available_columns:
             continue
         numeric = _coerce_numeric(df[column])
@@ -506,7 +501,7 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
             continue
         label = column.replace("_", " ").title()
         override = _lookup_range_override_for_key(column)
-        is_integer = _infer_is_integer(numeric)
+        is_integer = column in roles.integer_features or _infer_is_integer(numeric)
         if override is not None and override.is_discrete is not None:
             is_integer = override.is_discrete
         options.append(
@@ -535,14 +530,14 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
 
     # Bid specific numeric features
     if label_series is not None and not label_series.dropna().empty:
-        for column in numeric_candidates:
+        for column in roles.bid_features:
             if column not in available_columns:
                 continue
             numeric = _coerce_numeric(df[column])
             if numeric is None:
                 continue
             override = _lookup_range_override_for_key(column)
-            is_integer = _infer_is_integer(numeric)
+            is_integer = column in roles.integer_features or _infer_is_integer(numeric)
             if override is not None and override.is_discrete is not None:
                 is_integer = override.is_discrete
             for bid_value in sorted(label_series.dropna().unique()):

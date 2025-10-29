@@ -2,12 +2,12 @@ import pandas as pd
 
 from bid_predictor.ui import (
     BID_IDENTIFIER_COLUMNS,
-    DISPLAY_FEATURE_ROWS,
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
     apply_bid_labels,
     compute_bid_label_map,
     get_next_bid_label,
+    infer_feature_roles,
     prepare_bid_record,
     recompute_usd_metrics,
     safe_float,
@@ -67,5 +67,26 @@ def test_safe_float_handles_invalid():
     assert safe_float(None) is None
 
 
-def test_display_feature_rows_contains_probability():
-    assert "Acceptance Probability" in DISPLAY_FEATURE_ROWS
+def test_infer_feature_roles_groups_features():
+    records = [
+        {
+            "Bid #": 1,
+            "usd_base_amount": 120,
+            "item_count": 1,
+            "seats_available": 5,
+            "usd_base_amount_50%": 110,
+        },
+        {
+            "Bid #": 2,
+            "usd_base_amount": 140,
+            "item_count": 2,
+            "seats_available": 5,
+            "usd_base_amount_50%": 110,
+        },
+    ]
+    roles = infer_feature_roles(records)
+    assert "usd_base_amount" in roles.bid_features
+    assert "item_count" in roles.bid_features
+    assert "seats_available" in roles.flight_features
+    assert "usd_base_amount_50%" in roles.competitor_features
+    assert "Acceptance Probability" in roles.display_features

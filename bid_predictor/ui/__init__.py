@@ -1,10 +1,6 @@
 """Helper utilities for the Dash-based UI."""
-from .constants import (
-    BID_IDENTIFIER_COLUMNS,
-    DISPLAY_FEATURE_ROWS,
-    USD_MAX_COLUMN,
-    USD_PERCENT_COLUMNS,
-)
+from .constants import BID_IDENTIFIER_COLUMNS, USD_MAX_COLUMN, USD_PERCENT_COLUMNS
+from .feature_roles import FeatureRoles, infer_feature_roles
 from ..data import (
     get_feature_columns,
     load_dataset_cached,
@@ -52,7 +48,7 @@ __all__ = [
     "BID_IDENTIFIER_COLUMNS",
     "BAR_COLOR_SEQUENCE",
     "compute_bid_label_map",
-    "DISPLAY_FEATURE_ROWS",
+    "FeatureRoles",
     "get_feature_columns",
     "get_next_bid_label",
     "normalize_offer_time",
@@ -62,6 +58,7 @@ __all__ = [
     "prepare_prediction_dataframe",
     "predict",
     "recompute_usd_metrics",
+    "infer_feature_roles",
     "ScenarioFeature",
     "ScenarioRange",
     "build_adjustment_grid",

@@ -6,7 +6,8 @@ from uuid import uuid4
 
 from dash import Dash, Input, Output, State, callback_context, no_update
 
-from ..constants import BID_IDENTIFIER_COLUMNS, DISPLAY_FEATURE_ROWS
+from ..constants import BID_IDENTIFIER_COLUMNS
+from ..feature_roles import infer_feature_roles
 from ..formatting import (
     get_next_bid_label,
     prepare_bid_record,
@@ -70,7 +71,8 @@ def register_record_callbacks(app: Dash) -> None:
             for identifier in BID_IDENTIFIER_COLUMNS:
                 if identifier in new_bid:
                     new_bid[identifier] = None
-            for feature in DISPLAY_FEATURE_ROWS:
+            roles = infer_feature_roles(current_records)
+            for feature in roles.display_features:
                 if feature != "Acceptance Probability":
                     new_bid.setdefault(feature, base.get(feature))
             new_bid["Bid #"] = get_next_bid_label(current_records)

@@ -168,3 +168,26 @@ def test_apply_table_edits_skips_locked_features():
     assert updated is not None
     assert updated[0]["item_count"] == 2
     assert updated[0]["usd_base_amount"] == 150.0
+
+
+def test_apply_table_edits_propagates_global_features():
+    records = [
+        {"Bid #": 1, "usd_base_amount": 100.0, "seats_available": 4},
+        {"Bid #": 2, "usd_base_amount": 120.0, "seats_available": 4},
+    ]
+
+    table_data = [
+        {"Feature": "usd_base_amount", "bid_0": 105.0, "bid_1": 125.0},
+        {"Feature": "seats_available", "bid_0": 6, "bid_1": 6},
+    ]
+    columns = [
+        {"id": "Feature", "name": "Feature"},
+        {"id": "bid_0", "name": "Bid 1"},
+        {"id": "bid_1", "name": "Bid 2"},
+    ]
+
+    updated = apply_table_edits(records, table_data, columns)
+
+    assert updated is not None
+    assert updated[0]["seats_available"] == 6
+    assert updated[1]["seats_available"] == 6

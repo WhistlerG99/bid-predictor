@@ -24,7 +24,8 @@ from ..formatting import (
     recompute_usd_metrics,
     sort_records_by_bid,
 )
-from ..constants import BID_IDENTIFIER_COLUMNS, DISPLAY_FEATURE_ROWS
+from ..constants import BID_IDENTIFIER_COLUMNS
+from ..feature_roles import infer_feature_roles
 
 
 ReturnType = Tuple[
@@ -100,8 +101,9 @@ def _add_bid(
         )
 
     base = dict(existing_records[0])
+    roles = infer_feature_roles(existing_records)
     new_bid = {key: base.get(key) for key in base}
-    for feature in DISPLAY_FEATURE_ROWS:
+    for feature in roles.display_features:
         if feature != "Acceptance Probability":
             new_bid.setdefault(feature, base.get(feature))
     for identifier in BID_IDENTIFIER_COLUMNS:
