@@ -24,7 +24,8 @@ from ..formatting import (
     recompute_usd_metrics,
     sort_records_by_bid,
 )
-from ..constants import BID_IDENTIFIER_COLUMNS, DISPLAY_FEATURE_ROWS
+from ..constants import BID_IDENTIFIER_COLUMNS
+from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 
 
 ReturnType = Tuple[
@@ -87,6 +88,7 @@ def _add_bid(
     summary: html.Div,
     existing_records: Sequence[Dict[str, object]],
     snapshot_meta: Optional[Dict[str, object]],
+    feature_config: Optional[Dict[str, object]],
 ) -> ReturnType:
     if not existing_records:
         return (
@@ -101,9 +103,21 @@ def _add_bid(
 
     base = dict(existing_records[0])
     new_bid = {key: base.get(key) for key in base}
-    for feature in DISPLAY_FEATURE_ROWS:
-        if feature != "Acceptance Probability":
-            new_bid.setdefault(feature, base.get(feature))
+    config = feature_config or DEFAULT_UI_FEATURE_CONFIG
+    display_features = [
+        feature
+        for feature in config.get("display_features", [])
+        if feature != "Acceptance Probability"
+    ]
+    if not display_features:
+        display_features = [
+            feature
+            for feature in DEFAULT_UI_FEATURE_CONFIG.get("display_features", [])
+            if feature != "Acceptance Probability"
+        ]
+
+    for feature in display_features:
+        new_bid.setdefault(feature, base.get(feature))
     for identifier in BID_IDENTIFIER_COLUMNS:
         if identifier in new_bid:
             new_bid[identifier] = None
@@ -342,6 +356,7 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
         State("removed-bids-store", "data"),
         State("baseline-bid-records-store", "data"),
         State("baseline-snapshot-meta-store", "data"),
+        State("feature-config-store", "data"),
     )
     def update_snapshot_view(
         snapshot_value: Optional[str],
@@ -362,6 +377,7 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
         removed_store: Optional[List[Dict[str, object]]],
         baseline_records_store: Optional[List[Dict[str, object]]],
         baseline_meta_store: Optional[Dict[str, object]],
+        feature_config: Optional[Dict[str, object]],
     ) -> ReturnType:
         triggered = (
             callback_context.triggered[0]["prop_id"].split(".")[0]
@@ -403,7 +419,12 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
             return _restore_snapshot(summary_block, baseline_records, baseline_meta)
 
         if triggered == "add-bid":
-            return _add_bid(summary_block, records_list, snapshot_meta)
+            return _add_bid(
+                summary_block,
+                records_list,
+                snapshot_meta,
+                feature_config,
+            )
 
         if triggered == "restore-bid":
             return _restore_bids(

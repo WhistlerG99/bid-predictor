@@ -6,7 +6,8 @@ from uuid import uuid4
 
 from dash import Dash, Input, Output, State, callback_context, no_update
 
-from ..constants import BID_IDENTIFIER_COLUMNS, DISPLAY_FEATURE_ROWS
+from ..constants import BID_IDENTIFIER_COLUMNS
+from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import (
     get_next_bid_label,
     prepare_bid_record,
@@ -32,6 +33,7 @@ def register_record_callbacks(app: Dash) -> None:
         State("scenario-bid-restore-selector", "value"),
         State("scenario-original-records-store", "data"),
         State("scenario-bid-table", "selected_columns"),
+        State("feature-config-store", "data"),
         prevent_initial_call=True,
     )
     def update_scenario_records(
@@ -45,6 +47,7 @@ def register_record_callbacks(app: Dash) -> None:
         restore_selector: Optional[List[str]],
         original_records: Optional[List[Dict[str, object]]],
         selected_columns: Optional[List[str]],
+        feature_config: Optional[Dict[str, object]],
     ):
         triggered = (
             callback_context.triggered[0]["prop_id"].split(".")[0]
@@ -70,9 +73,22 @@ def register_record_callbacks(app: Dash) -> None:
             for identifier in BID_IDENTIFIER_COLUMNS:
                 if identifier in new_bid:
                     new_bid[identifier] = None
-            for feature in DISPLAY_FEATURE_ROWS:
-                if feature != "Acceptance Probability":
-                    new_bid.setdefault(feature, base.get(feature))
+            config = feature_config or DEFAULT_UI_FEATURE_CONFIG
+            display_features = [
+                feature
+                for feature in config.get("display_features", [])
+                if feature != "Acceptance Probability"
+            ]
+            if not display_features:
+                display_features = [
+                    feature
+                    for feature in DEFAULT_UI_FEATURE_CONFIG.get(
+                        "display_features", []
+                    )
+                    if feature != "Acceptance Probability"
+                ]
+            for feature in display_features:
+                new_bid.setdefault(feature, base.get(feature))
             new_bid["Bid #"] = get_next_bid_label(current_records)
             new_bid.setdefault("offer_status", "pending")
             prepared = prepare_bid_record(new_bid)

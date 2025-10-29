@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -12,7 +13,7 @@ import pandas as pd
 import pyarrow.dataset as ds
 from pyarrow import fs as pyfs
 
-from .feature_config import _GROUPBY_KEY_FEATURES, load_feature_config
+from .feature_config import _GROUPBY_KEY_FEATURES
 from .utils import detect_execution_environment
 
 
@@ -182,17 +183,20 @@ def load_model_cached(model_uri: str):
     return mlflow.sklearn.load_model(model_uri)
 
 
-def get_feature_columns() -> Tuple[List[str], List[str]]:
-    """Return the feature and categorical column lists from the feature config."""
+def get_model_feature_config(model_uri: str) -> Optional[Mapping[str, object]]:
+    """Return the raw feature configuration stored on the cached model."""
 
-    feature_config = load_feature_config()
-    features = list(feature_config["pre_features"])
-    categorical = list(feature_config["cat_features"])
-    return features, categorical
+    model = load_model_cached(model_uri)
+    for attr in ("feature_config_", "feature_config"):
+        config = getattr(model, attr, None)
+        if config:
+            return copy.deepcopy(config)
+    return None
 
 
 def prepare_prediction_dataframe(
-    table_records: Iterable[Dict[str, object]]
+    table_records: Iterable[Dict[str, object]],
+    feature_config: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> pd.DataFrame:
     """Convert edited table records back into a feature dataframe."""
 
@@ -229,8 +233,14 @@ def prepare_prediction_dataframe(
         ["travel_date", "current_timestamp", "departure_timestamp"],
     )
 
-    features, _ = get_feature_columns()
-    feature_df = df.reindex(columns=features)
+    features: Sequence[str] = ()
+    if feature_config is not None:
+        features = feature_config.get("pre_features", []) or ()
+
+    if features:
+        feature_df = df.reindex(columns=list(features))
+    else:
+        feature_df = df.copy()
     extra_columns = [col for col in df.columns if col not in feature_df.columns]
     for column in extra_columns:
         feature_df[column] = df[column]
@@ -307,7 +317,7 @@ __all__ = [
     "load_dataset",
     "load_dataset_cached",
     "load_model_cached",
-    "get_feature_columns",
+    "get_model_feature_config",
     "prepare_prediction_dataframe",
     "prepare_features",
     "resolve_dataset_path",

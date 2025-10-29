@@ -24,8 +24,14 @@ ReturnType = Tuple[
 ]
 
 
-def _apply_defaults(base_records: List[Dict[str, object]], baseline_df: pd.DataFrame) -> None:
-    defaults = extract_global_baseline_values(baseline_df)
+def _apply_defaults(
+    base_records: List[Dict[str, object]],
+    baseline_df: pd.DataFrame,
+    feature_config: Optional[Dict[str, object]],
+) -> None:
+    defaults = extract_global_baseline_values(
+        baseline_df, feature_config=feature_config
+    )
     seats_default = defaults.get("seats_available")
     if seats_default is not None:
         try:
@@ -57,6 +63,11 @@ def _apply_defaults(base_records: List[Dict[str, object]], baseline_df: pd.DataF
             record["current_timestamp"] = current_ts
         if baseline_snapshot_value is not None:
             record["snapshot_num"] = baseline_snapshot_value
+        for key, value in defaults.items():
+            if key in {"seats_available", TIME_TO_DEPARTURE_SCENARIO_KEY}:
+                continue
+            if value is not None:
+                record[key] = value
 
 
 def _serialize_records(records: List[Dict[str, object]]) -> List[Dict[str, object]]:
@@ -93,6 +104,7 @@ def register_baseline_callback(app: Dash) -> None:
         Input("scenario-travel-date-dropdown", "value"),
         Input("scenario-upgrade-dropdown", "value"),
         State("dataset-path-store", "data"),
+        State("feature-config-store", "data"),
     )
     def update_scenario_baseline(
         carrier: Optional[str],
@@ -100,6 +112,7 @@ def register_baseline_callback(app: Dash) -> None:
         travel_date: Optional[str],
         upgrade_type: Optional[str],
         dataset_path: Optional[str],
+        feature_config: Optional[Dict[str, object]],
     ) -> ReturnType:
         if not dataset_path:
             warning = "Load a dataset to explore scenarios."
@@ -131,7 +144,7 @@ def register_baseline_callback(app: Dash) -> None:
 
         base_records = [prepare_bid_record(record) for record in baseline_df.to_dict("records")]
         base_records = sort_records_by_bid(base_records)
-        _apply_defaults(base_records, baseline_df)
+        _apply_defaults(base_records, baseline_df, feature_config)
         recompute_usd_metrics(base_records)
 
         serializable_records = _serialize_records(base_records)
