@@ -52,8 +52,13 @@ def register_table_callbacks(app: Dash) -> None:
         locked_cells = resolve_locked_cells(records, decoded_feature)
 
         if locked_cells:
-            return build_bid_table(records, predictions, locked_cells=locked_cells)
-        return build_bid_table(records, predictions)
+            return build_bid_table(
+                records,
+                predictions,
+                locked_cells=locked_cells,
+                model_uri=model_uri,
+            )
+        return build_bid_table(records, predictions, model_uri=model_uri)
 
     @app.callback(
         Output("scenario-bid-delete-selector", "options"),
@@ -96,6 +101,7 @@ def register_table_callbacks(app: Dash) -> None:
         State("scenario-bid-table", "columns"),
         State("scenario-records-store", "data"),
         State("scenario-feature-dropdown", "value"),
+        State("model-uri-store", "data"),
         prevent_initial_call=True,
     )
     def persist_scenario_table_edits(
@@ -104,6 +110,7 @@ def register_table_callbacks(app: Dash) -> None:
         columns: Optional[List[Dict[str, object]]],
         records: Optional[List[Dict[str, object]]],
         feature_value: Optional[str],
+        model_uri: Optional[str],
     ):
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
@@ -116,6 +123,7 @@ def register_table_callbacks(app: Dash) -> None:
             table_data,
             columns,
             locked_cells=locked_cells if locked_cells else None,
+            model_uri=model_uri,
         )
         if updated_records is None:
             return no_update

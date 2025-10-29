@@ -136,6 +136,10 @@ def infer_feature_roles(
                 flight_features.append(column)
             continue
 
+        if _is_competitor_feature(column):
+            competitor_features.append(column)
+            continue
+
         if _is_flight_feature(column) and column not in flight_features:
             flight_features.append(column)
         bid_features.append(column)

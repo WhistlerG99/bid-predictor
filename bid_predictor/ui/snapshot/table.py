@@ -17,12 +17,14 @@ def register_table_callbacks(app: Dash) -> None:
         Output("bid-table", "style_data_conditional"),
         Input("bid-records-store", "data"),
         Input("prediction-store", "data"),
+        Input("model-uri-store", "data"),
     )
     def render_bid_table(
         records: Optional[List[Dict[str, object]]],
         predictions: Optional[Dict[str, float]],
+        model_uri: Optional[str],
     ):
-        return build_bid_table(records, predictions)
+        return build_bid_table(records, predictions, model_uri=model_uri)
 
     @app.callback(
         Output("bid-delete-selector", "options"),
@@ -62,6 +64,7 @@ def register_table_callbacks(app: Dash) -> None:
         State("bid-table", "data"),
         State("bid-table", "columns"),
         State("bid-records-store", "data"),
+        State("model-uri-store", "data"),
         prevent_initial_call=True,
     )
     def persist_table_edits(
@@ -69,11 +72,17 @@ def register_table_callbacks(app: Dash) -> None:
         table_data: Optional[List[Dict[str, object]]],
         columns: Optional[List[Dict[str, object]]],
         records: Optional[List[Dict[str, object]]],
+        model_uri: Optional[str],
     ):
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
 
-        updated_records = apply_table_edits(records, table_data, columns)
+        updated_records = apply_table_edits(
+            records,
+            table_data,
+            columns,
+            model_uri=model_uri,
+        )
         if updated_records is None:
             return no_update
         return updated_records

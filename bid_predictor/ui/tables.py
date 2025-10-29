@@ -1,8 +1,12 @@
 """Shared helpers for rendering and editing bid tables in the Dash UI."""
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence
+from dataclasses import dataclass
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set
 
+import pandas as pd
+
+from ..data import load_model_cached
 from .constants import USD_MAX_COLUMN, USD_PERCENT_COLUMNS
 from .feature_roles import FeatureRoles, infer_feature_roles
 from .formatting import normalize_offer_time, recompute_usd_metrics, safe_float
@@ -26,12 +30,150 @@ def _format_numeric(feature: str, value: object, roles: FeatureRoles) -> object:
     return numeric
 
 
+def _unique(sequence: Sequence[str]) -> List[str]:
+    seen: Set[str] = set()
+    ordered: List[str] = []
+    for item in sequence:
+        if item in seen:
+            continue
+        seen.add(item)
+        ordered.append(item)
+    return ordered
+
+
+def _looks_like_flight_feature(name: str) -> bool:
+    lowercase = name.lower()
+    if any(token in lowercase for token in ("seat", "inventory", "departure")):
+        return True
+    if lowercase.endswith("_hours") or lowercase.endswith("_days"):
+        return True
+    if "flight_" in lowercase:
+        return True
+    if "time_to_departure" in lowercase or "time_until" in lowercase:
+        return True
+    return False
+
+
+def _transform_records_with_model(
+    model_uri: Optional[str],
+    df: pd.DataFrame,
+) -> Optional[pd.DataFrame]:
+    if not model_uri or df.empty:
+        return None
+
+    try:
+        model = load_model_cached(model_uri)
+    except Exception:
+        return None
+
+    steps = getattr(model, "steps", None)
+    if not steps:
+        return None
+
+    current = df.copy()
+    try:
+        for _, transformer in steps:
+            if not hasattr(transformer, "transform"):
+                break
+            current = transformer.transform(current)
+            if isinstance(current, pd.DataFrame):
+                current = current.copy()
+            else:
+                return None
+    except Exception:
+        return None
+
+    if not isinstance(current, pd.DataFrame):
+        return None
+    return current.reset_index(drop=True)
+
+
+@dataclass(frozen=True)
+class _TableFeaturePlan:
+    roles: FeatureRoles
+    display_features: List[str]
+    competitor_features: Set[str]
+    model_features: List[str]
+    feature_frame: Optional[pd.DataFrame]
+
+
+def _prepare_feature_plan(
+    records: Sequence[Dict[str, object]],
+    model_uri: Optional[str],
+    feature_roles: Optional[FeatureRoles] = None,
+) -> Optional[_TableFeaturePlan]:
+    if not records:
+        return None
+
+    df = pd.DataFrame(list(records))
+    feature_frame = _transform_records_with_model(model_uri, df)
+
+    if feature_frame is not None:
+        frame_records = feature_frame.to_dict("records")
+        enriched: List[Dict[str, object]] = []
+        for idx, record in enumerate(records):
+            merged = dict(record)
+            if idx < len(frame_records):
+                for key, value in frame_records[idx].items():
+                    if key not in merged or merged[key] in (None, ""):
+                        merged[key] = value
+            enriched.append(merged)
+        roles = feature_roles or infer_feature_roles(enriched)
+        model_columns = list(feature_frame.columns)
+    else:
+        roles = feature_roles or infer_feature_roles(records)
+        model_columns = []
+
+    model_feature_set = set(model_columns) if model_columns else None
+
+    bid_features = [
+        feature
+        for feature in roles.bid_features
+        if model_feature_set is None or feature in model_feature_set
+    ]
+    competitor_features = [
+        feature
+        for feature in roles.competitor_features
+        if model_feature_set is None or feature in model_feature_set
+    ]
+
+    if not bid_features:
+        fallback_candidates = [
+            feature
+            for feature in roles.display_features
+            if feature not in roles.competitor_features
+            and feature not in {"offer_status", "Acceptance Probability"}
+            and not _looks_like_flight_feature(str(feature))
+        ]
+        bid_features = _unique(fallback_candidates)
+
+    if model_columns:
+        ordered = [
+            feature
+            for feature in model_columns
+            if feature in set(bid_features) | set(competitor_features)
+        ]
+    else:
+        ordered = bid_features + competitor_features
+
+    display_features = _unique(ordered)
+
+    return _TableFeaturePlan(
+        roles=roles,
+        display_features=display_features,
+        competitor_features=set(competitor_features),
+        model_features=model_columns,
+        feature_frame=feature_frame,
+    )
+
+
 def build_bid_table(
     records: Optional[Sequence[Dict[str, object]]],
     predictions: Optional[Dict[str, object]],
     *,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
     feature_roles: Optional[FeatureRoles] = None,
+    model_uri: Optional[str] = None,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
     """Return Dash DataTable configuration for bid feature editing."""
 
@@ -39,8 +181,26 @@ def build_bid_table(
         columns = [{"name": "Feature", "id": "Feature", "editable": False}]
         return columns, [], []
 
-    roles = feature_roles or infer_feature_roles(records)
-    display_features = roles.display_features
+    plan = _prepare_feature_plan(records, model_uri, feature_roles)
+    if plan is None:
+        roles = feature_roles or infer_feature_roles(records)
+        display_features: List[str] = []
+        competitor_features: Set[str] = set()
+        feature_rows: List[Dict[str, object]] = []
+    else:
+        roles = plan.roles
+        display_features = list(plan.display_features)
+        competitor_features = plan.competitor_features
+        if plan.feature_frame is not None:
+            feature_rows = plan.feature_frame.to_dict("records")
+        else:
+            feature_rows = []
+
+    if "offer_status" in roles.display_features and "offer_status" not in display_features:
+        display_features.append("offer_status")
+
+    if "Acceptance Probability" not in display_features:
+        display_features.append("Acceptance Probability")
 
     columns: List[Dict[str, object]] = [
         {"name": "Feature", "id": "Feature", "editable": False}
@@ -81,6 +241,11 @@ def build_bid_table(
                 continue
 
             value = record.get(feature)
+            if feature in competitor_features:
+                if idx < len(feature_rows):
+                    value = feature_rows[idx].get(feature, value)
+            elif value is None and idx < len(feature_rows):
+                value = feature_rows[idx].get(feature, value)
             if feature in roles.numeric_features:
                 row[column_id] = _format_numeric(feature, value, roles)
             else:
@@ -118,6 +283,16 @@ def build_bid_table(
                 }
             )
 
+    for feature in sorted(competitor_features):
+        style_rules.append(
+            {
+                "if": {"filter_query": f'{{Feature}} = "{feature}"'},
+                "pointerEvents": "none",
+                "backgroundColor": "#f8fafc",
+                "color": "#94a3b8",
+            }
+        )
+
     return columns, data_rows, style_rules
 
 
@@ -127,18 +302,26 @@ def apply_table_edits(
     columns: Optional[Sequence[Dict[str, object]]],
     *,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
+    model_uri: Optional[str] = None,
+    feature_roles: Optional[FeatureRoles] = None,
 ) -> Optional[List[Dict[str, object]]]:
     """Update bid records based on edited Dash DataTable values."""
 
     if not records or not table_data or not columns:
         return None
 
+    plan = _prepare_feature_plan(records, model_uri, feature_roles)
+    if plan is None:
+        return None
+
+    roles = plan.roles
+    display_features = list(plan.display_features)
+    if "offer_status" in roles.display_features and "offer_status" not in display_features:
+        display_features.append("offer_status")
+
     updated_records = [dict(record) for record in records]
     feature_map = {row.get("Feature"): row for row in table_data}
     bid_columns = [column for column in columns if column.get("id") != "Feature"]
-
-    roles = infer_feature_roles(records)
-    display_features = roles.display_features
 
     locked_map: Dict[str, set[str]] = {}
     if locked_cells:
@@ -170,8 +353,11 @@ def apply_table_edits(
             if feature == USD_MAX_COLUMN:
                 continue
 
-            if feature in roles.global_features:
+            if feature in roles.flight_features:
                 global_updates[feature] = value
+                continue
+
+            if feature in plan.competitor_features:
                 continue
 
             if feature in roles.numeric_features:
@@ -188,7 +374,25 @@ def apply_table_edits(
                 else:
                     record[feature] = value
 
-    recompute_usd_metrics(updated_records)
+    updated_plan = _prepare_feature_plan(updated_records, model_uri, roles)
+    if updated_plan and updated_plan.feature_frame is not None:
+        frame_rows = updated_plan.feature_frame.to_dict("records")
+        for idx, record in enumerate(updated_records):
+            if idx >= len(frame_rows):
+                break
+            row_values = frame_rows[idx]
+            for feature in updated_plan.competitor_features:
+                if feature not in row_values:
+                    continue
+                if feature in roles.numeric_features:
+                    record[feature] = _format_numeric(
+                        feature, row_values.get(feature), roles
+                    )
+                else:
+                    record[feature] = row_values.get(feature)
+    else:
+        recompute_usd_metrics(updated_records)
+
     return updated_records
 
 

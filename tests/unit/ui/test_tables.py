@@ -1,4 +1,61 @@
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
+
 from bid_predictor.ui.tables import apply_table_edits, build_bid_table
+
+
+def _to_frame(data):
+    if isinstance(data, pd.DataFrame):
+        return data.copy()
+    return pd.DataFrame(data)
+
+
+class _IdentityTransformer:
+    def transform(self, data):
+        return _to_frame(data)
+
+
+class _CompetitorTransformer:
+    def transform(self, data):
+        df = _to_frame(data)
+        if "usd_base_amount" not in df.columns:
+            df["usd_base_amount"] = np.nan
+        values = df["usd_base_amount"].astype(float).to_numpy()
+        results = []
+        for idx in range(len(df)):
+            peers = [
+                values[j]
+                for j in range(len(values))
+                if j != idx and not np.isnan(values[j])
+            ]
+            results.append(float(np.median(peers)) if peers else None)
+        df["usd_base_amount_50%"] = results
+        return df
+
+
+class _ReduceTransformer:
+    def __init__(self, columns):
+        self.columns = columns
+
+    def transform(self, data):
+        df = _to_frame(data)
+        for column in self.columns:
+            if column not in df.columns:
+                df[column] = None
+        return df[self.columns]
+
+
+def _fake_model():
+    return SimpleNamespace(
+        steps=[
+            ("identity", _IdentityTransformer()),
+            ("competitor", _CompetitorTransformer()),
+            ("reduce", _ReduceTransformer(["usd_base_amount", "item_count", "usd_base_amount_50%"])),
+            ("clf", object()),
+        ]
+    )
 
 
 def test_build_bid_table_formats_predictions():
@@ -170,15 +227,66 @@ def test_apply_table_edits_skips_locked_features():
     assert updated[0]["usd_base_amount"] == 150.0
 
 
-def test_apply_table_edits_propagates_global_features():
+def test_build_bid_table_uses_model_features_and_locks_competitors(monkeypatch):
+    monkeypatch.setattr("bid_predictor.ui.tables.load_model_cached", lambda uri: _fake_model())
+    model_uri = "model://fake"
+
     records = [
-        {"Bid #": 1, "usd_base_amount": 100.0, "seats_available": 4},
-        {"Bid #": 2, "usd_base_amount": 120.0, "seats_available": 4},
+        {
+            "Bid #": 1,
+            "item_count": 2,
+            "usd_base_amount": 100.0,
+            "conf_num": "ABC",
+        },
+        {
+            "Bid #": 2,
+            "item_count": 3,
+            "usd_base_amount": 80.0,
+            "conf_num": "DEF",
+        },
+    ]
+
+    columns, data_rows, styles = build_bid_table(records, {}, model_uri=model_uri)
+
+    features = [row["Feature"] for row in data_rows]
+    assert "conf_num" not in features
+    assert "usd_base_amount_50%" in features
+
+    competitor_rule = next(
+        rule
+        for rule in styles
+        if rule.get("if", {}).get("filter_query") == '{Feature} = "usd_base_amount_50%"'
+    )
+    assert competitor_rule["pointerEvents"] == "none"
+
+    competitor_row = next(row for row in data_rows if row["Feature"] == "usd_base_amount_50%")
+    assert competitor_row["bid_0"] == 80.0
+    assert competitor_row["bid_1"] == 100.0
+
+
+def test_apply_table_edits_recomputes_competitor_features(monkeypatch):
+    monkeypatch.setattr("bid_predictor.ui.tables.load_model_cached", lambda uri: _fake_model())
+    model_uri = "model://fake"
+
+    records = [
+        {
+            "Bid #": 1,
+            "item_count": 2,
+            "usd_base_amount": 100.0,
+            "usd_base_amount_50%": 80.0,
+        },
+        {
+            "Bid #": 2,
+            "item_count": 3,
+            "usd_base_amount": 80.0,
+            "usd_base_amount_50%": 100.0,
+        },
     ]
 
     table_data = [
-        {"Feature": "usd_base_amount", "bid_0": 105.0, "bid_1": 125.0},
-        {"Feature": "seats_available", "bid_0": 6, "bid_1": 6},
+        {"Feature": "usd_base_amount", "bid_0": 120.0, "bid_1": 90.0},
+        {"Feature": "usd_base_amount_50%", "bid_0": 0.0, "bid_1": 0.0},
+        {"Feature": "item_count", "bid_0": 2, "bid_1": 3},
     ]
     columns = [
         {"id": "Feature", "name": "Feature"},
@@ -186,8 +294,16 @@ def test_apply_table_edits_propagates_global_features():
         {"id": "bid_1", "name": "Bid 2"},
     ]
 
-    updated = apply_table_edits(records, table_data, columns)
+    updated = apply_table_edits(
+        records,
+        table_data,
+        columns,
+        model_uri=model_uri,
+    )
 
     assert updated is not None
-    assert updated[0]["seats_available"] == 6
-    assert updated[1]["seats_available"] == 6
+    assert updated[0]["usd_base_amount"] == 120.0
+    assert updated[1]["usd_base_amount"] == 90.0
+    # competitor feature recomputed from updated amounts (other bid's median)
+    assert updated[0]["usd_base_amount_50%"] == 90.0
+    assert updated[1]["usd_base_amount_50%"] == 120.0
