@@ -1,3 +1,5 @@
+from typing import List, Optional
+
 import pandas as pd
 import pytest
 
@@ -5,6 +7,7 @@ from bid_predictor.ui.scenario import (
     TIME_TO_DEPARTURE_SCENARIO_KEY,
     ScenarioFeature,
     build_adjustment_grid,
+    build_feature_options,
     extract_baseline_snapshot,
     extract_global_baseline_values,
     select_baseline_snapshot,
@@ -178,6 +181,60 @@ def test_resolve_locked_cells_returns_empty_for_non_bid_feature():
     records = [{"Bid #": 1, "item_count": 2}]
 
     assert resolve_locked_cells(records, feature) == {}
+
+
+def test_build_feature_options_filters_to_model_features(monkeypatch):
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "seats_available": 5,
+                "usd_base_amount": 100.0,
+                "usd_base_amount_50pct": 95.0,
+                "item_count": 1,
+                "days_before_departure": 2.0,
+                "departure_timestamp": pd.Timestamp("2023-09-01 12:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-01 10:00:00"),
+            },
+            {
+                "Bid #": 2,
+                "seats_available": 5,
+                "usd_base_amount": 120.0,
+                "usd_base_amount_50pct": 110.0,
+                "item_count": 2,
+                "days_before_departure": 2.0,
+                "departure_timestamp": pd.Timestamp("2023-09-02 15:00:00"),
+                "current_timestamp": pd.Timestamp("2023-09-02 13:00:00"),
+            },
+        ]
+    )
+
+    def _fake_model_features(model_uri: Optional[str]) -> List[str]:
+        assert model_uri == "models://test"
+        return [
+            "seats_available",
+            "usd_base_amount",
+            "usd_base_amount_50pct",
+            "days_before_departure",
+        ]
+
+    monkeypatch.setattr(
+        "bid_predictor.ui.scenario.get_model_feature_names",
+        _fake_model_features,
+    )
+
+    options = build_feature_options(df, model_uri="models://test")
+
+    global_keys = {opt.key for opt in options if opt.scope == "global"}
+    assert "seats_available" in global_keys
+    assert "days_before_departure" in global_keys
+    assert TIME_TO_DEPARTURE_SCENARIO_KEY in global_keys
+
+    bid_entries = {(opt.key, opt.bid_label) for opt in options if opt.scope == "bid"}
+    assert bid_entries == {("usd_base_amount", 1), ("usd_base_amount", 2)}
+
+    assert "usd_base_amount_50pct" not in {opt.key for opt in options}
+    assert "item_count" not in {opt.key for opt in options}
 
 
 def test_build_adjustment_grid_applies_global_overrides():

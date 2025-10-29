@@ -6,7 +6,7 @@ import math
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -16,6 +16,7 @@ import yaml
 from .feature_roles import infer_feature_roles
 from .formatting import apply_bid_labels, compute_bid_label_map
 from .plotting import BAR_COLOR_SEQUENCE
+from .tables import get_model_feature_names
 
 _TIME_TO_DEPARTURE_KEY = "__time_to_departure_hours__"
 TIME_TO_DEPARTURE_SCENARIO_KEY = _TIME_TO_DEPARTURE_KEY
@@ -483,7 +484,10 @@ def _compute_time_to_departure_hours(df: pd.DataFrame) -> Optional[pd.Series]:
     return delta
 
 
-def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
+def build_feature_options(
+    df: pd.DataFrame,
+    model_uri: Optional[str] = None,
+) -> List[ScenarioFeature]:
     if df.empty:
         return []
 
@@ -491,10 +495,26 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
     roles = infer_feature_roles(df.to_dict("records"))
     available_columns = set(df.columns)
     label_series = df.get("Bid #")
+    model_features = get_model_feature_names(model_uri)
+    model_feature_set: Optional[Set[str]] = set(model_features) if model_features else None
 
-    # Global numeric features that are consistent across bids
-    for column in roles.global_features:
+    def _is_model_enabled(column: str) -> bool:
+        if model_feature_set is None:
+            return True
+        if column in model_feature_set:
+            return True
+        indicator_key = f"{column}_na"
+        if indicator_key in model_feature_set:
+            return True
+        return False
+
+    # Global numeric features scoped to the flight
+    for column in roles.flight_features:
+        if column == "num_offers":
+            continue
         if column not in available_columns:
+            continue
+        if not _is_model_enabled(column):
             continue
         numeric = _coerce_numeric(df[column])
         if numeric is None:
@@ -515,8 +535,18 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
         )
 
     # Derived time to departure feature
+    include_time_feature = False
     time_to_departure = _compute_time_to_departure_hours(df)
     if time_to_departure is not None and not time_to_departure.isna().all():
+        if model_feature_set is None:
+            include_time_feature = True
+        else:
+            for feature in model_feature_set:
+                lowered = feature.lower()
+                if "depart" in lowered or "time_to_departure" in lowered:
+                    include_time_feature = True
+                    break
+    if include_time_feature:
         options.append(
             ScenarioFeature(
                 key=_TIME_TO_DEPARTURE_KEY,
@@ -530,8 +560,13 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
 
     # Bid specific numeric features
     if label_series is not None and not label_series.dropna().empty:
+        unique_bids = sorted(label_series.dropna().unique())
         for column in roles.bid_features:
+            if column == "num_offers":
+                continue
             if column not in available_columns:
+                continue
+            if not _is_model_enabled(column):
                 continue
             numeric = _coerce_numeric(df[column])
             if numeric is None:
@@ -540,7 +575,7 @@ def build_feature_options(df: pd.DataFrame) -> List[ScenarioFeature]:
             is_integer = column in roles.integer_features or _infer_is_integer(numeric)
             if override is not None and override.is_discrete is not None:
                 is_integer = override.is_discrete
-            for bid_value in sorted(label_series.dropna().unique()):
+            for bid_value in unique_bids:
                 label = f"Bid {int(bid_value)} – {column.replace('_', ' ')}"
                 options.append(
                     ScenarioFeature(

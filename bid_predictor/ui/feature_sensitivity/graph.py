@@ -46,7 +46,7 @@ def register_graph_callback(app: Dash) -> None:
         baseline_time_to_departure: Optional[float],
     ):
         baseline_df = records_to_dataframe(baseline_records)
-        features = build_feature_options(baseline_df)
+        features = build_feature_options(baseline_df, model_uri=model_uri)
         feature = select_feature(features, feature_value)
 
         overrides: Dict[str, float] = {}

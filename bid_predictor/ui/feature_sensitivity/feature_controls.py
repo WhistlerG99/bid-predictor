@@ -24,14 +24,16 @@ def register_feature_callbacks(app: Dash) -> None:
         Output("scenario-feature-dropdown", "options"),
         Output("scenario-feature-dropdown", "value"),
         Input("scenario-records-store", "data"),
+        Input("model-uri-store", "data"),
         State("scenario-feature-dropdown", "value"),
     )
     def populate_scenario_features(
         baseline_records: Optional[List[Dict[str, object]]],
+        model_uri: Optional[str],
         current_value: Optional[str],
     ):
         baseline_df = records_to_dataframe(baseline_records)
-        features = build_feature_options(baseline_df)
+        features = build_feature_options(baseline_df, model_uri=model_uri)
         options = [{"label": feature.label, "value": feature.encode()} for feature in features]
         selected_value = None
         if current_value and any(option["value"] == current_value for option in options):

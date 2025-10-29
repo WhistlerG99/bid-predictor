@@ -110,6 +110,20 @@ def _collect_model_feature_names(model: object) -> List[str]:
     return features
 
 
+def get_model_feature_names(model_uri: Optional[str]) -> List[str]:
+    """Return the ordered feature names exposed by a fitted model."""
+
+    if not model_uri:
+        return []
+
+    try:
+        model = load_model_cached(model_uri)
+    except Exception:
+        return []
+
+    return _unique(_collect_model_feature_names(model))
+
+
 def _transform_records_with_model(
     model_uri: Optional[str],
     df: pd.DataFrame,
@@ -481,4 +495,4 @@ def apply_table_edits(
     return updated_records
 
 
-__all__ = ["apply_table_edits", "build_bid_table"]
+__all__ = ["apply_table_edits", "build_bid_table", "get_model_feature_names"]

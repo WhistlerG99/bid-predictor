@@ -29,13 +29,15 @@ def register_range_callback(app: Dash) -> None:
         Output("scenario-range-feedback", "children"),
         Input("scenario-records-store", "data"),
         Input("scenario-feature-dropdown", "value"),
+        Input("model-uri-store", "data"),
     )
     def configure_scenario_range(
         baseline_records: Optional[list],
         feature_value: Optional[str],
+        model_uri: Optional[str],
     ):
         baseline_df = records_to_dataframe(baseline_records)
-        features = build_feature_options(baseline_df)
+        features = build_feature_options(baseline_df, model_uri=model_uri)
         feature = select_feature(features, feature_value)
         if baseline_df.empty or feature is None:
             return None, None, 1.0, 1.0, True, True, 25, "", ""
