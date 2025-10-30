@@ -305,6 +305,7 @@ def prepare_features(
 
 
 def _coerce_datetime_columns(data: pd.DataFrame, columns: Iterable[str]) -> None:
+    """Convert the specified columns to pandas datetime dtype when present."""
     for column in columns:
         if column in data.columns:
             data[column] = pd.to_datetime(data[column])

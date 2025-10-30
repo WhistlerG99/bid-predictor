@@ -26,6 +26,17 @@ BAR_COLOR_SEQUENCE = (
 
 
 def build_prediction_plot(df: pd.DataFrame) -> go.Figure:
+    """Create a grouped bar chart showing acceptance probability over time.
+
+    The plot aggregates records by bid, sorts each series by time to departure
+    (deriving the column when necessary) and overlays an optional line trace for
+    seats available.  Colour palettes are chosen to provide consistent styling
+    across the UI, and a descriptive hover tooltip is constructed so analysts
+    can see the bid number, snapshot identifier and probability for each bar.
+    When no predictions are present an empty figure with an explanatory title is
+    returned to keep the layout stable.
+    """
+
     fig = go.Figure()
     if df.empty or "Acceptance Probability" not in df.columns:
         fig.update_layout(title="No predictions available", template="plotly_white")

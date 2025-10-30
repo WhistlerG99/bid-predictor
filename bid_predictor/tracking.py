@@ -43,6 +43,7 @@ class MlflowCallback(object):
 
 
 def _format_bins(bins):
+    """Normalize binning metadata into a compact, serializable dictionary."""
     if not bins:
         return None
     if "interval" in bins:
@@ -63,12 +64,14 @@ def _format_bins(bins):
 
 
 def _format_outlier(outlier):
+    """Extract relevant outlier capping thresholds from raw metadata."""
     if not outlier:
         return None
     return {key: outlier[key] for key in ("min", "max") if key in outlier}
 
 
 def _sanitize_feature_name(name):
+    """Convert arbitrary feature names into MLflow-safe parameter keys."""
     return re.sub(r"[^A-Za-z0-9_.-]", "_", name)
 
 
@@ -312,6 +315,7 @@ def log_classification_metrics(y_true, y_pred):
 
 
 def _log_confusion_matrices(y_true, y_pred):
+    """Render and log raw and normalized confusion matrices to MLflow."""
     cm = confusion_matrix(y_true, y_pred)
     cmn = confusion_matrix(y_true, y_pred, normalize="true")
 
@@ -331,6 +335,7 @@ def _log_confusion_matrices(y_true, y_pred):
 
 
 def _log_curves(y_true, proba):
+    """Log ROC and precision-recall diagnostic curves for the run."""
     fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
     RocCurveDisplay.from_predictions(y_true, proba, ax=ax_roc, drop_intermediate=True)
     ax_roc.set_title("ROC Curve")
@@ -347,6 +352,7 @@ def _log_curves(y_true, proba):
 
 
 def _log_acceptance_probability_histograms(y_true, proba):
+    """Log histograms comparing ticketed versus expired acceptance scores."""
     fig_ap, ax_ap = plt.subplots(1, 2, figsize=(12, 5))
     ax_ap[0].hist(proba[y_true == 1], alpha=0.4, label="Ticketed", bins=100)
     ax_ap[0].hist(proba[y_true == 0], alpha=0.4, label="Expired", bins=100)

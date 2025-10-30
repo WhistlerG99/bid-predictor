@@ -8,6 +8,7 @@ EnvKind = Literal["sagemaker_job", "sagemaker_notebook", "sagemaker_terminal", "
 
 
 def _in_jupyter() -> bool:
+    """Return ``True`` if the current interpreter is backed by IPython."""
     try:
         from IPython import get_ipython  # type: ignore
 
@@ -17,25 +18,18 @@ def _in_jupyter() -> bool:
 
 
 def _has_any_env(keys) -> bool:
+    """Check whether any environment variable in ``keys`` is defined."""
     env = os.environ
     return any(k in env and str(env[k]).strip() != "" for k in keys)
 
 
 def _any_file_exists(paths) -> bool:
+    """Return ``True`` if any of the provided filesystem paths exist."""
     return any(os.path.exists(p) for p in paths)
 
 
 def detect_execution_environment() -> Tuple[EnvKind, str]:
-    """
-    Detects whether we're running in:
-      - SageMaker job container ("sagemaker_job")
-      - SageMaker Jupyter kernel ("sagemaker_notebook")
-      - SageMaker terminal / shell ("sagemaker_terminal")
-      - Local environment ("local")
-
-    Returns:
-        (env_kind, reason)
-    """
+    """Identify whether the code runs locally or inside SageMaker contexts."""
 
     # --- 1) SageMaker *job* container (training/processing/inference) ---
     job_env_keys = [
@@ -111,6 +105,7 @@ def detect_execution_environment() -> Tuple[EnvKind, str]:
 
 
 def get_output_dir():
+    """Return the CatBoost training output directory, creating it if needed."""
     # Prefer CATBOOST_TRAIN_DIR if present, else /opt/ml/output
     output_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
     try:

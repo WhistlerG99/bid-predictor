@@ -14,6 +14,39 @@ def predict(
     df: pd.DataFrame,
     feature_config: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> pd.DataFrame:
+    """Generate acceptance probabilities for ``df`` using the cached model.
+
+    The function mirrors the logic used in the training pipeline to ensure the
+    UI feeds the model the correct set of features.  It first attempts to use
+    the model's stored input schema, then falls back to the UI feature
+    configuration when the schema is missing (which happens for older
+    serialisations).  Missing feature columns are added as empty entries so the
+    CatBoost wrapper can apply its default handling, and a warning is attached
+    to the resulting frame via ``df.attrs`` when this corrective behaviour is
+    triggered.
+
+    Parameters
+    ----------
+    model_uri:
+        URI pointing to the persisted model artefact understood by
+        :func:`bid_predictor.data.load_model_cached`.
+    df:
+        Feature rows to score; the original frame is modified in-place so
+        callers receive the predictions alongside the inputs they passed in.
+    feature_config:
+        Optional UI-specific feature configuration.  When omitted the helper
+        loads metadata embedded in the model artefact and converts it to the UI
+        shape with :func:`build_ui_feature_config`.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The same frame that was provided via ``df`` with an additional
+        ``"Acceptance Probability"`` column expressed in percentages.  If the
+        model required additional columns to be inserted, a human-readable
+        message is stored on ``df.attrs["model_warning"]``.
+    """
+
     if df.empty:
         return df
 

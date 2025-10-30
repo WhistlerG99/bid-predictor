@@ -28,6 +28,7 @@ def register_summary_callbacks(app: Dash) -> None:
         Input("bid-records-store", "data"),
     )
     def sync_inputs(meta: Optional[Dict[str, object]], records: Optional[List[Dict[str, object]]]):
+        """Synchronise the summary input boxes with the current snapshot data."""
         seats_value = meta.get("seats_available") if meta else None
         offers_value = len(records) if records else 0
         delta_hours = meta.get("time_before_departure_hours") if meta else None
@@ -58,6 +59,13 @@ def register_summary_callbacks(app: Dash) -> None:
         records: Optional[List[Dict[str, object]]],
         meta: Optional[Dict[str, object]],
     ):
+        """Apply edits from the summary controls back to the stores.
+
+        Depending on the triggering control, the callback updates seats,
+        expands or trims the bid list, or shifts timestamps to reflect the new
+        time-before-departure.  All branches recompute helper metrics so the UI
+        remains self-consistent.
+        """
         if records is None or meta is None:
             return no_update, no_update
 

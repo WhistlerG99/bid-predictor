@@ -34,6 +34,14 @@ class ScenarioFeature:
     kind: str = "numeric"
 
     def encode(self) -> str:
+        """Return a JSON string that uniquely represents the feature selection.
+
+        Dash components only accept JSON-serialisable state, so we persist the
+        feature metadata as a canonical JSON blob.  ``sort_keys=True`` keeps the
+        payload stable which allows straightforward equality comparisons when
+        the value is round-tripped through the browser.
+        """
+
         payload = {
             "key": self.key,
             "scope": self.scope,
@@ -46,6 +54,8 @@ class ScenarioFeature:
 
     @staticmethod
     def decode(value: Optional[str]) -> Optional["ScenarioFeature"]:
+        """Reconstruct a :class:`ScenarioFeature` from the encoded JSON string."""
+
         if not value:
             return None
         try:
@@ -83,6 +93,8 @@ class RangeOverride:
 
 
 def _coerce_range_value(value: object) -> Optional[float]:
+    """Return ``value`` as a finite float or ``None`` when coercion fails."""
+
     if value in (None, ""):
         return None
     try:
@@ -95,6 +107,14 @@ def _coerce_range_value(value: object) -> Optional[float]:
 
 
 def _parse_discrete_flag(value: object) -> Optional[bool]:
+    """Interpret the ``discrete`` flag from the defaults file.
+
+    The YAML configuration supports a variety of textual markers (``discrete``,
+    ``integer``, ``continuous`` …).  Converting them here keeps downstream code
+    agnostic of the user-provided vocabulary while still respecting explicit
+    overrides.
+    """
+
     if value in (None, ""):
         return None
     if isinstance(value, bool):
@@ -109,6 +129,8 @@ def _parse_discrete_flag(value: object) -> Optional[bool]:
 
 @lru_cache(maxsize=1)
 def _load_range_defaults() -> Dict[str, RangeOverride]:
+    """Load slider overrides from ``feature_range_defaults.yaml``."""
+
     if not _RANGE_DEFAULTS_PATH.exists():
         return {}
     try:
@@ -148,6 +170,8 @@ def _load_range_defaults() -> Dict[str, RangeOverride]:
 
 
 def _lookup_default_range(feature: ScenarioFeature) -> Optional[RangeOverride]:
+    """Return the range override associated with ``feature`` if configured."""
+
     defaults = _load_range_defaults()
     candidate_keys = [feature.key]
     if feature.kind == "time_to_departure":
@@ -166,6 +190,14 @@ def _lookup_default_range(feature: ScenarioFeature) -> Optional[RangeOverride]:
 
 
 def _lookup_range_override_for_key(key: str) -> Optional[RangeOverride]:
+    """Lookup a range override by raw column name.
+
+    Some helpers (such as :func:`build_feature_options`) only know the column
+    name and not the full :class:`ScenarioFeature` instance.  This convenience
+    wrapper exposes the same override logic used elsewhere so integer/continuous
+    hints stay consistent across the module.
+    """
+
     return _load_range_defaults().get(key)
 
 
@@ -178,7 +210,10 @@ def extract_global_baseline_values(
     Only ``seats_available`` and the derived ``time to departure`` feature are
     considered at the moment because they influence every bid in the
     sensitivity analysis.  The returned dictionary is keyed by the column name
-    used inside :func:`build_adjustment_grid` when applying overrides.
+    used inside :func:`build_adjustment_grid` when applying overrides.  When a
+    column contains non-numeric data the original value is returned so the UI
+    can present the current setting even though it cannot be adjusted via a
+    slider.
     """
 
     baselines: Dict[str, Optional[float]] = {}
@@ -220,7 +255,13 @@ def resolve_locked_cells(
     records: Optional[Sequence[Mapping[str, object]]],
     feature: Optional[ScenarioFeature],
 ) -> Dict[str, List[str]]:
-    """Return a mapping of bid column identifiers to locked feature names."""
+    """Return a mapping of bid column identifiers to locked feature names.
+
+    Scenario sliders should disable manual editing of the feature they control.
+    When the selected feature targets a specific bid, this helper identifies the
+    matching column id (``bid_<index>``) and returns a dictionary that mirrors
+    the ``locked_cells`` structure consumed by :func:`build_bid_table`.
+    """
 
     locked: Dict[str, List[str]] = {}
     if (
@@ -265,6 +306,8 @@ def select_baseline_snapshot(
         return None
 
     def _to_python(value: object) -> object:
+        """Convert numpy scalars to native Python types for display."""
+
         if isinstance(value, (np.generic, np.ndarray)):
             try:
                 return value.item()
@@ -302,7 +345,12 @@ def select_baseline_snapshot(
 
 
 def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
-    """Return carrier dropdown options for the scenario explorer."""
+    """Return carrier dropdown options for the scenario explorer.
+
+    The options list is used to populate a Dash ``dcc.Dropdown``.  We sort and
+    de-duplicate carrier codes so the UI renders a predictable, user-friendly
+    list even when the dataset contains repeated snapshots for the same flight.
+    """
 
     if dataset.empty or "carrier_code" not in dataset.columns:
         return []
@@ -312,7 +360,13 @@ def build_carrier_options(dataset: pd.DataFrame) -> List[Dict[str, str]]:
 
 
 def build_flight_number_options(dataset: pd.DataFrame, carrier: Optional[str]) -> List[Dict[str, str]]:
-    """Return flight number options filtered by carrier."""
+    """Return flight number options filtered by carrier.
+
+    The helper mirrors the cascading dropdown behaviour in the scenario tab by
+    limiting the available flight numbers to the chosen carrier.  Missing
+    columns or an empty dataset result in an empty list which Dash interprets as
+    “no options available”.
+    """
 
     if dataset.empty or not carrier:
         return []
@@ -332,7 +386,12 @@ def build_travel_date_options(
     carrier: Optional[str],
     flight_number: Optional[str],
 ) -> List[Dict[str, str]]:
-    """Return travel date options filtered by carrier and flight number."""
+    """Return travel date options filtered by carrier and flight number.
+
+    Travel dates are normalised to ISO-8601 strings to match the string values
+    emitted by Dash date pickers.  Invalid or missing dates are ignored so the
+    dropdown only contains meaningful choices.
+    """
 
     if dataset.empty or not carrier or not flight_number:
         return []
@@ -362,7 +421,13 @@ def build_upgrade_options(
     flight_number: Optional[str],
     travel_date: Optional[str],
 ) -> List[Dict[str, str]]:
-    """Return upgrade type options filtered by the selected flight."""
+    """Return upgrade type options filtered by the selected flight.
+
+    Upgrade types represent the final step in the cascading filters, therefore
+    all upstream selections must be present before options are generated.  The
+    function gracefully handles partially specified filters by returning an
+    empty list, keeping the UI responsive during user input.
+    """
 
     if dataset.empty or not carrier or not flight_number or not travel_date:
         return []
@@ -393,6 +458,15 @@ def extract_baseline_snapshot(
     travel_date: Optional[str],
     upgrade_type: Optional[str],
 ) -> Tuple[pd.DataFrame, Optional[str]]:
+    """Return a filtered dataset for the selected flight and a snapshot label.
+
+    Once a flight has been selected via the cascading dropdowns, the scenario
+    tab needs the subset of rows that match that context.  This function applies
+    the filters, remaps bid identifiers for readability, deduplicates older
+    snapshots and returns a human-friendly description that can be displayed in
+    the UI (for example ``"from snapshot 3"``).
+    """
+
     if not carrier or not flight_number or not travel_date or not upgrade_type:
         return pd.DataFrame(), None
 
@@ -469,6 +543,8 @@ def extract_baseline_snapshot(
 
 
 def _coerce_numeric(series: pd.Series) -> Optional[pd.Series]:
+    """Convert ``series`` to numeric dtype, returning ``None`` when infeasible."""
+
     numeric = pd.to_numeric(series, errors="coerce")
     if numeric.notna().any():
         return numeric
@@ -476,6 +552,8 @@ def _coerce_numeric(series: pd.Series) -> Optional[pd.Series]:
 
 
 def _infer_is_integer(series: pd.Series) -> bool:
+    """Determine whether ``series`` behaves like an integer column."""
+
     valid = series.dropna()
     if valid.empty:
         return False
@@ -483,6 +561,8 @@ def _infer_is_integer(series: pd.Series) -> bool:
 
 
 def _compute_time_to_departure_hours(df: pd.DataFrame) -> Optional[pd.Series]:
+    """Derive hours until departure from timestamp columns when available."""
+
     if "departure_timestamp" not in df.columns or "current_timestamp" not in df.columns:
         return None
     departure = pd.to_datetime(df["departure_timestamp"], errors="coerce")
@@ -497,6 +577,16 @@ def build_feature_options(
     df: pd.DataFrame,
     feature_config: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> List[ScenarioFeature]:
+    """Enumerate adjustable features for the scenario explorer.
+
+    Global controls are derived from ``snapshot_control_features`` so every bid
+    can share the same adjustment, while bid-level options iterate over the
+    ``bid_features`` for each available label.  Only numeric columns are
+    returned because the sliders require a numeric domain.  Range overrides from
+    ``feature_range_defaults.yaml`` influence the inferred integer/continuous
+    behaviour.
+    """
+
     if df.empty:
         return []
 
@@ -594,6 +684,8 @@ def build_feature_options(
 
 
 def select_feature(options: Sequence[ScenarioFeature], value: Optional[str]) -> Optional[ScenarioFeature]:
+    """Resolve ``value`` (an encoded feature) to the matching option instance."""
+
     decoded = ScenarioFeature.decode(value)
     if not decoded:
         return None
@@ -604,6 +696,15 @@ def select_feature(options: Sequence[ScenarioFeature], value: Optional[str]) -> 
 
 
 def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optional[ScenarioRange]:
+    """Infer sensible slider defaults for ``feature`` from ``df``.
+
+    The logic looks at existing values to determine the baseline, min/max span
+    and whether the slider should snap to integers.  Overrides from the defaults
+    YAML file take precedence when provided.  The resulting
+    :class:`ScenarioRange` is tuned to provide a balanced number of steps so the
+    UI feels responsive without overwhelming users with too many increments.
+    """
+
     if df.empty:
         return None
 
@@ -706,6 +807,13 @@ def compute_default_range(df: pd.DataFrame, feature: ScenarioFeature) -> Optiona
 
 
 def _linspace_inclusive(start: float, stop: float, count: int, *, integer: bool) -> np.ndarray:
+    """Return ``count`` values between ``start`` and ``stop`` inclusive.
+
+    When ``integer`` is ``True`` the range is rounded and deduplicated to avoid
+    duplicated slider steps that can otherwise occur due to floating point
+    rounding.  The helper is the backbone of :func:`build_adjustment_grid`.
+    """
+
     count = max(count, 2)
     values = np.linspace(start, stop, num=count)
     if integer:
@@ -723,6 +831,16 @@ def build_adjustment_grid(
     *,
     global_overrides: Optional[Mapping[str, object]] = None,
 ) -> pd.DataFrame:
+    """Return a dataframe containing every adjustment step for ``feature``.
+
+    The function constructs an expanded dataset where each original row is
+    duplicated across the requested slider values.  ``global_overrides`` allow
+    callers to fix other scenario controls (e.g. seats available) while
+    sweeping the selected feature.  Special handling keeps time-to-departure
+    consistent by shifting ``current_timestamp`` rather than naively overriding
+    the column.
+    """
+
     if df.empty:
         return df
 
@@ -769,6 +887,8 @@ def build_adjustment_grid(
 
 
 def _apply_time_to_departure(df: pd.DataFrame, hours: float) -> None:
+    """Adjust ``current_timestamp`` so the row reflects the desired offset."""
+
     if "departure_timestamp" not in df.columns:
         return
     departure = pd.to_datetime(df["departure_timestamp"], errors="coerce")
@@ -780,6 +900,14 @@ def _apply_time_to_departure(df: pd.DataFrame, hours: float) -> None:
 
 
 def build_scenario_line_chart(df: pd.DataFrame, feature_label: str) -> go.Figure:
+    """Plot acceptance probability curves for each bid over scenario values.
+
+    Each bid is rendered as its own line so stakeholders can track how the
+    slider adjustments influence the model output.  The layout mirrors the rest
+    of the UI with the Plotly white template, a fixed height, and a legend that
+    floats above the chart.
+    """
+
     fig = go.Figure()
     if df.empty or "Acceptance Probability" not in df.columns:
         fig.update_layout(

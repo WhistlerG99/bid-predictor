@@ -67,14 +67,17 @@ def build_parameter_grid(search_cfg: Mapping[str, Any]) -> Dict[str, List[Any]]:
 
 
 def _values_are_bools(values: List[Any]) -> bool:
+    """Return ``True`` when all candidate values are booleans."""
     return all(isinstance(value, bool) for value in values)
 
 
 def _values_are_ints(values: List[Any]) -> bool:
+    """Return ``True`` when all candidate values are integers (excluding bools)."""
     return all(isinstance(value, numbers.Integral) and not isinstance(value, bool) for value in values)
 
 
 def _values_are_reals(values: List[Any]) -> bool:
+    """Return ``True`` when all candidate values are real numbers (excluding bools)."""
     return all(isinstance(value, numbers.Real) and not isinstance(value, bool) for value in values)
 
 
@@ -114,6 +117,7 @@ class FrozenSearchValue:
 
 
 def _ensure_hashable(values: List[Any]) -> List[Any]:
+    """Wrap unhashable values so they can participate in categorical dimensions."""
     wrapped: List[Any] = []
     for value in values:
         try:
@@ -134,6 +138,7 @@ def unwrap_search_value(value: Any) -> Any:
 
 
 def _make_dimension(values: List[Any]) -> Dimension:
+    """Create a ``Dimension`` instance appropriate for the provided values."""
     if not values:
         raise ValueError("Values must be non-empty to create a search dimension")
 

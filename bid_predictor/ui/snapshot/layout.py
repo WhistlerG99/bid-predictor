@@ -5,6 +5,12 @@ from dash import dash_table, dcc, html
 
 
 def _build_snapshot_filter_card() -> html.Div:
+    """Compose the filter sidebar shown on the snapshot explorer tab.
+
+    The sidebar guides the user through the carrier → flight → travel date
+    cascade and surfaces snapshot-specific controls for tweaking seats,
+    offers, and time-before-departure inputs.
+    """
     return html.Div(
         [
             html.Div(
@@ -186,6 +192,11 @@ def _build_snapshot_filter_card() -> html.Div:
 
 
 def _build_snapshot_graph_card() -> html.Div:
+    """Compose the card that displays the prediction trend graph.
+
+    Besides the graph placeholder, the card reserves space for warning messages
+    that surface model failures or missing predictions.
+    """
     return html.Div(
         [
             html.H3(
@@ -213,6 +224,11 @@ def _build_snapshot_graph_card() -> html.Div:
 
 
 def _build_snapshot_table_card() -> html.Div:
+    """Compose the card that hosts table actions and the editable bid grid.
+
+    It consolidates bulk actions, dropdown-driven selections, and the editable
+    table so snapshot exploration feels cohesive.
+    """
     button_style = {
         "padding": "0.5rem 1rem",
         "borderRadius": "6px",

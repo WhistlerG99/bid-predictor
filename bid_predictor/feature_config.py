@@ -35,6 +35,7 @@ _FEATURE_BOOLEAN_FIELDS = {
 
 
 def _parse_feature_spec(values):
+    """Normalize the ``features`` section from the YAML configuration."""
     if values is None:
         raise KeyError("Missing 'features' section in feature config YAML")
 
@@ -77,6 +78,7 @@ def _parse_feature_spec(values):
 
 
 def _ensure_groupby_keys(pre_features):
+    """Append required group-by keys that might be absent from ``pre_features``."""
     missing = [name for name in _GROUPBY_KEY_FEATURES if name not in pre_features]
     if not missing:
         return pre_features
@@ -85,6 +87,7 @@ def _ensure_groupby_keys(pre_features):
 
 
 def _resolve_feature_config_path(config_path=None):
+    """Determine the filesystem path for the feature configuration YAML."""
     if config_path is not None:
         return Path(config_path)
     env_path = os.environ.get(_FEATURE_CONFIG_ENV)
@@ -95,6 +98,7 @@ def _resolve_feature_config_path(config_path=None):
 
 @lru_cache(maxsize=None)
 def load_feature_config(config_path=None):
+    """Load and expand the feature configuration into derived metadata lists."""
     if config_path is not None:
         config_path = str(Path(config_path))
     path = _resolve_feature_config_path(config_path)

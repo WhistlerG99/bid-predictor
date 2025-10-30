@@ -24,6 +24,12 @@ def register_table_callbacks(app: Dash) -> None:
         predictions: Optional[Dict[str, float]],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Render the snapshot bid table with model predictions if available.
+
+        The table view is shared with the scenario tab; we simply forward the
+        stored records and per-bid probabilities so columns and styling remain
+        consistent between contexts.
+        """
         return build_bid_table(
             records,
             predictions,
@@ -36,6 +42,11 @@ def register_table_callbacks(app: Dash) -> None:
         Input("bid-records-store", "data"),
     )
     def sync_delete_selector(records: Optional[List[Dict[str, object]]]):
+        """Expose each current bid as a deletable option for the dropdown.
+
+        Listing the indices lets the "Delete selected" action operate even when
+        the table scrolls horizontally or vertically.
+        """
         if not records:
             return [], []
         options = [
@@ -53,6 +64,11 @@ def register_table_callbacks(app: Dash) -> None:
         Input("removed-bids-store", "data"),
     )
     def sync_restore_selector(removed: Optional[List[Dict[str, object]]]):
+        """Expose each removed bid as a restorable option for the dropdown.
+
+        The metadata preserved in ``removed-bids-store`` is mapped into labels
+        that help the user understand which bids they are restoring.
+        """
         if not removed:
             return [], []
         options = [
@@ -78,6 +94,12 @@ def register_table_callbacks(app: Dash) -> None:
         records: Optional[List[Dict[str, object]]],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Persist inline table edits into the stored snapshot records.
+
+        The timestamp guard ensures the callback only fires in response to real
+        edits, while ``apply_table_edits`` performs the heavy lifting of
+        validating and normalising cell values.
+        """
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
 

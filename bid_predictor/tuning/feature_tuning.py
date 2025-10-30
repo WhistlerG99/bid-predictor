@@ -115,6 +115,7 @@ def apply_transform_overrides(
 
 
 def _normalize_override_value(value: Any) -> Any:
+    """Convert numpy scalars and nested containers into JSON-friendly types."""
     if isinstance(value, dict):
         return {key: _normalize_override_value(sub_value) for key, sub_value in value.items()}
     if isinstance(value, list):

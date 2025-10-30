@@ -55,6 +55,7 @@ class MlflowLogger:
 
 
 def _import_mlflow() -> Any:
+    """Attempt to import MLflow, returning ``None`` if unavailable."""
     try:
         import mlflow  # type: ignore
 
@@ -64,6 +65,7 @@ def _import_mlflow() -> Any:
 
 
 def _patch_mlflow_metric_logging(mlflow_module: Any) -> None:
+    """Wrap MLflow's ``log_metric`` to gracefully handle permission failures."""
     log_metric = getattr(mlflow_module, "log_metric", None)
     if log_metric is None:
         return

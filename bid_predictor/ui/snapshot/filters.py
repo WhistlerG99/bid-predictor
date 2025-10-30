@@ -10,6 +10,11 @@ from ...data import load_dataset_cached
 
 
 def _options_from_series(values: pd.Series) -> Tuple[List[dict], Optional[str]]:
+    """Convert a pandas series into a Dash dropdown payload.
+
+    The helper returns both the list of label/value pairs and the default
+    selection so callers can avoid repeating the same boilerplate.
+    """
     options = [{"label": str(value), "value": str(value)} for value in values]
     value = options[0]["value"] if options else None
     return options, value
@@ -24,6 +29,12 @@ def register_filter_callbacks(app: Dash) -> None:
         Input("dataset-path-store", "data"),
     )
     def populate_carriers(dataset_path: Optional[str]):
+        """Populate the carrier dropdown when a dataset is loaded.
+
+        The dataset is re-read on every path change so the dropdown reflects the
+        most up-to-date carrier list, while missing columns fall back to an
+        empty selection so other controls can disable themselves gracefully.
+        """
         if not dataset_path:
             return [], None
 
@@ -40,6 +51,12 @@ def register_filter_callbacks(app: Dash) -> None:
         State("dataset-path-store", "data"),
     )
     def populate_flight_numbers(carrier: Optional[str], dataset_path: Optional[str]):
+        """Filter flight numbers based on the selected carrier.
+
+        This keeps the second dropdown in lockstep with the carrier choice,
+        ensuring downstream queries only surface combinations that actually
+        exist in the dataset.
+        """
         if not dataset_path or not carrier:
             return [], None
 
@@ -68,6 +85,12 @@ def register_filter_callbacks(app: Dash) -> None:
         carrier: Optional[str],
         dataset_path: Optional[str],
     ):
+        """Filter travel dates once the flight number has been chosen.
+
+        The callback respects both upstream filters before looking up travel
+        dates, and returns an empty list whenever the dataset lacks the required
+        columns so the UI can prompt the user appropriately.
+        """
         if not dataset_path or not carrier or not flight_number:
             return [], None
 
@@ -105,6 +128,12 @@ def register_filter_callbacks(app: Dash) -> None:
         flight_number: Optional[str],
         dataset_path: Optional[str],
     ):
+        """List upgrade types for the fully specified flight selection.
+
+        Once the user has chosen a carrier, flight, and travel date we can
+        narrow the dataset to the exact trip and surface the upgrade types that
+        appear in the historical data.
+        """
         if not dataset_path or not carrier or not flight_number or not travel_date:
             return [], None
 
@@ -141,6 +170,12 @@ def register_filter_callbacks(app: Dash) -> None:
         travel_date: Optional[str],
         dataset_path: Optional[str],
     ):
+        """List available snapshots after the user selects an upgrade type.
+
+        The snapshot dropdown completes the cascade: it filters on every prior
+        selection and returns the snapshot identifiers that can be explored in
+        the rest of the tab.
+        """
         if (
             not dataset_path
             or not carrier

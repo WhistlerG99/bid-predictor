@@ -16,17 +16,7 @@ from .feature_config import _GROUPBY_KEY_FEATURES
 class AddMissingIndicatorCustom(AddMissingIndicator):
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        """
-        Learn the variables for which the missing indicators will be created.
-
-        Parameters
-        ----------
-        X: pandas dataframe of shape = [n_samples, n_features]
-            The training dataset.
-
-        y: pandas Series, default=None
-            y is not needed in this imputation. You can pass None or y.
-        """
+        """Drop absent variables before delegating to the base implementation."""
         if self.variables:
             self.variables = [v for v in self.variables if v in X]
 
@@ -34,6 +24,7 @@ class AddMissingIndicatorCustom(AddMissingIndicator):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Return transformed data when given pandas or ndarray inputs."""
         if isinstance(X, (pd.DataFrame, np.ndarray)):
             return super().transform(X)
         else:
@@ -43,17 +34,7 @@ class AddMissingIndicatorCustom(AddMissingIndicator):
 class ArbitraryNumberImputerCustom(ArbitraryNumberImputer):
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        """
-        This method does not learn any parameter.
-
-        Parameters
-        ----------
-        X: pandas dataframe of shape = [n_samples, n_features]
-            The training dataset.
-
-        y: None
-            y is not needed in this imputation. You can pass None or y.
-        """
+        """Prune imputation entries for columns that are absent in ``X``."""
         if self.imputer_dict:
             self.imputer_dict = {k: v for k, v in self.imputer_dict.items() if k in X}
 
@@ -61,6 +42,7 @@ class ArbitraryNumberImputerCustom(ArbitraryNumberImputer):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Apply the imputation only when ``X`` is an array-like object."""
         if isinstance(X, (pd.DataFrame, np.ndarray)):
             return super().transform(X)
         else:
@@ -69,17 +51,7 @@ class ArbitraryNumberImputerCustom(ArbitraryNumberImputer):
 
 class MeanMedianImputerCustom(MeanMedianImputer):
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        """
-        Learn the mean or median value for each variable.
-
-        Parameters
-        ----------
-        X: pandas dataframe of shape = [n_samples, n_features]
-            The training dataset.
-
-        y: pandas Series, default=None
-            y is not needed in this imputation. You can pass None or y.
-        """
+        """Restrict the learned statistics to features present in ``X``."""
         if self.variables:
             self.variables = [v for v in self.variables if v in X]
 
@@ -87,6 +59,7 @@ class MeanMedianImputerCustom(MeanMedianImputer):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Apply the mean/median replacements when applicable."""
         if isinstance(X, (pd.DataFrame, np.ndarray)):
             return super().transform(X)
         else:
@@ -95,17 +68,7 @@ class MeanMedianImputerCustom(MeanMedianImputer):
 
 class ArbitraryOutlierCapperCustom(ArbitraryOutlierCapper):
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        """
-        This transformer does not learn any parameter.
-
-        Parameters
-        ----------
-        X: pandas dataframe of shape = [n_samples, n_features]
-            The training input samples.
-
-        y: pandas Series, default=None
-            y is not needed in this transformer. You can pass y or None.
-        """
+        """Remove capping thresholds for columns that are not in the data."""
         if self.min_capping_dict:
             self.min_capping_dict = {
                 k: v for k, v in self.min_capping_dict.items() if k in X
@@ -130,6 +93,7 @@ class ArbitraryOutlierCapperCustom(ArbitraryOutlierCapper):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Apply outlier capping when provided with tabular inputs."""
         if isinstance(X, (pd.DataFrame, np.ndarray)):
             return super().transform(X)
         else:
@@ -143,21 +107,12 @@ class ArbitraryDiscretiserCustom(ArbitraryDiscretiser):
         bin_names_dict: Optional[dict] = None,
         **kwargs,
     ):
+        """Initialize the discretiser with optional renaming for bin labels."""
         super().__init__(binning_dict=binning_dict, **kwargs)
         self.bin_names_dict = bin_names_dict
 
     def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
-        """
-        This transformer does not learn any parameter.
-
-        Parameters
-        ----------
-        X: pandas dataframe of shape = [n_samples, n_features]
-            The training input samples.
-
-        y: pandas Series, default=None
-            y is not needed in this transformer. You can pass y or None.
-        """
+        """Retain only binning rules whose columns exist in ``X``."""
         if self.binning_dict:
             self.binning_dict = {k: v for k, v in self.binning_dict.items() if k in X}
             if not self.binning_dict:
@@ -172,6 +127,7 @@ class ArbitraryDiscretiserCustom(ArbitraryDiscretiser):
         return self
 
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
+        """Discretize the configured columns and optionally rename the bins."""
         if isinstance(X, (pd.DataFrame, np.ndarray)):
             X_tf = super().transform(X)
             if self.bin_names_dict:
@@ -182,6 +138,7 @@ class ArbitraryDiscretiserCustom(ArbitraryDiscretiser):
 
 
 def add_flight_code(data):
+    """Create a combined carrier/flight categorical code when possible."""
     required = {"carrier_code", "flight_number"}
     if not required.issubset(data.columns):
         return data
@@ -193,6 +150,7 @@ def add_flight_code(data):
 
 
 def add_days_b4_depart(data):
+    """Compute days between the current timestamp and departure."""
     required = {"departure_timestamp", "current_timestamp"}
     if not required.issubset(data.columns):
         return data
@@ -204,6 +162,7 @@ def add_days_b4_depart(data):
 
 
 def add_group_features(data):
+    """Add group-level aggregate features such as offer counts and max price."""
     if "usd_base_amount" not in data.columns:
         return data
     if any(key not in data.columns for key in _GROUPBY_KEY_FEATURES):
@@ -237,6 +196,7 @@ def add_group_features(data):
 
 
 def quantiles_vectorized(vals, qs=(0.25, 0.50, 0.75)):
+    """Vectorized helper that returns leave-one-out quantiles for each value."""
     vals = np.asarray(vals)
     n = vals.size
     data = np.full((len(qs), n), np.nan, dtype=float)
@@ -266,6 +226,7 @@ def quantiles_vectorized(vals, qs=(0.25, 0.50, 0.75)):
 
 
 def quantiles_group(group, col):
+    """Compute leave-one-out quantiles for a grouped pandas Series."""
     arr = group[col].to_numpy()
     q25, q50, q75 = quantiles_vectorized(arr, (0.25, 0.50, 0.75))
     return pd.DataFrame(
@@ -279,6 +240,7 @@ def quantiles_group(group, col):
 
 
 def add_quantiles(data):
+    """Attach quantile-based summary statistics per flight group."""
     if "usd_base_amount" not in data.columns:
         return data
     if any(key not in data.columns for key in _GROUPBY_KEY_FEATURES):
@@ -296,6 +258,7 @@ def add_quantiles(data):
 
 # --- Wrappers around your existing funcs so they can be used in pipelines ---
 def add_flight_code_wrapper(X):
+    """Safely apply :func:`add_flight_code` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
         return add_flight_code(X)
     else:
@@ -303,6 +266,7 @@ def add_flight_code_wrapper(X):
 
 
 def add_days_b4_depart_wrapper(X):
+    """Safely apply :func:`add_days_b4_depart` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
         return add_days_b4_depart(X)
     else:
@@ -310,6 +274,7 @@ def add_days_b4_depart_wrapper(X):
 
 
 def add_group_features_wrapper(X):
+    """Safely apply :func:`add_group_features` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
         return add_group_features(X)
     else:
@@ -317,6 +282,7 @@ def add_group_features_wrapper(X):
 
 
 def add_quantiles_wrapper(X):
+    """Safely apply :func:`add_quantiles` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
         return add_quantiles(X)
     else:

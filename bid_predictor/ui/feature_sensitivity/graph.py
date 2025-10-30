@@ -47,6 +47,14 @@ def register_graph_callback(app: Dash) -> None:
         baseline_time_to_departure: Optional[float],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Render the line chart showing how acceptance changes across a range.
+
+        The callback derives a grid of candidate adjustments from the baseline
+        records, feeds it through the model when one is available, and plots
+        the resulting acceptance probabilities.  It also computes helpful
+        warnings—such as missing models or prediction failures—so the user has
+        immediate feedback when the graph cannot be rendered.
+        """
         baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(baseline_df, feature_config=feature_config)
         feature = select_feature(features, feature_value)

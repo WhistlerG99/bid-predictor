@@ -49,6 +49,14 @@ def register_record_callbacks(app: Dash) -> None:
         selected_columns: Optional[List[str]],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Apply add/delete/restore actions to the working scenario records.
+
+        The feature sensitivity tab surfaces multiple controls that mutate the
+        bid list.  This callback interprets which control fired, updates the
+        stored records accordingly, and keeps the removed-bids store in sync so
+        users can undo their actions.  Each branch recomputes derived metrics to
+        ensure displayed values remain accurate.
+        """
         triggered = (
             callback_context.triggered[0]["prop_id"].split(".")[0]
             if callback_context.triggered

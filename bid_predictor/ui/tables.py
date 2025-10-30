@@ -15,7 +15,37 @@ def build_bid_table(
     feature_config: Optional[Mapping[str, Sequence[str]]] = None,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
-    """Return Dash DataTable configuration for bid feature editing."""
+    """Return Dash DataTable configuration for bid feature editing.
+
+    The Dash UI represents bids as a transposed table where each column is a
+    bid and each row is a feature.  This helper converts the list of bid
+    records into the three structures ``dash_table.DataTable`` expects: column
+    definitions, cell data, and per-cell styling rules.  It respects the model's
+    feature configuration, locks read-only features, injects prediction values
+    and applies rounding so the displayed values match the formatting logic used
+    elsewhere in the UI.
+
+    Parameters
+    ----------
+    records:
+        Original bid dictionaries in the order they should appear in the table.
+    predictions:
+        Mapping from generated column ids (``bid_<index>``) to acceptance
+        probability predictions.
+    feature_config:
+        UI-specific feature configuration which controls editable and read-only
+        features.  When absent the ``DEFAULT_UI_FEATURE_CONFIG`` fallback is
+        used.
+    locked_cells:
+        Optional mapping of column ids to feature names that the caller wants to
+        lock in the UI (e.g. while a scenario slider is active).
+
+    Returns
+    -------
+    tuple
+        A ``(columns, data_rows, style_rules)`` tuple ready to be fed into a
+        Dash DataTable.
+    """
 
     if not records:
         columns = [{"name": "Feature", "id": "Feature", "editable": False}]
@@ -167,7 +197,23 @@ def apply_table_edits(
     feature_config: Optional[Mapping[str, Sequence[str]]] = None,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
 ) -> Optional[List[Dict[str, object]]]:
-    """Update bid records based on edited Dash DataTable values."""
+    """Update bid records based on edited Dash DataTable values.
+
+    Dash sends back edited data as rows keyed by ``Feature`` with each bid
+    stored under a ``bid_<index>`` column.  This helper rehydrates the list of
+    bid dictionaries by walking the edited cells, respecting the feature
+    configuration (only ``bid_features`` are mutable) and skipping cells that
+    are explicitly locked.  Numeric values are coerced and rounded using the
+    same rules as :func:`build_bid_table` to avoid drift between consecutive
+    edits.  Comparison columns derived from ``usd_base_amount`` are recomputed
+    once the updates are applied so that all dependent fields stay in sync.
+
+    Returns
+    -------
+    Optional[List[Dict[str, object]]]
+        ``None`` when the payload is incomplete, otherwise a new list of bid
+        records mirroring ``records`` with the edits applied.
+    """
 
     if not records or not table_data or not columns:
         return None

@@ -29,6 +29,14 @@ def _apply_defaults(
     baseline_df: pd.DataFrame,
     feature_config: Optional[Dict[str, object]],
 ) -> None:
+    """Populate each bid record with the global baseline defaults.
+
+    The baseline snapshot may omit values such as seats available or the
+    canonical snapshot number.  This helper inspects the extracted
+    ``baseline_df`` and writes those defaults onto every record so that the
+    UI starts from a consistent state, also aligning timestamps with the
+    chosen time-to-departure baseline when possible.
+    """
     defaults = extract_global_baseline_values(
         baseline_df, feature_config=feature_config
     )
@@ -71,6 +79,13 @@ def _apply_defaults(
 
 
 def _serialize_records(records: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    """Coerce record values into JSON-serialisable primitives.
+
+    Dash stores callback data as JSON, so timestamps and objects with custom
+    ``isoformat`` methods must be converted before returning to the client.
+    Any non-serialisable value that cannot be converted is left untouched so
+    downstream callbacks can still reason about it.
+    """
     serializable: List[Dict[str, object]] = []
     for record in records:
         converted: Dict[str, object] = {}
@@ -114,6 +129,14 @@ def register_baseline_callback(app: Dash) -> None:
         dataset_path: Optional[str],
         feature_config: Optional[Dict[str, object]],
     ) -> ReturnType:
+        """Load the selected flight snapshot and populate the scenario stores.
+
+        Once the user selects a flight, this callback pulls the corresponding
+        bids, applies global defaults, sorts the records, and emits both the
+        working and read-only baselines used throughout the scenario tab.  It
+        also prepares user-facing summaries and warnings when data cannot be
+        retrieved.
+        """
         if not dataset_path:
             warning = "Load a dataset to explore scenarios."
             return None, None, [], warning, warning
