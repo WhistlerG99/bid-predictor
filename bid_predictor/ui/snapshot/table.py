@@ -21,7 +21,7 @@ def register_table_callbacks(app: Dash) -> None:
     )
     def render_bid_table(
         records: Optional[List[Dict[str, object]]],
-        predictions: Optional[Dict[str, float]],
+        predictions: Optional[Dict[str, object]],
         feature_config: Optional[Dict[str, object]],
     ):
         """Render the snapshot bid table with model predictions if available.
@@ -30,10 +30,23 @@ def register_table_callbacks(app: Dash) -> None:
         stored records and per-bid probabilities so columns and styling remain
         consistent between contexts.
         """
+        probability_map: Dict[str, object] = {}
+        derived_values = None
+        show_comp_features = False
+        if isinstance(predictions, dict):
+            if "probabilities" in predictions or "derived_features" in predictions:
+                probability_map = dict(predictions.get("probabilities", {}))
+                derived_values = predictions.get("derived_features")
+                show_comp_features = bool(derived_values)
+            else:
+                probability_map = dict(predictions)
+
         return build_bid_table(
             records,
-            predictions,
+            probability_map,
             feature_config=feature_config,
+            derived_feature_values=derived_values,
+            show_comp_features=show_comp_features,
         )
 
     @app.callback(

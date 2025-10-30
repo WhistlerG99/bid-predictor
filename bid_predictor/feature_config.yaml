@@ -114,7 +114,7 @@ features:
   usd_base_amount_max:
     derived: true
     comp_feature: true
-    include_in_model: true
+    include_in_model: true  
   num_offers:
     derived: true
     categorical: true
@@ -122,4 +122,8 @@ features:
       max: 16
     comp_feature: true
     include_in_model: true
-
+  bid_rank:
+    derived: true
+    categorical: true
+    comp_feature: true
+    include_in_model: true

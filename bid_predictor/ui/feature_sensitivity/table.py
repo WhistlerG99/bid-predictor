@@ -7,7 +7,8 @@ import pandas as pd
 from dash import Dash, Input, Output, State, no_update
 
 from ...data import prepare_prediction_dataframe
-from ..predictions import predict
+from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
+from ..predictions import extract_derived_feature_rows, predict
 from ..scenario import ScenarioFeature, resolve_locked_cells
 from ..tables import apply_table_edits, build_bid_table
 
@@ -37,6 +38,8 @@ def register_table_callbacks(app: Dash) -> None:
         remain locked due to the selected feature.
         """
         predictions: Dict[str, object] = {}
+        derived_values = None
+        show_comp_features = False
         if records and model_uri:
             feature_df = prepare_prediction_dataframe(
                 records, feature_config=feature_config
@@ -47,6 +50,7 @@ def register_table_callbacks(app: Dash) -> None:
                         model_uri,
                         feature_df.copy(),
                         feature_config=feature_config,
+                        return_transformed=True,
                     )
                 except Exception:
                     pred_df = pd.DataFrame()
@@ -62,6 +66,15 @@ def register_table_callbacks(app: Dash) -> None:
                                     predictions[column_id] = float(value)
                                 except (TypeError, ValueError):
                                     predictions[column_id] = value
+                        else:
+                            predictions[column_id] = None
+                    config_for_comp = feature_config or DEFAULT_UI_FEATURE_CONFIG
+                    comp_features = config_for_comp.get("comp_features", [])
+                    transformed = pred_df.attrs.get("transformed_features")
+                    derived_values = extract_derived_feature_rows(
+                        transformed, comp_features
+                    )
+                    show_comp_features = bool(derived_values)
         decoded_feature = ScenarioFeature.decode(feature_value)
         locked_cells = resolve_locked_cells(records, decoded_feature)
 
@@ -71,8 +84,16 @@ def register_table_callbacks(app: Dash) -> None:
                 predictions,
                 feature_config=feature_config,
                 locked_cells=locked_cells,
+                derived_feature_values=derived_values,
+                show_comp_features=show_comp_features,
             )
-        return build_bid_table(records, predictions, feature_config=feature_config)
+        return build_bid_table(
+            records,
+            predictions,
+            feature_config=feature_config,
+            derived_feature_values=derived_values,
+            show_comp_features=show_comp_features,
+        )
 
     @app.callback(
         Output("scenario-bid-delete-selector", "options"),

@@ -1,7 +1,7 @@
 """Prediction helpers for the Dash UI."""
 from __future__ import annotations
 
-from typing import Mapping, Optional, Sequence
+from typing import Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -13,6 +13,8 @@ def predict(
     model_uri: str,
     df: pd.DataFrame,
     feature_config: Optional[Mapping[str, Sequence[str]]] = None,
+    *,
+    return_transformed: bool = False,
 ) -> pd.DataFrame:
     """Generate acceptance probabilities for ``df`` using the cached model.
 
@@ -93,7 +95,20 @@ def predict(
         else:
             features = list(feature_df.columns)
 
-    predictions = model.predict_proba(feature_df)
+    transformed_features: Optional[pd.DataFrame] = None
+
+    if return_transformed:
+        transform_and_predict = getattr(model, "_transform_and_predict_proba", None)
+        if callable(transform_and_predict):
+            probabilities, transformed_features = transform_and_predict(feature_df)
+            predictions = probabilities
+        else:
+            predictions = model.predict_proba(feature_df)
+            transform_only = getattr(model, "_transform", None)
+            if callable(transform_only):
+                transformed_features = transform_only(feature_df)
+    else:
+        predictions = model.predict_proba(feature_df)
     if isinstance(predictions, pd.DataFrame) and "Acceptance Probability" in predictions.columns:
         acceptance = predictions["Acceptance Probability"].astype(float).to_numpy()
     else:
@@ -106,7 +121,33 @@ def predict(
     df["Acceptance Probability"] = acceptance_series.round(4)
     if model_warning:
         df.attrs["model_warning"] = model_warning
+    if return_transformed and transformed_features is not None:
+        if not isinstance(transformed_features, pd.DataFrame):
+            columns = getattr(model, "feature_names_in_", None)
+            try:
+                transformed_features = pd.DataFrame(transformed_features, columns=columns)
+            except Exception:
+                transformed_features = pd.DataFrame(transformed_features)
+        transformed_features = transformed_features.reset_index(drop=True)
+        df.attrs["transformed_features"] = transformed_features
+    elif "transformed_features" in df.attrs:
+        df.attrs.pop("transformed_features", None)
     return df
 
 
-__all__ = ["predict"]
+def extract_derived_feature_rows(
+    transformed: Optional[pd.DataFrame],
+    comp_features: Sequence[str] | None,
+) -> List[Dict[str, object]]:
+    """Return the subset of ``transformed`` that corresponds to derived features."""
+
+    if transformed is None or not isinstance(transformed, pd.DataFrame):
+        return []
+    features = [feature for feature in (comp_features or []) if feature in transformed.columns]
+    if not features:
+        return []
+    subset = transformed.loc[:, features].reset_index(drop=True)
+    return subset.to_dict("records")
+
+
+__all__ = ["extract_derived_feature_rows", "predict"]

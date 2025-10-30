@@ -15,6 +15,7 @@ from .transform import (
     MeanMedianImputerCustom,
     add_flight_code_transformer,
     add_days_b4_depart_transformer,
+    add_bid_rank_transformer,
     group_features_transformer,
     quantiles_transformer,
     ColumnReducer,
@@ -57,6 +58,14 @@ class FeatureConfiguredPipeline(Pipeline):
         super().__init__(steps, transform_input=transform_input, **kwargs)
         if feature_config is not None:
             self._assign_feature_config(feature_config)
+
+    def _transform(self, X):
+        return self[:-1].transform(X)
+
+    def _transform_and_predict_proba(self, X):
+        X_tf = self._transform(X)
+        probs = self[-1].predict_proba(X_tf)
+        return probs, X_tf
 
     def _assign_feature_config(self, feature_config: Mapping[str, Any]) -> None:
         """Store a defensive copy of the feature configuration on the class.
@@ -180,6 +189,7 @@ def build_pipeline(feature_config=None, **kw):
     steps = [
         ("flight_code", add_flight_code_transformer),
         ("depart", add_days_b4_depart_transformer),
+        ("bid_rank", add_bid_rank_transformer),
         ("group", group_features_transformer),
     ]
 

@@ -11,11 +11,11 @@ from ..data import (
 )
 from .formatting import (
     apply_bid_labels,
+    clear_derived_features,
     compute_bid_label_map,
     get_next_bid_label,
     normalize_offer_time,
     prepare_bid_record,
-    recompute_usd_metrics,
     safe_float,
     sort_records_by_bid,
 )
@@ -48,6 +48,7 @@ __all__ = [
     "apply_table_edits",
     "build_prediction_plot",
     "build_bid_table",
+    "clear_derived_features",
     "BID_IDENTIFIER_COLUMNS",
     "BAR_COLOR_SEQUENCE",
     "compute_bid_label_map",
@@ -58,7 +59,6 @@ __all__ = [
     "prepare_bid_record",
     "prepare_prediction_dataframe",
     "predict",
-    "recompute_usd_metrics",
     "ScenarioFeature",
     "ScenarioRange",
     "build_adjustment_grid",
