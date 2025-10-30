@@ -10,6 +10,7 @@ import yaml
 
 
 def _ensure_parent(path: Path) -> Path:
+    """Create parent directories for ``path`` and return the resolved path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 

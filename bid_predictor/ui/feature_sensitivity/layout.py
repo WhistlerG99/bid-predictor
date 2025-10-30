@@ -5,6 +5,12 @@ from dash import dash_table, dcc, html
 
 
 def _build_control_card() -> html.Div:
+    """Create the sidebar containing all scenario controls and filters.
+
+    This card wires up the cascading dropdowns, baseline overrides, and range
+    inputs that drive the sensitivity analysis.  The visual styling mirrors the
+    snapshot tab so users feel oriented while switching between workflows.
+    """
     return html.Div(
         [
             html.H3(
@@ -212,6 +218,12 @@ def _build_control_card() -> html.Div:
 
 
 def _build_graph_card() -> html.Div:
+    """Construct the card that houses the feature sensitivity line chart.
+
+    The container reserves ample vertical space for the plotly figure and adds
+    a status message area underneath so prediction warnings surface directly
+    beneath the chart.
+    """
     return html.Div(
         [
             dcc.Graph(id="scenario-graph", style={"height": "620px"}),
@@ -231,6 +243,12 @@ def _build_graph_card() -> html.Div:
 
 
 def _build_table_card() -> html.Div:
+    """Construct the interactive bid table card for the scenario tab.
+
+    Besides the data table itself this card includes quick actions for adding,
+    deleting, and restoring bids as well as dropdowns that support bulk
+    selection when the table grows large.
+    """
     button_style = {
         "color": "white",
         "border": "none",

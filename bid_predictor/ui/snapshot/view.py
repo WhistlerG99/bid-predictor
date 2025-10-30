@@ -42,6 +42,11 @@ ReturnType = Tuple[
 def _build_summary_block(
     carrier: str, flight_number: str, travel_date: str, upgrade_type: str
 ) -> html.Div:
+    """Render a simple HTML summary of the selected flight context.
+
+    The block is reused in multiple callback branches to remind users which
+    carrier, flight, and upgrade they are exploring.
+    """
     return html.Ul(
         [
             html.Li(f"Carrier: {carrier}"),
@@ -58,6 +63,11 @@ def _restore_snapshot(
     baseline_records: Sequence[Dict[str, object]],
     baseline_meta: Dict[str, object],
 ) -> ReturnType:
+    """Return the baseline snapshot state when the user restores defaults.
+
+    The function clones the original snapshot so editing actions do not mutate
+    the cached baseline data.
+    """
     if not baseline_records:
         return (
             summary,
@@ -90,6 +100,11 @@ def _add_bid(
     snapshot_meta: Optional[Dict[str, object]],
     feature_config: Optional[Dict[str, object]],
 ) -> ReturnType:
+    """Clone the first bid to create a new editable record.
+
+    We seed new bids from the first record so categorical columns retain valid
+    values and the table remains sortable.
+    """
     if not existing_records:
         return (
             summary,
@@ -140,6 +155,11 @@ def _restore_bids(
     existing_removed: Sequence[Dict[str, object]],
     restore_ids: Sequence[str],
 ) -> ReturnType:
+    """Rehydrate previously removed bids and place them back into the list.
+
+    Removed bids are stored with enough metadata to recreate prepared records,
+    allowing the UI to support undo operations even across multiple actions.
+    """
     if not restore_ids:
         return (
             summary,
@@ -185,6 +205,12 @@ def _delete_bids(
     existing_removed: Sequence[Dict[str, object]],
     selections: Sequence[int],
 ) -> ReturnType:
+    """Remove selected bids and store them for potential restoration.
+
+    The helper normalises selections from both the table and the supporting
+    dropdowns before producing a cleaned list and logging removed entries in
+    the dedicated store.
+    """
     working_records = list(existing_records)
     if not working_records:
         return (
@@ -238,6 +264,12 @@ def _load_snapshot(
     upgrade_type: str,
     snapshot_value: str,
 ) -> ReturnType:
+    """Load the selected snapshot into Dash stores and compute metadata.
+
+    Besides converting timestamps and preparing records, the helper also
+    computes summary metrics (such as time before departure) used throughout
+    the snapshot tab.
+    """
     travel_date_dt = pd.to_datetime(travel_date).date()
     mask = (
         (dataset["carrier_code"] == carrier)
@@ -379,6 +411,13 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
         baseline_meta_store: Optional[Dict[str, object]],
         feature_config: Optional[Dict[str, object]],
     ) -> ReturnType:
+        """Handle snapshot loading and bid list mutations for the tab.
+
+        The callback dispatches to the helper routines above based on which
+        input fired—supporting load, add, delete, restore, and baseline
+        restoration operations.  It also guards against incomplete selections
+        and missing datasets so the UI can provide helpful feedback.
+        """
         triggered = (
             callback_context.triggered[0]["prop_id"].split(".")[0]
             if callback_context.triggered

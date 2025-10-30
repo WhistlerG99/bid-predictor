@@ -41,6 +41,13 @@ def register_prediction_callbacks(app: Dash) -> None:
         snapshot_meta: Optional[Dict[str, object]],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Run model predictions for the selected snapshot and format outputs.
+
+        The callback prepares model-ready features, merges historical context
+        for plotting, performs two prediction passes (table + chart), and
+        packages both the figure and per-bid probabilities for downstream
+        components.
+        """
         if not records:
             return build_prediction_plot(pd.DataFrame()), {}, ""
 

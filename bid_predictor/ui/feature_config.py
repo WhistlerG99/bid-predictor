@@ -66,6 +66,15 @@ DEFAULT_UI_FEATURE_CONFIG: MutableMapping[str, list[str]] = {
 
 
 def _unique(sequence: Iterable[str]) -> list[str]:
+    """Return ``sequence`` without duplicates while preserving the order.
+
+    Feature definitions coming from CatBoost metadata are often lists with
+    repeated entries (for example when categorical encodings expand a feature).
+    The UI treats each feature as a distinct column, so duplicates would render
+    redundant controls.  This helper normalises any iterable to an ordered list
+    of unique string keys.
+    """
+
     seen: set[str] = set()
     ordered: list[str] = []
     for item in sequence:
@@ -80,12 +89,25 @@ def _unique(sequence: Iterable[str]) -> list[str]:
 def build_ui_feature_config(
     raw_config: Mapping[str, object] | None,
 ) -> MutableMapping[str, list[str]]:
-    """Return a UI-oriented view of the model feature configuration."""
+    """Return a UI-oriented view of the model feature configuration.
+
+    Models expose their feature metadata in several shapes (lists, dictionaries
+    and single strings).  The Dash UI expects a consistent mapping that splits
+    features into categories such as ``bid_features`` or
+    ``snapshot_control_features``.  This function standardises the structure by
+    coercing each section to a unique, ordered list of strings and by applying
+    sensible defaults when the model provides no configuration at all.  It also
+    guarantees that UI-only fields (``offer_status`` and ``Acceptance
+    Probability``) are present in the display list and flags competitor features
+    as read-only so they cannot be edited from the table.
+    """
 
     if raw_config is None:
         return deepcopy(DEFAULT_UI_FEATURE_CONFIG)
 
     def _coerce_list(key: str) -> list[str]:
+        """Normalise ``raw_config[key]`` to a list of string feature names."""
+
         value = raw_config.get(key, [])
         if isinstance(value, Mapping):
             value = list(value.keys())

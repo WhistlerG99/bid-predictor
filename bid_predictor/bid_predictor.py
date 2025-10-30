@@ -37,6 +37,21 @@ class FeatureConfiguredPipeline(Pipeline):
         transform_input=None,
         **kwargs,
     ) -> None:
+        """Initialize the pipeline and persist the supplied feature metadata.
+
+        Parameters
+        ----------
+        steps:
+            The ordered list of pipeline steps, forwarded to ``Pipeline``.
+        feature_config:
+            Raw feature configuration dictionary that should be stored on the
+            fitted estimator for later inspection or serialization.
+        transform_input:
+            Additional scikit-learn ``Pipeline`` keyword argument specifying
+            which inputs to pass through to intermediate transformers.
+        **kwargs:
+            Remaining keyword arguments forwarded to ``Pipeline``.
+        """
         self.feature_config: Mapping[str, Any] | None = feature_config
         self.feature_config_: Mapping[str, Any] | None = None
         super().__init__(steps, transform_input=transform_input, **kwargs)
@@ -44,17 +59,24 @@ class FeatureConfiguredPipeline(Pipeline):
             self._assign_feature_config(feature_config)
 
     def _assign_feature_config(self, feature_config: Mapping[str, Any]) -> None:
+        """Store a defensive copy of the feature configuration on the class.
+
+        The copy ensures that downstream mutations to ``feature_config`` do not
+        affect the persisted metadata attached to the pipeline instance.
+        """
         cloned = copy.deepcopy(feature_config)
         type(self).feature_config = cloned
         self.feature_config_ = cloned
 
     def __getstate__(self) -> MutableMapping[str, Any]:
+        """Include feature configuration metadata in pickled state."""
         state = super().__getstate__()
         state["_feature_config"] = self.feature_config_
         state["feature_config"] = self.feature_config
         return state
 
     def __setstate__(self, state: MutableMapping[str, Any]) -> None:
+        """Restore persisted feature configuration during unpickling."""
         feature_config = state.pop("_feature_config", None)
         original_config = state.pop("feature_config", None)
         super().__setstate__(state)
@@ -67,6 +89,7 @@ class FeatureConfiguredPipeline(Pipeline):
 # ---- 1) Minimal routing-aware wrapper
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, *, cat_features, **cb_params):
+        """Initialize the CatBoost wrapper with environment-aware settings."""
         if detect_execution_environment()[0] == "sagemaker_job":
             train_dir = get_output_dir()
             cb_params["train_dir"] = train_dir
@@ -81,6 +104,7 @@ class CBC(BaseEstimator, ClassifierMixin):
 
     # sklearn will route eval_set here if we request it on the instance
     def fit(self, X, y=None, eval_set=None, **fit_kwargs):
+        """Fit the wrapped ``CatBoostClassifier`` and mirror fitted attrs."""
         self._cb = CatBoostClassifier(**self.cb_params)
         active_cat_features = [
             feature
@@ -103,27 +127,33 @@ class CBC(BaseEstimator, ClassifierMixin):
         return self
 
     def __sklearn_is_fitted__(self):
+        """Comply with scikit-learn's ``check_is_fitted`` protocol."""
         return bool(getattr(self, "_cb", None) is not None and self._cb.is_fitted())
 
     # pass-through predict/predict_proba
     def predict(self, X):
+        """Predict class labels using the underlying CatBoost model."""
         check_is_fitted(self, attributes=["is_fitted_"])
         return self._cb.predict(X)
 
     def predict_proba(self, X):
+        """Predict class probabilities using the CatBoost estimator."""
         check_is_fitted(self, attributes=["is_fitted_"])
         return self._cb.predict_proba(X)
 
     def get_feature_importance(self, *args, **kwargs):
+        """Expose CatBoost's ``get_feature_importance`` helper."""
         return self._cb.get_feature_importance(*args, **kwargs)
 
     # make params grid-searchable
     def get_params(self, deep=True):
+        """Return constructor parameters for scikit-learn compatibility."""
         params = self.cb_params.copy()
         params["cat_features"] = self.cat_features
         return params
 
     def set_params(self, **params):
+        """Update CatBoost parameters while preserving scikit-learn semantics."""
         if "cat_features" in params:
             self.cat_features = params.pop("cat_features")
         self.cb_params.update(params)
@@ -133,6 +163,14 @@ class CBC(BaseEstimator, ClassifierMixin):
 
 
 def build_pipeline(feature_config=None, **kw):
+    """Construct the preprocessing and CatBoost pipeline from feature metadata.
+
+    The routine wires together the custom feature-engine transformers defined
+    in :mod:`bid_predictor.transform`, injects missing-value indicators,
+    outlier cappers, and discretisers based on the ``feature_config`` payload,
+    and finally appends the :class:`CBC` estimator with the supplied CatBoost
+    parameters.
+    """
     if feature_config is None:
         feature_config = _DEFAULT_FEATURE_CONFIG
 

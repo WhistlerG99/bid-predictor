@@ -32,6 +32,13 @@ def register_feature_callbacks(app: Dash) -> None:
         current_value: Optional[str],
         feature_config: Optional[Dict[str, object]],
     ):
+        """List the features that can be explored for the loaded baseline.
+
+        The available options depend on the columns present in the baseline
+        records and any overrides defined in the feature configuration.  The
+        callback keeps a previously selected feature active when possible so
+        users do not lose their context while adjusting other controls.
+        """
         baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(
             baseline_df, feature_config=feature_config
@@ -62,6 +69,15 @@ def register_feature_callbacks(app: Dash) -> None:
         time_state: Optional[float],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Adjust baseline override inputs in response to the current context.
+
+        The seats and time-to-departure inputs should mirror the dataset
+        defaults when new flights are loaded, but remain untouched when the
+        user manually edits them.  This callback orchestrates those rules,
+        determines which inputs should be visible for the selected feature, and
+        normalises numeric display values to avoid awkward floating point
+        representations in the UI.
+        """
         baseline_df = records_to_dataframe(baseline_records)
         defaults = extract_global_baseline_values(
             baseline_df, feature_config=feature_config
@@ -124,6 +140,14 @@ def register_feature_callbacks(app: Dash) -> None:
         time_to_departure_value: Optional[float],
         records: Optional[List[Dict[str, object]]],
     ):
+        """Persist baseline override edits to the stored scenario records.
+
+        When the user modifies either baseline input, the stored records must
+        be updated so that downstream components—such as the prediction graph
+        or bid table—operate on the adjusted values.  This function clones and
+        updates the records only when the change is meaningful, preventing
+        redundant callback updates.
+        """
         if not records:
             return no_update
 

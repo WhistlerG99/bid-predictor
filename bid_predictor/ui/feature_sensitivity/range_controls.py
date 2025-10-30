@@ -36,6 +36,13 @@ def register_range_callback(app: Dash) -> None:
         feature_value: Optional[str],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Set sensible defaults for the feature range inputs.
+
+        The range sliders should reflect the data distribution of the selected
+        baseline feature.  This callback calculates the recommended min/max,
+        step size, and evaluation count, while also populating helper text that
+        reminds the user of the baseline value they are modifying.
+        """
         baseline_df = records_to_dataframe(baseline_records)
         features = build_feature_options(
             baseline_df, feature_config=feature_config

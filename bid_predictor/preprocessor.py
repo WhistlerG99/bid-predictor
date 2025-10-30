@@ -2,6 +2,7 @@ import pandas as pd
 
 
 def load_flight_data(path):
+    """Load raw flight metadata CSVs and derive calendar helper columns."""
     df = pd.read_csv(path, low_memory=False)
     df["departure_date_utc"] = pd.to_datetime(df.departure_date_utc)
     df["travel_year_month"] = pd.to_datetime(
@@ -22,6 +23,7 @@ def load_flight_data(path):
 
 
 def load_offer_data(path):
+    """Load bid offer CSVs and normalize column names and categorical fields."""
     df = pd.read_csv(path, low_memory=False)
     df = df.rename(
         columns={
@@ -46,6 +48,7 @@ def load_offer_data(path):
 
 
 def preprocess_data(df_flights, df_offers):
+    """Join flight and offer datasets and engineer shared temporal features."""
     df_flights_ = df_flights.drop(columns=["equip"]).drop_duplicates(
         subset=[
             "carrier_code",
@@ -130,6 +133,7 @@ def preprocess_data(df_flights, df_offers):
 
 
 def get_seats_available(row):
+    """Estimate seats available at decision time using staggered inventory snapshots."""
     time_columns = [
         ("event_local_date_01h", "available_count_01h"),
         ("event_local_date_12h", "available_count_12h"),

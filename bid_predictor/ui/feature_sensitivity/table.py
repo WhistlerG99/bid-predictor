@@ -30,6 +30,12 @@ def register_table_callbacks(app: Dash) -> None:
         feature_value: Optional[str],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Render the scenario bid table with optional predictions.
+
+        When a model URI is available the callback scores each bid to populate
+        the "Acceptance Probability" columns, respecting any cells that should
+        remain locked due to the selected feature.
+        """
         predictions: Dict[str, object] = {}
         if records and model_uri:
             feature_df = prepare_prediction_dataframe(
@@ -74,6 +80,12 @@ def register_table_callbacks(app: Dash) -> None:
         Input("scenario-records-store", "data"),
     )
     def sync_scenario_delete_selector(records: Optional[List[Dict[str, object]]]):
+        """Mirror the currently displayed bids in the delete dropdown options.
+
+        Each record becomes a selectable entry so users can bulk-remove offers
+        even when the table has scrolled out of view.  Clearing the records
+        resets the dropdown to an empty multi-select.
+        """
         if not records:
             return [], []
         options = [
@@ -93,6 +105,12 @@ def register_table_callbacks(app: Dash) -> None:
     def sync_scenario_restore_selector(
         removed: Optional[List[Dict[str, object]]]
     ):
+        """List the previously removed bids that can be restored.
+
+        The removed-bids store holds metadata about deleted records; this
+        callback formats that metadata into dropdown options that drive the
+        "Restore bids" control.
+        """
         if not removed:
             return [], []
         options = [
@@ -120,6 +138,13 @@ def register_table_callbacks(app: Dash) -> None:
         feature_value: Optional[str],
         feature_config: Optional[Dict[str, object]],
     ):
+        """Write inline table edits back to the scenario records store.
+
+        Dash hands us the modified table rows and a timestamp marker each time a
+        cell edit occurs.  We use ``apply_table_edits`` to reconcile only the
+        unlocked cells and return the updated records so downstream callbacks
+        stay consistent.
+        """
         if not data_timestamp or not table_data or not columns or not records:
             return no_update
 

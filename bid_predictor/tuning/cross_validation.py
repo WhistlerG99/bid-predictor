@@ -169,6 +169,7 @@ class RandomDateSplitter:
         eval_target: int,
         total_target: int,
     ) -> Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp] | None:
+        """Sample a contiguous train/eval window that approximates target sizes."""
         counts = self._counts
         unique_dates = self._unique_dates
         n_unique = unique_dates.size
@@ -224,6 +225,7 @@ class RandomDateSplitter:
     def _deterministic_window(
         self, train_target: int, eval_target: int
     ) -> Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp]:
+        """Construct a fallback window when random sampling cannot meet targets."""
         counts = self._counts
         unique_dates = self._unique_dates
         n_unique = unique_dates.size
@@ -258,6 +260,7 @@ class RandomDateSplitter:
         return t_begin, t_cut, t_end
 
     def split(self, X=None, y=None) -> Generator[Tuple[np.ndarray, np.ndarray], None, None]:
+        """Yield train/eval indices honoring the sampled date window."""
         rng = (
             np.random.RandomState(self._rng_state)
             if self._rng_state is not None
