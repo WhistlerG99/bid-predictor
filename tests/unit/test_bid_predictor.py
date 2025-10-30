@@ -1,6 +1,7 @@
 import cloudpickle
 
 from bid_predictor import bid_predictor
+from bid_predictor.feature_config import load_feature_config
 
 
 def test_cbc_filters_missing_cat_features(sample_feature_config, sample_training_dataframe, stub_mlflow):
@@ -45,3 +46,14 @@ def test_pipeline_persists_feature_config(sample_feature_config, tmp_path):
 
     assert loaded.feature_config_ == sample_feature_config
     assert loaded.__class__.feature_config == sample_feature_config
+
+
+def test_dump_feature_config_roundtrip(tmp_path, sample_feature_config):
+    pipeline = bid_predictor.build_pipeline(feature_config=sample_feature_config)
+
+    output = tmp_path / "feature_config.yaml"
+    pipeline.dump_feature_config(output)
+
+    reloaded = load_feature_config(output)
+
+    assert reloaded == sample_feature_config

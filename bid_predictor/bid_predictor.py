@@ -1,4 +1,6 @@
 import copy
+from collections.abc import Mapping as MappingABC
+from pathlib import Path
 from typing import Any, ClassVar, Mapping, MutableMapping
 
 import numpy as np
@@ -7,6 +9,7 @@ from catboost import CatBoostClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
+import yaml
 from .transform import (
     ArbitraryOutlierCapperCustom,
     ArbitraryDiscretiserCustom,
@@ -76,6 +79,72 @@ class FeatureConfiguredPipeline(Pipeline):
         cloned = copy.deepcopy(feature_config)
         type(self).feature_config = cloned
         self.feature_config_ = cloned
+
+    @classmethod
+    def dump_feature_config(cls, output_path: str | Path) -> Path:
+        """Serialize the stored feature configuration to a YAML file.
+
+        Parameters
+        ----------
+        output_path:
+            Destination path for the emitted YAML file.
+
+        Returns
+        -------
+        pathlib.Path
+            The resolved path of the written YAML file.
+
+        Raises
+        ------
+        ValueError
+            If no feature configuration has been stored on the pipeline.
+        """
+
+        if cls.feature_config is None:
+            raise ValueError(
+                "FeatureConfiguredPipeline.feature_config is not set; "
+                "nothing to serialize. Fit or build the pipeline with a "
+                "feature configuration before dumping."
+            )
+
+        feature_metadata = cls.feature_config.get("feature_metadata")
+        if not isinstance(feature_metadata, MappingABC):
+            raise ValueError(
+                "Feature configuration is missing 'feature_metadata' and "
+                "cannot be serialized to YAML."
+            )
+
+        features_section: dict[str, Any] = {}
+        for feature_name, metadata in feature_metadata.items():
+            if not isinstance(metadata, MappingABC):
+                raise ValueError(
+                    f"Feature '{feature_name}' metadata must be a mapping to "
+                    "serialize to YAML."
+                )
+            features_section[feature_name] = cls._prepare_for_yaml(metadata)
+
+        payload = {"features": features_section}
+
+        destination = Path(output_path).resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False)
+
+        return destination
+
+    @staticmethod
+    def _prepare_for_yaml(value: Any) -> Any:
+        """Convert mappings and tuples to YAML-friendly built-in structures."""
+        if isinstance(value, MappingABC):
+            return {
+                key: FeatureConfiguredPipeline._prepare_for_yaml(val)
+                for key, val in value.items()
+            }
+        if isinstance(value, tuple):
+            return [FeatureConfiguredPipeline._prepare_for_yaml(item) for item in value]
+        if isinstance(value, list):
+            return [FeatureConfiguredPipeline._prepare_for_yaml(item) for item in value]
+        return copy.deepcopy(value)
 
     def __getstate__(self) -> MutableMapping[str, Any]:
         """Include feature configuration metadata in pickled state."""
