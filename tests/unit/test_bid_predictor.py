@@ -1,4 +1,5 @@
 import cloudpickle
+import yaml
 
 from bid_predictor import bid_predictor
 from bid_predictor.feature_config import load_feature_config
@@ -53,6 +54,16 @@ def test_dump_feature_config_roundtrip(tmp_path, sample_feature_config):
 
     output = tmp_path / "feature_config.yaml"
     pipeline.dump_feature_config(output)
+
+    with output.open("r", encoding="utf-8") as handle:
+        dumped_payload = yaml.safe_load(handle)
+
+    features_yaml = dumped_payload.get("features", {})
+    for feature_name, metadata in sample_feature_config["feature_metadata"].items():
+        emitted_metadata = features_yaml.get(feature_name, {})
+        for key, value in metadata.items():
+            if value is None:
+                assert key not in emitted_metadata
 
     reloaded = load_feature_config(output)
 

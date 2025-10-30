@@ -139,6 +139,7 @@ class FeatureConfiguredPipeline(Pipeline):
             return {
                 key: FeatureConfiguredPipeline._prepare_for_yaml(val)
                 for key, val in value.items()
+                if val is not None
             }
         if isinstance(value, tuple):
             return [FeatureConfiguredPipeline._prepare_for_yaml(item) for item in value]
