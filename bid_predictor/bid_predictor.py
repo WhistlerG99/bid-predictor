@@ -1,4 +1,7 @@
 import copy
+import inspect
+from collections.abc import Mapping as MappingABC
+from pathlib import Path
 from typing import Any, ClassVar, Mapping, MutableMapping
 
 import numpy as np
@@ -7,6 +10,7 @@ from catboost import CatBoostClassifier
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.pipeline import Pipeline
 from sklearn.utils.validation import check_is_fitted
+import yaml
 from .transform import (
     ArbitraryOutlierCapperCustom,
     ArbitraryDiscretiserCustom,
@@ -25,10 +29,27 @@ from .utils import detect_execution_environment, get_output_dir
 from .feature_config import _DEFAULT_FEATURE_CONFIG
 
 
+def _introspect_catboost_defaults() -> dict[str, Any]:
+    signature = inspect.signature(CatBoostClassifier.__init__)
+    defaults: dict[str, Any] = {}
+    for name, param in signature.parameters.items():
+        if name == "self" or param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+        defaults[name] = None if param.default is inspect._empty else param.default
+    return defaults
+
+
+_CATBOOST_PARAM_DEFAULTS = _introspect_catboost_defaults()
+
+
 class FeatureConfiguredPipeline(Pipeline):
     """Pipeline that persists feature configuration metadata."""
 
     feature_config: ClassVar[Mapping[str, Any] | None] = None
+    catboost_params: ClassVar[Mapping[str, Any] | None] = None
 
     def __init__(
         self,
@@ -55,6 +76,8 @@ class FeatureConfiguredPipeline(Pipeline):
         """
         self.feature_config: Mapping[str, Any] | None = feature_config
         self.feature_config_: Mapping[str, Any] | None = None
+        self.catboost_params: Mapping[str, Any] | None = None
+        self.catboost_params_: Mapping[str, Any] | None = None
         super().__init__(steps, transform_input=transform_input, **kwargs)
         if feature_config is not None:
             self._assign_feature_config(feature_config)
@@ -77,22 +100,136 @@ class FeatureConfiguredPipeline(Pipeline):
         type(self).feature_config = cloned
         self.feature_config_ = cloned
 
+    def _assign_catboost_params(self, catboost_params: Mapping[str, Any]) -> None:
+        cloned = copy.deepcopy(catboost_params)
+        type(self).catboost_params = cloned
+        self.catboost_params = cloned
+        self.catboost_params_ = cloned
+
+    @classmethod
+    def dump_feature_config(cls, output_path: str | Path) -> Path:
+        """Serialize the stored feature configuration to a YAML file.
+
+        Parameters
+        ----------
+        output_path:
+            Destination path for the emitted YAML file.
+
+        Returns
+        -------
+        pathlib.Path
+            The resolved path of the written YAML file.
+
+        Raises
+        ------
+        ValueError
+            If no feature configuration has been stored on the pipeline.
+        """
+
+        if cls.feature_config is None:
+            raise ValueError(
+                "FeatureConfiguredPipeline.feature_config is not set; "
+                "nothing to serialize. Fit or build the pipeline with a "
+                "feature configuration before dumping."
+            )
+
+        feature_metadata = cls.feature_config.get("feature_metadata")
+        if not isinstance(feature_metadata, MappingABC):
+            raise ValueError(
+                "Feature configuration is missing 'feature_metadata' and "
+                "cannot be serialized to YAML."
+            )
+
+        features_section: dict[str, Any] = {}
+        for feature_name, metadata in feature_metadata.items():
+            if not isinstance(metadata, MappingABC):
+                raise ValueError(
+                    f"Feature '{feature_name}' metadata must be a mapping to "
+                    "serialize to YAML."
+                )
+            features_section[feature_name] = cls._prepare_for_yaml(metadata)
+
+        payload = {"features": features_section}
+
+        destination = Path(output_path).resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False)
+
+        return destination
+
+    @staticmethod
+    def _prepare_for_yaml(value: Any) -> Any:
+        """Convert mappings and tuples to YAML-friendly built-in structures."""
+        if isinstance(value, MappingABC):
+            return {
+                key: FeatureConfiguredPipeline._prepare_for_yaml(val)
+                for key, val in value.items()
+                if val is not None
+            }
+        if isinstance(value, tuple):
+            return [FeatureConfiguredPipeline._prepare_for_yaml(item) for item in value]
+        if isinstance(value, list):
+            return [FeatureConfiguredPipeline._prepare_for_yaml(item) for item in value]
+        return copy.deepcopy(value)
+
+    @classmethod
+    def dump_catboost_params(cls, output_path: str | Path) -> Path:
+        """Serialize stored CatBoost parameters that diverge from defaults."""
+
+        if cls.catboost_params is None:
+            raise ValueError(
+                "FeatureConfiguredPipeline.catboost_params is not set; "
+                "nothing to serialize. Build the pipeline with CatBoost "
+                "parameters before dumping."
+            )
+
+        if not isinstance(cls.catboost_params, MappingABC):
+            raise ValueError(
+                "CatBoost parameters must be a mapping in order to be serialized."
+            )
+
+        sentinel = object()
+        payload_params: dict[str, Any] = {}
+        for key, value in cls.catboost_params.items():
+            default_value = _CATBOOST_PARAM_DEFAULTS.get(key, sentinel)
+            if default_value is not sentinel and default_value == value:
+                continue
+            payload_params[key] = cls._prepare_for_yaml(value)
+
+        payload = {"catboost": payload_params}
+
+        destination = Path(output_path).resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with destination.open("w", encoding="utf-8") as handle:
+            yaml.safe_dump(payload, handle, sort_keys=False)
+
+        return destination
+
     def __getstate__(self) -> MutableMapping[str, Any]:
         """Include feature configuration metadata in pickled state."""
         state = super().__getstate__()
         state["_feature_config"] = self.feature_config_
         state["feature_config"] = self.feature_config
+        state["_catboost_params"] = self.catboost_params_
+        state["catboost_params"] = self.catboost_params
         return state
 
     def __setstate__(self, state: MutableMapping[str, Any]) -> None:
         """Restore persisted feature configuration during unpickling."""
         feature_config = state.pop("_feature_config", None)
         original_config = state.pop("feature_config", None)
+        catboost_params = state.pop("_catboost_params", None)
+        original_catboost = state.pop("catboost_params", None)
         super().__setstate__(state)
         self.feature_config = original_config
         self.feature_config_ = feature_config
+        self.catboost_params = original_catboost
+        self.catboost_params_ = catboost_params
         if feature_config is not None:
             type(self).feature_config = feature_config
+        if catboost_params is not None:
+            type(self).catboost_params = catboost_params
 
 
 # ---- 1) Minimal routing-aware wrapper
@@ -312,4 +449,5 @@ def build_pipeline(feature_config=None, **kw):
         transform_input=["eval_set"],
         feature_config=feature_config,
     )
+    pipeline._assign_catboost_params(clf.cb_params)
     return pipeline
