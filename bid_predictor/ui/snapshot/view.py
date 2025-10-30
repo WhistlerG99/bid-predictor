@@ -19,9 +19,9 @@ from ...data import load_dataset_cached
 from ..formatting import (
     apply_bid_labels,
     compute_bid_label_map,
+    clear_derived_features,
     get_next_bid_label,
     prepare_bid_record,
-    recompute_usd_metrics,
     sort_records_by_bid,
 )
 from ..constants import BID_IDENTIFIER_COLUMNS
@@ -62,6 +62,7 @@ def _restore_snapshot(
     summary: html.Div,
     baseline_records: Sequence[Dict[str, object]],
     baseline_meta: Dict[str, object],
+    feature_config: Optional[Dict[str, object]],
 ) -> ReturnType:
     """Return the baseline snapshot state when the user restores defaults.
 
@@ -80,7 +81,7 @@ def _restore_snapshot(
         )
 
     restored_records = [dict(record) for record in baseline_records]
-    recompute_usd_metrics(restored_records)
+    clear_derived_features(restored_records, feature_config)
     restored_meta = dict(baseline_meta)
     restored_meta["num_offers"] = len(restored_records)
     return (
@@ -141,7 +142,7 @@ def _add_bid(
 
     prepared = prepare_bid_record(new_bid)
     updated = sort_records_by_bid(list(existing_records) + [prepared])
-    recompute_usd_metrics(updated)
+    clear_derived_features(updated, feature_config)
 
     new_meta = dict(snapshot_meta or {})
     new_meta["num_offers"] = len(updated)
@@ -154,6 +155,7 @@ def _restore_bids(
     snapshot_meta: Optional[Dict[str, object]],
     existing_removed: Sequence[Dict[str, object]],
     restore_ids: Sequence[str],
+    feature_config: Optional[Dict[str, object]],
 ) -> ReturnType:
     """Rehydrate previously removed bids and place them back into the list.
 
@@ -192,7 +194,7 @@ def _restore_bids(
         )
 
     working = sort_records_by_bid(list(existing_records) + restored_records)
-    recompute_usd_metrics(working)
+    clear_derived_features(working, feature_config)
     new_meta = dict(snapshot_meta or {})
     new_meta["num_offers"] = len(working)
     return summary, "", new_meta, working, remaining_removed, no_update, no_update
@@ -204,6 +206,7 @@ def _delete_bids(
     snapshot_meta: Optional[Dict[str, object]],
     existing_removed: Sequence[Dict[str, object]],
     selections: Sequence[int],
+    feature_config: Optional[Dict[str, object]],
 ) -> ReturnType:
     """Remove selected bids and store them for potential restoration.
 
@@ -248,7 +251,7 @@ def _delete_bids(
             )
 
     working_records = sort_records_by_bid(working_records)
-    recompute_usd_metrics(working_records)
+    clear_derived_features(working_records, feature_config)
     new_meta = dict(snapshot_meta or {})
     new_meta["num_offers"] = len(working_records)
     updated_removed = list(existing_removed) + removed_entries
@@ -263,6 +266,7 @@ def _load_snapshot(
     travel_date: str,
     upgrade_type: str,
     snapshot_value: str,
+    feature_config: Optional[Dict[str, object]],
 ) -> ReturnType:
     """Load the selected snapshot into Dash stores and compute metadata.
 
@@ -321,7 +325,7 @@ def _load_snapshot(
 
     base_data = [prepare_bid_record(record) for record in snapshot_df.to_dict("records")]
     base_data = sort_records_by_bid(base_data)
-    recompute_usd_metrics(base_data)
+    clear_derived_features(base_data, feature_config)
 
     seats_value = None
     seats_available = snapshot_df.get("seats_available")
@@ -455,7 +459,12 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
         records_list = list(existing_records or [])
 
         if triggered == "restore-snapshot":
-            return _restore_snapshot(summary_block, baseline_records, baseline_meta)
+            return _restore_snapshot(
+                summary_block,
+                baseline_records,
+                baseline_meta,
+                feature_config,
+            )
 
         if triggered == "add-bid":
             return _add_bid(
@@ -472,6 +481,7 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
                 snapshot_meta,
                 existing_removed,
                 restore_selector or [],
+                feature_config,
             )
 
         if triggered == "delete-bid":
@@ -490,6 +500,7 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
                 snapshot_meta,
                 existing_removed,
                 selections,
+                feature_config,
             )
 
         if triggered != "snapshot-dropdown":
@@ -522,6 +533,7 @@ def register_snapshot_view_callbacks(app: Dash) -> None:
             travel_date,
             upgrade_type,
             snapshot_value,
+            feature_config,
         )
 
 

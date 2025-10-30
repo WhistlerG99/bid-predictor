@@ -11,7 +11,7 @@ from ..formatting import (
     get_next_bid_label,
     normalize_offer_time,
     prepare_bid_record,
-    recompute_usd_metrics,
+    clear_derived_features,
     sort_records_by_bid,
 )
 
@@ -49,6 +49,7 @@ def register_summary_callbacks(app: Dash) -> None:
         Input("time-before-hours-input", "value"),
         State("bid-records-store", "data"),
         State("snapshot-meta-store", "data"),
+        State("feature-config-store", "data"),
         prevent_initial_call=True,
     )
     def apply_summary_overrides(
@@ -58,6 +59,7 @@ def register_summary_callbacks(app: Dash) -> None:
         hours_value: Optional[int],
         records: Optional[List[Dict[str, object]]],
         meta: Optional[Dict[str, object]],
+        feature_config: Optional[Dict[str, object]],
     ):
         """Apply edits from the summary controls back to the stores.
 
@@ -95,7 +97,7 @@ def register_summary_callbacks(app: Dash) -> None:
                 updated_meta["num_offers"] = offers_value
                 for record in updated_records:
                     normalize_offer_time(record)
-                recompute_usd_metrics(updated_records)
+                clear_derived_features(updated_records, feature_config)
                 return updated_records, updated_meta
             if offers_value > current_len and current_len > 0:
                 template = updated_records[0]
@@ -112,7 +114,7 @@ def register_summary_callbacks(app: Dash) -> None:
             updated_records = sort_records_by_bid(updated_records)
             for record in updated_records:
                 normalize_offer_time(record)
-            recompute_usd_metrics(updated_records)
+            clear_derived_features(updated_records, feature_config)
             updated_meta["num_offers"] = len(updated_records)
             return updated_records, updated_meta
 

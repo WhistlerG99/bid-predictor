@@ -11,7 +11,7 @@ from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import (
     get_next_bid_label,
     prepare_bid_record,
-    recompute_usd_metrics,
+    clear_derived_features,
     sort_records_by_bid,
 )
 
@@ -70,7 +70,7 @@ def register_record_callbacks(app: Dash) -> None:
             if not original_records:
                 return no_update, no_update, "No defaults available to restore."
             restored = [dict(record) for record in original_records]
-            recompute_usd_metrics(restored)
+            clear_derived_features(restored, feature_config)
             return restored, [], "Restored default bids."
 
         if triggered == "scenario-add-bid":
@@ -101,7 +101,7 @@ def register_record_callbacks(app: Dash) -> None:
             new_bid.setdefault("offer_status", "pending")
             prepared = prepare_bid_record(new_bid)
             updated = sort_records_by_bid(current_records + [prepared])
-            recompute_usd_metrics(updated)
+            clear_derived_features(updated, feature_config)
             return updated, existing_removed, ""
 
         if triggered == "scenario-delete-bid":
@@ -134,7 +134,7 @@ def register_record_callbacks(app: Dash) -> None:
             if not removed_entries:
                 return no_update, existing_removed, "No matching bids were removed."
             working = sort_records_by_bid(working)
-            recompute_usd_metrics(working)
+            clear_derived_features(working, feature_config)
             updated_removed = existing_removed + removed_entries
             return working, updated_removed, ""
 
@@ -152,7 +152,7 @@ def register_record_callbacks(app: Dash) -> None:
             if not restored_records:
                 return no_update, existing_removed, "No matching removed bids found."
             working = sort_records_by_bid(current_records + restored_records)
-            recompute_usd_metrics(working)
+            clear_derived_features(working, feature_config)
             return working, remaining_removed, ""
 
         return no_update, no_update, ""

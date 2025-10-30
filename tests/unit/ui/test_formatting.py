@@ -3,13 +3,11 @@ import pandas as pd
 from bid_predictor.ui import (
     BID_IDENTIFIER_COLUMNS,
     DEFAULT_UI_FEATURE_CONFIG,
-    USD_MAX_COLUMN,
-    USD_PERCENT_COLUMNS,
     apply_bid_labels,
+    clear_derived_features,
     compute_bid_label_map,
     get_next_bid_label,
     prepare_bid_record,
-    recompute_usd_metrics,
     safe_float,
     sort_records_by_bid,
 )
@@ -27,16 +25,20 @@ def test_prepare_bid_record_strips_probability():
     assert prepared["usd_base_amount"] == 100.56
 
 
-def test_recompute_usd_metrics_updates_percentiles():
+def test_clear_derived_features_strips_comp_columns():
     records = [
-        {"Bid #": 1, "usd_base_amount": 100},
-        {"Bid #": 2, "usd_base_amount": 200},
-        {"Bid #": 3, "usd_base_amount": 300},
+        {
+            "Bid #": 1,
+            "usd_base_amount": 100,
+            "usd_base_amount_25%": 90,
+            "usd_base_amount_max": 120,
+        }
     ]
-    recompute_usd_metrics(records)
-    for column in USD_PERCENT_COLUMNS:
-        assert all(column in record for record in records)
-    assert all(record[USD_MAX_COLUMN] == 300 for record in records)
+    clear_derived_features(records, DEFAULT_UI_FEATURE_CONFIG)
+    comp_features = DEFAULT_UI_FEATURE_CONFIG.get("comp_features", [])
+    for record in records:
+        for feature in comp_features:
+            assert feature not in record
 
 
 def test_compute_and_apply_bid_labels():
