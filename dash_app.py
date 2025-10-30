@@ -29,7 +29,7 @@ from bid_predictor.ui.snapshot import (
 
 def create_app() -> Dash:
     default_dataset_path = (
-        "./data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2.parquet"
+        "./data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
     )
 
     app = Dash(__name__)
