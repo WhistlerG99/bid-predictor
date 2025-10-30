@@ -161,6 +161,30 @@ def add_days_b4_depart(data):
     return result
 
 
+def add_bid_rank(data):
+    """Create a combined carrier/flight categorical code when possible."""
+    required = {
+        "usd_base_amount",
+        "multiplier_fare_class",
+        "multiplier_loyalty",
+        "multiplier_success_history",
+        "multiplier_payment_type",
+    }
+    if not required.issubset(data.columns):
+        return data
+    result = data.copy().set_index(_GROUPBY_KEY_FEATURES)
+
+    result["bid_rank"] = (
+        result[list(required)]
+        .prod(axis=1)
+        .groupby(level=_GROUPBY_KEY_FEATURES, observed=False)
+        .rank(method="dense", ascending=False)
+        .astype(int)
+        .astype("category")
+    )
+    return result.reset_index()[data.columns.tolist() + ["bid_rank"]]
+
+
 def add_group_features(data):
     """Add group-level aggregate features such as offer counts and max price."""
     if "usd_base_amount" not in data.columns:
@@ -273,6 +297,15 @@ def add_days_b4_depart_wrapper(X):
         return X
 
 
+# --- Wrappers around your existing funcs so they can be used in pipelines ---
+def add_bid_rank_wrapper(X):
+    """Safely apply :func:`add_flight_code` within sklearn pipelines."""
+    if isinstance(X, pd.DataFrame):
+        return add_bid_rank(X)
+    else:
+        return X
+
+
 def add_group_features_wrapper(X):
     """Safely apply :func:`add_group_features` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
@@ -335,5 +368,6 @@ class ColumnReducer(BaseEstimator, TransformerMixin):
 # FunctionTransformer allows arbitrary pandas-based functions
 add_flight_code_transformer = FunctionTransformer(add_flight_code_wrapper)
 add_days_b4_depart_transformer = FunctionTransformer(add_days_b4_depart_wrapper)
+add_bid_rank_transformer = FunctionTransformer(add_bid_rank_wrapper)
 group_features_transformer = FunctionTransformer(add_group_features_wrapper)
 quantiles_transformer = FunctionTransformer(add_quantiles_wrapper)

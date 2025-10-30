@@ -15,6 +15,7 @@ from .transform import (
     MeanMedianImputerCustom,
     add_flight_code_transformer,
     add_days_b4_depart_transformer,
+    add_bid_rank_transformer,
     group_features_transformer,
     quantiles_transformer,
     ColumnReducer,
@@ -180,6 +181,7 @@ def build_pipeline(feature_config=None, **kw):
     steps = [
         ("flight_code", add_flight_code_transformer),
         ("depart", add_days_b4_depart_transformer),
+        ("bid_rank", add_bid_rank_transformer),
         ("group", group_features_transformer),
     ]
 
