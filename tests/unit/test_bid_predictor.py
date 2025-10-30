@@ -3,6 +3,7 @@ import yaml
 
 from bid_predictor import bid_predictor
 from bid_predictor.feature_config import load_feature_config
+from bid_predictor.bid_predictor import _CATBOOST_PARAM_DEFAULTS
 
 
 def test_cbc_filters_missing_cat_features(sample_feature_config, sample_training_dataframe, stub_mlflow):
@@ -68,3 +69,47 @@ def test_dump_feature_config_roundtrip(tmp_path, sample_feature_config):
     reloaded = load_feature_config(output)
 
     assert reloaded == sample_feature_config
+
+
+def test_dump_catboost_params_roundtrip(tmp_path, sample_feature_config):
+    pipeline = bid_predictor.build_pipeline(
+        feature_config=sample_feature_config,
+        iterations=5,
+        depth=2,
+        learning_rate=0.2,
+        l2_leaf_reg=1.0,
+        random_seed=42,
+        logging_level="Silent",
+        task_type="CPU",
+        devices="0",
+        custom_metric=["AUC"],
+    )
+
+    clf_params = pipeline.named_steps["clf"].cb_params
+    assert pipeline.__class__.catboost_params == clf_params
+
+    output = tmp_path / "catboost_params.yaml"
+    pipeline.dump_catboost_params(output)
+
+    with output.open("r", encoding="utf-8") as handle:
+        dumped_payload = yaml.safe_load(handle)
+
+    catboost_yaml = dumped_payload.get("catboost", {})
+    assert isinstance(catboost_yaml, dict)
+
+    sentinel = object()
+    for key, value in clf_params.items():
+        default_value = _CATBOOST_PARAM_DEFAULTS.get(key, sentinel)
+        if default_value is not sentinel and default_value == value:
+            assert key not in catboost_yaml
+        else:
+            assert key in catboost_yaml
+            assert catboost_yaml[key] == value
+
+    for key in catboost_yaml:
+        default_value = _CATBOOST_PARAM_DEFAULTS.get(key, sentinel)
+        if default_value is not sentinel:
+            assert default_value != catboost_yaml[key]
+
+    # Ensure the emitted YAML can serve as a train.py configuration input
+    assert dumped_payload == {"catboost": catboost_yaml}
