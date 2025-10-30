@@ -7,7 +7,7 @@ import pandas as pd
 from dash import Dash, Input, Output, State
 
 from ...data import load_dataset_cached
-from ..formatting import prepare_bid_record, recompute_usd_metrics, sort_records_by_bid
+from ..formatting import clear_derived_features, prepare_bid_record, sort_records_by_bid
 from ..scenario import (
     TIME_TO_DEPARTURE_SCENARIO_KEY,
     extract_baseline_snapshot,
@@ -168,7 +168,7 @@ def register_baseline_callback(app: Dash) -> None:
         base_records = [prepare_bid_record(record) for record in baseline_df.to_dict("records")]
         base_records = sort_records_by_bid(base_records)
         _apply_defaults(base_records, baseline_df, feature_config)
-        recompute_usd_metrics(base_records)
+        clear_derived_features(base_records, feature_config)
 
         serializable_records = _serialize_records(base_records)
         summary = f"Using {len(serializable_records)} bids"

@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Mapping, Optional, Sequence
 
-from .constants import USD_MAX_COLUMN, USD_PERCENT_COLUMNS
 from .feature_config import DEFAULT_UI_FEATURE_CONFIG
-from .formatting import normalize_offer_time, recompute_usd_metrics, safe_float
+from .formatting import clear_derived_features, normalize_offer_time, safe_float
 
 
 def build_bid_table(
@@ -14,6 +13,8 @@ def build_bid_table(
     *,
     feature_config: Optional[Mapping[str, Sequence[str]]] = None,
     locked_cells: Optional[Mapping[str, Sequence[str]]] = None,
+    derived_feature_values: Optional[Sequence[Mapping[str, object]]] = None,
+    show_comp_features: bool = True,
 ) -> tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
     """Return Dash DataTable configuration for bid feature editing.
 
@@ -39,6 +40,12 @@ def build_bid_table(
     locked_cells:
         Optional mapping of column ids to feature names that the caller wants to
         lock in the UI (e.g. while a scenario slider is active).
+    derived_feature_values:
+        Optional sequence mirroring ``records`` where each entry contains the
+        derived features produced by the model's preprocessing pipeline.
+    show_comp_features:
+        When ``False``, columns listed under ``comp_features`` in the feature
+        configuration are hidden from the rendered table.
 
     Returns
     -------
@@ -61,12 +68,20 @@ def build_bid_table(
     display_features = list(config.get("display_features", []))
     if not display_features:
         display_features = list(DEFAULT_UI_FEATURE_CONFIG.get("display_features", []))
+    comp_features = list(config.get("comp_features", []))
+    if not show_comp_features and comp_features:
+        display_features = [
+            feature for feature in display_features if feature not in comp_features
+        ]
     if "Acceptance Probability" not in display_features:
         display_features.append("Acceptance Probability")
 
     editable_features = set(config.get("bid_features", []))
     readonly_features = set(config.get("readonly_features", []))
-    readonly_features.update(config.get("comp_features", []))
+    if show_comp_features:
+        readonly_features.update(comp_features)
+    else:
+        readonly_features.difference_update(comp_features)
     readonly_features.discard("Acceptance Probability")
 
     locked_map: Dict[str, set[str]] = {}
@@ -85,6 +100,7 @@ def build_bid_table(
         columns.append(column_config)
 
     prediction_map = predictions or {}
+    derived_lookup = list(derived_feature_values or [])
 
     for feature in display_features:
         row = {"Feature": feature}
@@ -113,12 +129,16 @@ def build_bid_table(
             elif feature == "usd_base_amount":
                 numeric = safe_float(value)
                 row[column_id] = round(numeric, 2) if numeric is not None else value
-            elif feature in USD_PERCENT_COLUMNS:
-                numeric = safe_float(value)
-                row[column_id] = round(numeric, 2) if numeric is not None else value
-            elif feature == USD_MAX_COLUMN:
-                numeric = safe_float(value)
-                row[column_id] = round(numeric, 2) if numeric is not None else value
+            elif feature in comp_features:
+                derived_value = None
+                if idx < len(derived_lookup):
+                    derived_value = derived_lookup[idx].get(feature)
+                if derived_value is None:
+                    derived_value = value
+                numeric = safe_float(derived_value)
+                row[column_id] = (
+                    round(numeric, 2) if numeric is not None else derived_value
+                )
             elif feature.startswith("multiplier"):
                 numeric = safe_float(value)
                 row[column_id] = round(numeric, 4) if numeric is not None else value
@@ -139,23 +159,6 @@ def build_bid_table(
     style_rules.append(
         {
             "if": {"filter_query": '{Feature} = "offer_status"'},
-            "backgroundColor": "#f8fafc",
-            "pointerEvents": "none",
-        }
-    )
-
-    for percent_column in USD_PERCENT_COLUMNS:
-        style_rules.append(
-            {
-                "if": {"filter_query": f'{{Feature}} = "{percent_column}"'},
-                "backgroundColor": "#f8fafc",
-                "pointerEvents": "none",
-            }
-        )
-
-    style_rules.append(
-        {
-            "if": {"filter_query": f'{{Feature}} = "{USD_MAX_COLUMN}"'},
             "backgroundColor": "#f8fafc",
             "pointerEvents": "none",
         }
@@ -205,8 +208,8 @@ def apply_table_edits(
     configuration (only ``bid_features`` are mutable) and skipping cells that
     are explicitly locked.  Numeric values are coerced and rounded using the
     same rules as :func:`build_bid_table` to avoid drift between consecutive
-    edits.  Comparison columns derived from ``usd_base_amount`` are recomputed
-    once the updates are applied so that all dependent fields stay in sync.
+    edits.  Derived comparison columns are cleared after the update so their
+    values can be repopulated from the model pipeline.
 
     Returns
     -------
@@ -232,6 +235,7 @@ def apply_table_edits(
     if not display_features:
         display_features = list(DEFAULT_UI_FEATURE_CONFIG.get("display_features", []))
     editable_features = set(config.get("bid_features", []))
+    comp_features = set(config.get("comp_features", []))
 
     for position, column in enumerate(bid_columns):
         column_id = column.get("id")
@@ -262,10 +266,7 @@ def apply_table_edits(
             elif feature == "usd_base_amount":
                 numeric = safe_float(value)
                 record[feature] = numeric if numeric is not None else value
-            elif feature in USD_PERCENT_COLUMNS:
-                # recomputed from usd_base_amount after loop
-                continue
-            elif feature == USD_MAX_COLUMN:
+            elif feature in comp_features:
                 continue
             elif feature == "offer_status":
                 continue
@@ -277,7 +278,7 @@ def apply_table_edits(
                 record[feature] = numeric if numeric is not None else value
         normalize_offer_time(record)
 
-    recompute_usd_metrics(updated_records)
+    clear_derived_features(updated_records, config)
     return updated_records
 
 

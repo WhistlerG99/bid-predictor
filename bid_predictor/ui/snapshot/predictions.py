@@ -8,9 +8,10 @@ import plotly.graph_objects as go
 from dash import Dash, Input, Output, State
 
 from ...data import load_dataset_cached, prepare_prediction_dataframe
+from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import apply_bid_labels, compute_bid_label_map
 from ..plotting import build_prediction_plot
-from ..predictions import predict
+from ..predictions import extract_derived_feature_rows, predict
 
 
 def register_prediction_callbacks(app: Dash) -> None:
@@ -57,7 +58,11 @@ def register_prediction_callbacks(app: Dash) -> None:
 
         if not model_uri:
             empty_fig = build_prediction_plot(pd.DataFrame())
-            return empty_fig, {}, "Load a model to generate acceptance probabilities."
+            return (
+                empty_fig,
+                {"probabilities": {}, "derived_features": []},
+                "Load a model to generate acceptance probabilities.",
+            )
 
         plot_source = pd.DataFrame()
         label_map: Dict[object, int] = {}
@@ -107,10 +112,16 @@ def register_prediction_callbacks(app: Dash) -> None:
 
         try:
             plot_pred_df = predict(
-                model_uri, combined_df.copy(), feature_config=feature_config
+                model_uri,
+                combined_df.copy(),
+                feature_config=feature_config,
+                return_transformed=False,
             )
             table_pred_df = predict(
-                model_uri, selected_df.copy(), feature_config=feature_config
+                model_uri,
+                selected_df.copy(),
+                feature_config=feature_config,
+                return_transformed=True,
             )
         except Exception as exc:  # pragma: no cover - user feedback
             empty_fig = go.Figure()
@@ -139,7 +150,16 @@ def register_prediction_callbacks(app: Dash) -> None:
             else:
                 predictions[column_id] = None
 
-        return figure, predictions, warning
+        config_for_comp = feature_config or DEFAULT_UI_FEATURE_CONFIG
+        comp_features = config_for_comp.get("comp_features", [])
+        transformed = table_pred_df.attrs.get("transformed_features")
+        derived_rows = extract_derived_feature_rows(transformed, comp_features)
+        payload = {
+            "probabilities": predictions,
+            "derived_features": derived_rows,
+        }
+
+        return figure, payload, warning
 
 
 __all__ = ["register_prediction_callbacks"]

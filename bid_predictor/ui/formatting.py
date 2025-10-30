@@ -2,15 +2,11 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from .constants import (
-    BID_IDENTIFIER_COLUMNS,
-    USD_MAX_COLUMN,
-    USD_PERCENT_COLUMNS,
-)
+from .constants import BID_IDENTIFIER_COLUMNS
 
 
 def safe_float(value: object) -> Optional[float]:
@@ -82,55 +78,36 @@ def prepare_bid_record(record: Dict[str, object]) -> Dict[str, object]:
     return prepared
 
 
-def recompute_usd_metrics(records: List[Dict[str, object]]) -> None:
-    """Update comparison columns derived from ``usd_base_amount``.
+def clear_derived_features(
+    records: List[Dict[str, object]],
+    feature_config: Optional[Mapping[str, Sequence[str]]] = None,
+) -> None:
+    """Remove derived (comparison) features from ``records`` in-place.
 
-    When the base amount of a bid changes, the percent-based comparison columns
-    (e.g. ``usd_base_amount_25%``) and the maximum value must be recomputed for
-    each bid so that the table reflects the latest context.  This function
-    performs the in-place update by first normalising the base amounts, then
-    calculating peer-based quantiles for every record.  Records with missing
-    values propagate ``None`` to the derived fields which signals the UI to
-    leave the cells blank.
+    The Dash UI treats competitor or otherwise derived metrics as read-only
+    values sourced from the trained model's feature pipeline.  Whenever the
+    underlying bid records change without the model being consulted, these
+    fields should be cleared so stale values do not linger in the table.  The
+    helper inspects the provided feature configuration (falling back to the UI
+    defaults) and removes any configured ``comp_features`` from each record.
     """
 
     if not records:
         return
 
-    amounts: List[Optional[float]] = []
+    if feature_config is not None:
+        comp_features: Sequence[str] = feature_config.get("comp_features", []) or []
+    else:
+        from .feature_config import DEFAULT_UI_FEATURE_CONFIG  # local import
+
+        comp_features = DEFAULT_UI_FEATURE_CONFIG.get("comp_features", []) or []
+
+    if not comp_features:
+        return
+
     for record in records:
-        amount = safe_float(record.get("usd_base_amount"))
-        if amount is not None:
-            record["usd_base_amount"] = round(amount, 2)
-        amounts.append(amount)
-
-    valid_amounts = [value for value in amounts if value is not None]
-    max_amount: Optional[float] = max(valid_amounts) if valid_amounts else None
-
-    for idx, record in enumerate(records):
-        peer_values = [
-            value
-            for peer_idx, value in enumerate(amounts)
-            if peer_idx != idx and value is not None
-        ]
-        if peer_values:
-            peer_series = pd.Series(peer_values)
-            for column, fraction in USD_PERCENT_COLUMNS.items():
-                quantile_value = peer_series.quantile(fraction)
-                record[column] = (
-                    round(float(quantile_value), 2)
-                    if quantile_value is not None and not pd.isna(quantile_value)
-                    else None
-                )
-        else:
-            for column in USD_PERCENT_COLUMNS:
-                record[column] = None
-
-        record[USD_MAX_COLUMN] = (
-            round(float(max_amount), 2)
-            if max_amount is not None and not pd.isna(max_amount)
-            else None
-        )
+        for feature in comp_features:
+            record.pop(feature, None)
 
 
 def compute_bid_label_map(df: pd.DataFrame) -> Tuple[Dict[object, int], Optional[str]]:
@@ -250,11 +227,11 @@ def get_next_bid_label(records: Iterable[Dict[str, object]]) -> int:
 
 __all__ = [
     "apply_bid_labels",
+    "clear_derived_features",
     "compute_bid_label_map",
     "get_next_bid_label",
     "normalize_offer_time",
     "prepare_bid_record",
-    "recompute_usd_metrics",
     "safe_float",
     "sort_records_by_bid",
 ]
