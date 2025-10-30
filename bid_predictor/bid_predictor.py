@@ -59,6 +59,11 @@ class FeatureConfiguredPipeline(Pipeline):
         if feature_config is not None:
             self._assign_feature_config(feature_config)
 
+    def _transform_and_predict_proba(self, X):
+        X_tf = self[:-1].transform(X)
+        probs = self[-1].predict_proba(X_tf)
+        return probs, X_tf
+
     def _assign_feature_config(self, feature_config: Mapping[str, Any]) -> None:
         """Store a defensive copy of the feature configuration on the class.
 
