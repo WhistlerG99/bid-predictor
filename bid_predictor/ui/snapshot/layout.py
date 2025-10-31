@@ -15,6 +15,37 @@ def _build_snapshot_filter_card() -> html.Div:
         [
             html.Div(
                 [
+                    html.Button(
+                        "Random flight",
+                        id="random-selection-button",
+                        n_clicks=0,
+                        style={
+                            "width": "100%",
+                            "backgroundColor": "#1b4965",
+                            "color": "white",
+                            "border": "none",
+                            "padding": "0.6rem",
+                            "borderRadius": "6px",
+                        },
+                    ),
+                ],
+                style={"marginBottom": "0.75rem"},
+            ),
+            html.Div(
+                [
+                    html.Label("Selection history", style={"fontWeight": "600"}),
+                    dcc.Dropdown(
+                        id="selection-history-dropdown",
+                        placeholder="Previously selected flights",
+                        options=[],
+                        value=None,
+                        style={"width": "100%"},
+                    ),
+                ],
+                style={"marginBottom": "0.75rem"},
+            ),
+            html.Div(
+                [
                     html.Label("Carrier", style={"fontWeight": "600"}),
                     dcc.Dropdown(
                         id="carrier-dropdown",

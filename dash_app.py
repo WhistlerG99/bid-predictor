@@ -167,6 +167,8 @@ def create_app() -> Dash:
             dcc.Store(id="scenario-records-store"),
             dcc.Store(id="scenario-original-records-store"),
             dcc.Store(id="scenario-removed-bids-store"),
+            dcc.Store(id="snapshot-selection-request-store"),
+            dcc.Store(id="selection-history-store", data=[]),
             dcc.Store(
                 id="feature-config-store",
                 data=deepcopy(DEFAULT_UI_FEATURE_CONFIG),
