@@ -266,6 +266,7 @@ def sample_feature_config():
             "impute_median": False,
             "outlier": None,
             "bins": None,
+            "monotonicity": 1,
         },
         "usd_base_amount": {
             "categorical": False,
@@ -365,6 +366,9 @@ def sample_feature_config():
         },
     }
 
+    for metadata in feature_metadata.values():
+        metadata["monotonicity"] = 0
+
     pre_features = [
         "feature_num",
         "feature_cat",
@@ -387,6 +391,7 @@ def sample_feature_config():
         "impute_median": [],
         "outlier": [],
         "bins": [],
+        "monotone_constraints": [0,0,0,0],
     }
 
 

@@ -24,6 +24,7 @@ _FEATURE_FIELDS = {
     "impute_median": False,
     "outlier": None,
     "bins": None,
+    "monotonicity": 0,
 }
 
 _FEATURE_BOOLEAN_FIELDS = {
@@ -167,6 +168,11 @@ def load_feature_config(config_path=None):
         if values["include_in_model"] and values["comp_feature"]
     ]
 
+    monotone_constraints = [
+        metadata.get(feature, {}).get("monotonicity", 0)
+        for feature in selected_features
+    ]
+
     return {
         "pre_features": pre_features,
         "features": selected_features,
@@ -179,6 +185,7 @@ def load_feature_config(config_path=None):
         "impute_median": impute_median,
         "outlier": outlier,
         "bins": bins,
+        "monotone_constraints": monotone_constraints,
     }
 
 
