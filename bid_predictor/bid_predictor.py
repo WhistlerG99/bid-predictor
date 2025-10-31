@@ -193,7 +193,7 @@ class FeatureConfiguredPipeline(Pipeline):
         payload_params: dict[str, Any] = {}
         for key, value in cls.catboost_params.items():
             default_value = _CATBOOST_PARAM_DEFAULTS.get(key, sentinel)
-            if default_value is not sentinel and default_value == value:
+            if (default_value is not sentinel and default_value == value) or key=="monotone_constraints":
                 continue
             payload_params[key] = cls._prepare_for_yaml(value)
 
