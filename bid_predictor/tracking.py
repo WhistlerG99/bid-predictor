@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 from catboost import Pool
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
     PrecisionRecallDisplay,
@@ -412,14 +413,22 @@ def log_feature_importances(
     plt.close(fig_fi)
 
 
-def log_classification_metrics_by_time(df, window_h=1, stride_h=1):
+def log_classification_metrics_by_time(
+    df,
+    window_h=6,
+    stride_h=1,
+    suffix="departure",
+    figsize=(12, 10),
+    zero_division=np.nan,
+    fontsize=8,
+    title_fontsize=10,
+    figure_path=None,
+):
+    
     # sliding window metrics on test set
     # adjustable stride (hours) for sliding windows
     if not isinstance(stride_h, int) or stride_h <= 0:
         raise ValueError("stride_h must be a positive integer")
-
-    suffix = "departure"
-    suffix = "decision"
 
     df = df.copy()
     df["pred"] = (df["Acceptance Probability"] > 0.5).astype(int)
@@ -452,9 +461,15 @@ def log_classification_metrics_by_time(df, window_h=1, stride_h=1):
                     "start_hour": s,
                     "end_hour": e,
                     "n": 0,
+                    "n_tp": 0,
+                    "n_tn": 0,
+                    "n_fp": 0,
+                    "n_fn": 0,
                     "accuracy": np.nan,
                     "recall": np.nan,
                     "precision": np.nan,
+                    "neg_recall": np.nan,
+                    "neg_precision": np.nan,
                 }
             )
             continue
@@ -465,46 +480,134 @@ def log_classification_metrics_by_time(df, window_h=1, stride_h=1):
                 "start_hour": s,
                 "end_hour": e,
                 "n": len(sub),
+                "n_tp": ((y_true == 1) * (y_pred == 1)).sum(),
+                "n_tn": ((y_true == 0) * (y_pred == 0)).sum(),
+                "n_fp": ((y_true == 0) * (y_pred == 1)).sum(),
+                "n_fn": ((y_true == 1) * (y_pred == 0)).sum(),
                 "accuracy": accuracy_score(y_true, y_pred),
-                "recall": recall_score(y_true, y_pred, zero_division=0),
-                "precision": precision_score(y_true, y_pred, zero_division=0),
+                "recall": recall_score(y_true, y_pred, zero_division=zero_division),
+                "precision": precision_score(y_true, y_pred, zero_division=zero_division),
+                "neg_recall": recall_score(y_true == 0, y_pred == 0, zero_division=zero_division),
+                "neg_precision": precision_score(y_true == 0, y_pred == 0, zero_division=zero_division),
             }
         )
 
     metrics = pd.DataFrame(rows)
+
+    metrics["n_ap"] = metrics.n_tp + metrics.n_fn
+    metrics["n_an"] = metrics.n_tn + metrics.n_fp
+
+    metrics["n_pp"] = metrics.n_tp + metrics.n_fp
+    metrics["n_pn"] = metrics.n_tn + metrics.n_fn
+
     metrics[f"hour_before_{suffix}"] = (metrics.start_hour + metrics.end_hour) / 2
+    metrics = metrics.set_index(f"hour_before_{suffix}")
 
-    # metrics = metrics.iloc[:-2]#[(metrics_6h.index<50)&(metrics_6h.index>30)]
+    # Define the formatter function
+    def thousands_formatter(value, tick_number):
+        if value >= 1000:
+            return f'{int(value / 1000)}K'
+        return str(int(value))
 
-    fig_m, ax_m = plt.subplots(2, 2, figsize=(12, 10))
+    fig_m, ax_m = plt.subplots(3, 2, figsize=figsize)
 
-    plt.figure(figsize=(12, 10))
-    metrics.n.plot(ax=ax_m[0][0])
-    ax_m[0][0].set_xlabel("Hours Until Decision")
-    ax_m[0][0].set_title("Number of Active Bids")
+    fig_m.suptitle(f"Classification Metrics vs. Time until {suffix.capitalize()}\n (All quantities are calculated over a {window_h} hour window every {stride_h} hour(s))")
+
+    # Top-left: count
+    metrics.n_ap.plot(ax=ax_m[0][0], label="Actual Positives")
+    metrics.n_an.plot(ax=ax_m[0][0], label="Actual Negatives")
+    ax_m[0][0].yaxis.set_major_formatter(ticker.FuncFormatter(thousands_formatter))
+    ax_m[0][0].set_xlabel(f"Hours Until {suffix.capitalize()}", fontsize=fontsize)
+    ax_m[0][0].set_title("Number of Active Bids", fontsize=title_fontsize)
     ax_m[0][0].grid(zorder=0)
     ax_m[0][0].set_axisbelow(True)
+    ax_m[0][0].set_ylim(bottom=0)
+    ax_m[0][0].legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), fancybox=True, shadow=True, ncol=2, fontsize=fontsize)
 
+    # Top-right: accuracy
     metrics.accuracy.plot(ax=ax_m[0][1])
-    ax_m[0][1].set_xlabel("Hours Until Decision")
-    ax_m[0][1].set_title("Accuracy")
+    ax2 = metrics.n.plot(ax=ax_m[0][1], secondary_y=True, label="Active Bids")
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(thousands_formatter))
+    ax_m[0][1].set_xlabel(f"Hours Until {suffix.capitalize()}", fontsize=fontsize)
+    ax_m[0][1].set_title("Accuracy", fontsize=title_fontsize)
     ax_m[0][1].grid(zorder=0)
     ax_m[0][1].set_axisbelow(True)
+    ax_m[0][1].set_ylim(0, 1)
+    ax2.set_ylim(bottom=0)
+    ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), fancybox=True, shadow=True, ncol=2, fontsize=fontsize)
 
-    metrics.recall.plot(ax=ax_m[1][0])
-    ax_m[1][0].set_xlabel("Hours Until Decision")
-    ax_m[1][0].set_title("Recall")
+    # Middle-left: recall + n_ap on secondary y
+    metrics.recall.plot(ax=ax_m[1][0], label="Recall")
+    ax2 = metrics.n_ap.plot(ax=ax_m[1][0], secondary_y=True, label="Actual Positives")
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(thousands_formatter))
+    ax_m[1][0].set_xlabel(f"Hours Until {suffix.capitalize()}", fontsize=fontsize)
+    ax_m[1][0].set_title("Recall", fontsize=title_fontsize)
     ax_m[1][0].grid(zorder=0)
     ax_m[1][0].set_axisbelow(True)
+    ax_m[1][0].set_ylim(0, 1)
+    ax2.set_ylim(bottom=0)
+    ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), fancybox=True, shadow=True, ncol=2, fontsize=fontsize)
 
+
+    # Middle-right: precision + n_pp on secondary y
     metrics.precision.plot(ax=ax_m[1][1])
-    ax_m[1][1].set_xlabel("Hours Until Decision")
-    ax_m[1][1].set_title("Precision")
+    ax2 = metrics.n_pp.plot(ax=ax_m[1][1], secondary_y=True, label="Predicted Positives")
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(thousands_formatter))
+    ax_m[1][1].set_xlabel(f"Hours Until {suffix.capitalize()}", fontsize=fontsize)
+    ax_m[1][1].set_title("Precision", fontsize=title_fontsize)
     ax_m[1][1].grid(zorder=0)
     ax_m[1][1].set_axisbelow(True)
+    ax_m[1][1].set_ylim(0, 1)
+    ax2.set_ylim(bottom=0)
+    ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), fancybox=True, shadow=True, ncol=2, fontsize=fontsize)
+
+    # Bottom-left: negative recall + n_an on secondary y
+    metrics.neg_recall.plot(ax=ax_m[2][0])
+    ax2 = metrics.n_an.plot(ax=ax_m[2][0], secondary_y=True, label="Actual Negatives")
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(thousands_formatter))
+    ax_m[2][0].set_xlabel(f"Hours Until {suffix.capitalize()}", fontsize=fontsize)
+    ax_m[2][0].set_title("Negative Recall", fontsize=title_fontsize)
+    ax_m[2][0].grid(zorder=0)
+    ax_m[2][0].set_axisbelow(True)
+    ax_m[2][0].set_ylim(0, 1)
+    ax2.set_ylim(bottom=0)
+    ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), fancybox=True, shadow=True, ncol=2, fontsize=fontsize)
+
+    # Bottom-right: negative precision + n_pn on secondary y
+    metrics.neg_precision.plot(ax=ax_m[2][1])
+    ax2 = metrics.n_pn.plot(ax=ax_m[2][1], secondary_y=True, label="Predicted Negatives")
+    ax2.yaxis.set_major_formatter(ticker.FuncFormatter(thousands_formatter))
+    ax_m[2][1].set_xlabel(f"Hours Until {suffix.capitalize()}", fontsize=fontsize)
+    ax_m[2][1].set_title("Negative Precision", fontsize=title_fontsize)
+    ax_m[2][1].grid(zorder=0)
+    ax_m[2][1].set_axisbelow(True)
+    ax_m[2][1].set_ylim(0, 1)
+    ax2.set_ylim(bottom=0)
+    ax2.legend(loc='upper center', bbox_to_anchor=(0.5, -0.15), fancybox=True, shadow=True, ncol=2, fontsize=fontsize)
+
+    # Apply fontsize to tick labels and any secondary y-axes created by pandas plotting
+    for ax_row in ax_m:
+        for ax in ax_row:
+            ax.tick_params(axis="both", labelsize=fontsize)
+            # apply to secondary y-axis if pandas created one
+            if hasattr(ax, "right_ax"):
+                try:
+                    ax.right_ax.tick_params(axis="y", labelsize=fontsize)
+                except Exception:
+                    pass
+            # also apply to potential twin axes created differently
+            for twin in ax.figure.axes:
+                if twin is ax:
+                    continue
+                # if twin shares x or y with ax, adjust its tick labels size
+                if twin.get_shared_x_axes().joined(ax, twin) or twin.get_shared_y_axes().joined(ax, twin):
+                    twin.tick_params(axis="both", labelsize=fontsize)
+
     fig_m.tight_layout()
 
-    mlflow.log_figure(fig_m, f"classification_metrics_utill_{suffix}_time.png")
+    if figure_path is None:
+        figure_path = f"classification_metrics_vs_time_utill_{suffix}.png"
+    mlflow.log_figure(fig_m, figure_path)
     plt.close(fig_m)
 
 

@@ -256,6 +256,12 @@ def train_and_log_model(
 
         log_classification_metrics(y_test, y_pred)
         log_classification_metrics_by_time(bid_prob_test_results)
+        for carrier in ["AC", "LO"]:
+            if carrier in bid_prob_test_results.index.levels[0]:
+                log_classification_metrics_by_time(
+                    bid_prob_test_results.loc[carrier],
+                    figure_path=f"classification_metrics_vs_time_utill_departure_{carrier.lower()}.png",
+                )
         log_prob_examples(bid_prob_test_results)
         log_feature_importances(pipeline, X_train, y_train, cat_features)
         log_evaluation_figures(y_test, y_pred, proba)

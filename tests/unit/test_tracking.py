@@ -80,6 +80,7 @@ def test_log_classification_metrics_by_time_requires_positive_stride(stub_mlflow
         {
             "Acceptance Probability": np.linspace(0, 1, 5),
             "offer_status": ["Accepted", "Rejected", "Accepted", "Rejected", "Accepted"],
+            "departure_timestamp": pd.date_range("2023-08-01", periods=5, freq="h"),
             "decision_timestamp": pd.date_range("2023-08-01", periods=5, freq="h"),
             "current_timestamp": pd.date_range("2023-08-01", periods=5, freq="h"),
             "carrier_code": ["AC"] * 5,
