@@ -266,6 +266,7 @@ def sample_feature_config():
             "impute_median": False,
             "outlier": None,
             "bins": None,
+            "monotonicity": 1,
         },
         "usd_base_amount": {
             "categorical": False,
@@ -390,6 +391,7 @@ def sample_feature_config():
         "impute_median": [],
         "outlier": [],
         "bins": [],
+        "monotone_constraints": [0,0,0,0],
     }
 
 

@@ -437,15 +437,6 @@ def build_pipeline(feature_config=None, **kw):
     reduce_features_transformer = ColumnReducer(selected_features)
     steps.append(("reduce", reduce_features_transformer))
 
-    if "monotone_constraints" not in kw:
-        feature_metadata = feature_config.get("feature_metadata", {})
-        monotone_constraints = [
-            feature_metadata.get(feature, {}).get("monotonicity", 0)
-            for feature in selected_features
-        ]
-        if any(monotone_constraints):
-            kw["monotone_constraints"] = monotone_constraints
-
     # CatBoostClassifier integrates with sklearn API
     clf = CBC(
         cat_features=categorical_features,

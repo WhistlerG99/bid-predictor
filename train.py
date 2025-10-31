@@ -57,7 +57,10 @@ def _introspect_catboost_defaults() -> Dict[str, Any]:
     signature = inspect.signature(CatBoostClassifier.__init__)
     defaults: Dict[str, Any] = {}
     for name, param in signature.parameters.items():
-        if name == "self" or param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+        if name == "self" or param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
             continue
         defaults[name] = None if param.default is inspect._empty else param.default
     return defaults
@@ -116,7 +119,9 @@ def _load_catboost_config(path: str | None) -> Dict[str, Any]:
         payload = payload["catboost"]
 
     if not isinstance(payload, Mapping):
-        raise ValueError("CatBoost configuration must be a mapping of parameter names to values")
+        raise ValueError(
+            "CatBoost configuration must be a mapping of parameter names to values"
+        )
 
     return {str(key): value for key, value in payload.items()}
 
@@ -187,7 +192,6 @@ def train_and_log_model(
         data, pre_features, testing=testing
     )
 
-
     mlflow.set_experiment(experiment_name)
     run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
@@ -196,8 +200,22 @@ def train_and_log_model(
         log_system_metrics=True,
     ) as run:
         catboost_file_params = _load_catboost_config(catboost_config_path)
-        cli_catboost_params = {name: var_args.get(name) for name in CATBOOST_PARAM_NAMES if name in var_args}
-        merged_catboost_params = _merge_catboost_params(cli_catboost_params, catboost_file_params, explicit_flags)
+
+        if catboost_file_params.get("monotone_constraints") is None and any(
+            feature_config.get("monotone_constraints", [])
+        ):
+            catboost_file_params["monotone_constraints"] = feature_config.get(
+                "monotone_constraints", []
+            )
+
+        cli_catboost_params = {
+            name: var_args.get(name)
+            for name in CATBOOST_PARAM_NAMES
+            if name in var_args
+        }
+        merged_catboost_params = _merge_catboost_params(
+            cli_catboost_params, catboost_file_params, explicit_flags
+        )
 
         for key, value in merged_catboost_params.items():
             var_args[key] = value

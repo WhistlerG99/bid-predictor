@@ -35,13 +35,14 @@ features:
     include_in_model: true
 
   seats_available:
-    categorical: true
+    categorical: false
     impute_median: true
     bins: 
       min: -1
       max: 30
       interval: 1
     flight_feature: true
+    monotonicity: 1
     include_in_model: true
 
   item_count:
