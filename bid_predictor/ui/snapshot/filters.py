@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from uuid import uuid4
 
 import pandas as pd
-from dash import Dash, Input, Output, State, ctx, no_update
+from dash import Dash, Input, Output, State, ctx
 from dash.exceptions import PreventUpdate
 
 from ...data import load_dataset_cached
@@ -323,7 +323,6 @@ def register_filter_callbacks(app: Dash) -> None:
     @app.callback(
         Output("selection-history-store", "data"),
         Output("selection-history-dropdown", "options"),
-        Output("selection-history-dropdown", "value"),
         Input("carrier-dropdown", "value"),
         Input("flight-number-dropdown", "value"),
         Input("travel-date-dropdown", "value"),
@@ -344,7 +343,7 @@ def register_filter_callbacks(app: Dash) -> None:
 
         trigger = ctx.triggered_id
         if trigger == "dataset-path-store":
-            return [], [], None
+            return [], []
 
         if not (carrier and flight_number and travel_date and upgrade_type):
             raise PreventUpdate
@@ -377,7 +376,17 @@ def register_filter_callbacks(app: Dash) -> None:
             {"label": entry["label"], "value": entry["id"]}
             for entry in filtered_history
         ]
-        return filtered_history, options, no_update
+        return filtered_history, options
+
+    @app.callback(
+        Output("selection-history-dropdown", "value"),
+        Input("dataset-path-store", "data"),
+        prevent_initial_call=True,
+    )
+    def reset_selection_history_value(_: Optional[str]):
+        """Clear the selection history dropdown when the dataset changes."""
+
+        return None
 
 
 __all__ = ["register_filter_callbacks"]
