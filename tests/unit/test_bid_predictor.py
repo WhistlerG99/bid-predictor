@@ -33,6 +33,22 @@ def test_build_pipeline_returns_expected_steps(sample_feature_config):
     assert step_names[-1] == "clf"
 
 
+def test_pipeline_omits_monotone_constraints_when_not_configured(sample_feature_config):
+    pipeline = bid_predictor.build_pipeline(feature_config=sample_feature_config)
+
+    assert "monotone_constraints" not in pipeline.named_steps["clf"].cb_params
+
+
+def test_pipeline_applies_monotone_constraints(sample_feature_config):
+    feature_metadata = sample_feature_config["feature_metadata"]
+    feature_metadata["feature_num"]["monotonicity"] = 1
+    feature_metadata["item_count"]["monotonicity"] = -1
+
+    pipeline = bid_predictor.build_pipeline(feature_config=sample_feature_config)
+
+    assert pipeline.named_steps["clf"].cb_params["monotone_constraints"] == [1, 0, -1, 0]
+
+
 def test_pipeline_persists_feature_config(sample_feature_config, tmp_path):
     pipeline = bid_predictor.build_pipeline(feature_config=sample_feature_config)
 

@@ -24,6 +24,7 @@ _FEATURE_FIELDS = {
     "impute_median": False,
     "outlier": None,
     "bins": None,
+    "monotonicity": 0,
 }
 
 _FEATURE_BOOLEAN_FIELDS = {

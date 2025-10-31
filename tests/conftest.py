@@ -365,6 +365,9 @@ def sample_feature_config():
         },
     }
 
+    for metadata in feature_metadata.values():
+        metadata["monotonicity"] = 0
+
     pre_features = [
         "feature_num",
         "feature_cat",
