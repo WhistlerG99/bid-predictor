@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from uuid import uuid4
 
 import pandas as pd
-from dash import Dash, Input, Output, State, ctx
+from dash import Dash, Input, Output, State, ctx, no_update
 from dash.exceptions import PreventUpdate
 
 from ...data import load_dataset_cached
@@ -377,7 +377,7 @@ def register_filter_callbacks(app: Dash) -> None:
             {"label": entry["label"], "value": entry["id"]}
             for entry in filtered_history
         ]
-        return filtered_history, options, entry_id
+        return filtered_history, options, no_update
 
 
 __all__ = ["register_filter_callbacks"]
