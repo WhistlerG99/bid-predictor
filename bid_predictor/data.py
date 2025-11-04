@@ -97,7 +97,7 @@ def load_training_data(
     """
 
     filesystem = _resolve_filesystem(dataset_path, storage_options)
-    dataset = ds.dataset(dataset_path, format="parquet", filesystem=filesystem)
+    dataset = ds.dataset(dataset_path.replace("s3://", ""), format="parquet", filesystem=filesystem)
     table = dataset.to_table()
     data = table.to_pandas()
 

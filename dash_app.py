@@ -1,12 +1,17 @@
 """Interactive Dash UI to explore bid acceptance predictions from an MLflow model."""
 from __future__ import annotations
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from copy import deepcopy
 from typing import Optional
 
 import mlflow
 from dash import Dash, Input, Output, State, dcc, html
 from mlflow.exceptions import MlflowException
+from bid_predictor.utils import detect_execution_environment
 
 from bid_predictor.ui import (
     DEFAULT_UI_FEATURE_CONFIG,
@@ -23,15 +28,25 @@ from bid_predictor.ui.snapshot import (
     register_snapshot_callbacks,
 )
 
+if detect_execution_environment()[0] in (
+        "sagemaker_notebook",
+        "sagemaker_terminal",
+    ):
+    arn = os.environ["MLFLOW_AWS_ARN"]
+    mlflow.set_tracking_uri(arn)
+    default_dataset_path = (
+        os.environ.get("S3_BUCKET_DATA")
+        + "/data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
+    )
+else:
+    default_dataset_path = (
+        "./data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
+    )
 
 # -- Dash application --------------------------------------------------------------------------
 
 
 def create_app() -> Dash:
-    default_dataset_path = (
-        "./data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
-    )
-
     app = Dash(__name__)
     app.layout = html.Div(
         [

@@ -89,7 +89,7 @@ def _register_catboost_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument(
             flag,
             dest=name,
-            type=_parse_catboost_cli_value,
+            type=str if name=="devices" else _parse_catboost_cli_value,
             default=_CATBOOST_PARAM_DEFAULTS[name],
         )
 

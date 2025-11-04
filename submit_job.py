@@ -28,6 +28,10 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
+experiment_name = "snapshot-bid-predictor"
+feature_config = "feature_config/feature_config_bid_rank_2_v5.yaml"
+iterations = 500
+
 est = Estimator(
     image_uri=image_uri,
     # role=ROLE_ARN,
@@ -40,8 +44,9 @@ est = Estimator(
         # only matters if your build_pipeline uses these
         "task-type": task_type,
         "devices": devices,
-        "iterations": "200",
-        "experiment-name": "snapshot-bid-predictor",
+        "iterations": iterations,
+        "experiment-name": experiment_name,
+        "feature-config": feature_config,
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
