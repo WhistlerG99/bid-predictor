@@ -45,7 +45,12 @@ features: List[str] = (
         "from_cabin",
         "upgrade_type",
     ]
-    + ["decision_timestamp", "created"]
+    + [
+        "decision_timestamp",
+        "departure_timestamp",
+        "departure_local_date_time",
+        "created",
+    ]
     + event_date_cols
     + avail_cols
 )
@@ -76,4 +81,4 @@ if __name__ == "__main__":
 
     data = data[features + ["seats_available"]]
 
-    data.to_parquet("../data/etihad/bid_and_flight_data_etihad.parquet")
+    data.to_parquet("../data/etihad/bid_and_flight_data_etihad.parquet", coerce_timestamps="us", allow_truncated_timestamps=True)

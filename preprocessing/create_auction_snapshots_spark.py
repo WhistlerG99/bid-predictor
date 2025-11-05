@@ -18,6 +18,8 @@ Notes:
 """
 
 from __future__ import annotations
+import subprocess
+subprocess.check_call(["pip", "install", "pyarrow>=12.0.0"])
 
 import argparse
 import numpy as np
@@ -345,9 +347,10 @@ def main():
     spark = build_spark()
 
     # Read CSV. Schema is inferred; if you know exact schema, set it explicitly
-    df = spark.read.option("header", True).option("inferSchema", True).csv(args.input)
+    df = spark.read.option("header", True).option("inferSchema", True).parquet(args.input)
+    # df = spark.read.option("header", True).option("inferSchema", True).csv(args.input)
     df = df.drop(*[c for c in df.columns if "." in c])
-    df = df[pre_features]
+    # df = df[pre_features]
     # Basic hygiene: drop exact duplicate rows
     df = df.dropDuplicates()
 
