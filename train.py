@@ -275,14 +275,9 @@ def main():
         "sagemaker_notebook",
         "sagemaker_terminal",
     ):
-        # train_file = (
-        #     os.environ.get("S3_BUCKET_DATA")
-        #     + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        # )
-        train_file = (
-            os.environ.get("S3_BUCKET_DATA")
-            + "/data/etihad/bid_and_flight_data_snapshots_etihad_w_inactives_v3.parquet"
-        )        
+        train_file = os.environ.get("S3_BUCKET_DATA","")
+        # train_file += "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+        train_file += "/data/etihad/bid_and_flight_data_snapshots_etihad_w_inactives_v3.parquet"
     else:
         train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         # train_file = "../bid_data_snapshots_v2.parquet"
