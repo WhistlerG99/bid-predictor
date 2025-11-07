@@ -880,7 +880,7 @@ def build_adjustment_grid(
             scenario_df[feature.key] = float(value)
         scenario_df["scenario_feature_value"] = float(value)
         scenario_df["scenario_step"] = step_index
-        scenario_df["snapshot_num"] = step_index+1
+        scenario_df["snapshot_num"] = step_index + 1
         frames.append(scenario_df)
 
     return pd.concat(frames, ignore_index=True)

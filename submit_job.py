@@ -64,15 +64,12 @@ est = Estimator(
 )
 
 
-# train_s3 = (
-#     os.environ.get("S3_BUCKET_DATA")
-#     + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-# )
 
-train_s3 = (
-    os.environ.get("S3_BUCKET_DATA")
-    + "/data/etihad/bid_and_flight_data_snapshots_etihad_w_inactives_v3.parquet"
-)    
+train_s3 = os.environ.get("S3_BUCKET_DATA","")
+# train_s3 += "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+# train_s3 += "/data/etihad/bid_and_flight_data_snapshots_etihad_w_inactives_v3.parquet"    
+train_s3 += "/data/air_canada_and_lot/bid_and_flight_data_snapshots_ac_and_lot_w_inactives_v2.parquet"
+
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,

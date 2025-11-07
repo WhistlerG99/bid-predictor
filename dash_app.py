@@ -36,7 +36,8 @@ if detect_execution_environment()[0] in (
     mlflow.set_tracking_uri(arn)
     default_dataset_path = (
         os.environ.get("S3_BUCKET_DATA")
-        + "/data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
+        + "/data/etihad/evaluation_sets/eval_bid_data_snapshots.parquet"
+        # + "/data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
     )
 else:
     default_dataset_path = (
