@@ -880,7 +880,18 @@ def build_adjustment_grid(
             scenario_df[feature.key] = float(value)
         scenario_df["scenario_feature_value"] = float(value)
         scenario_df["scenario_step"] = step_index
-        scenario_df["snapshot_num"] = step_index+1
+        if "snapshot_num" in scenario_df.columns:
+            scenario_df["snapshot_num"] = step_index + 1
+        if "last_snapshot" in scenario_df.columns:
+            active_series = scenario_df.get("active")
+            if isinstance(active_series, pd.Series):
+                inactive_mask = active_series.isin([False, "false", "False", 0])
+                scenario_df.loc[inactive_mask, "last_snapshot"] = step_index + 1
+            else:
+                scenario_df["last_snapshot"] = step_index + 1
+            scenario_df["last_snapshot"] = pd.to_numeric(
+                scenario_df["last_snapshot"], errors="coerce"
+            )
         frames.append(scenario_df)
 
     return pd.concat(frames, ignore_index=True)

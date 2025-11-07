@@ -282,19 +282,40 @@ def add_quantiles(data):
 
 def eval_transforms(X, func, cols):
     """Fills the inactive offers <cols> with the <func> using the values at the time it was a last active bid"""
-    X_active = X[X.active==True]
-    X_inactive = X[X.active==False]
+    X_active = X[X.active == True].copy()  # noqa: E712 - intentional identity comparison
+    X_inactive = X[X.active == False].copy()  # noqa: E712 - intentional identity comparison
 
     X_active = func(X_active)
-    X_inactive = X_inactive.merge(
-        X_active[
-            ["id"]
-            + _GROUPBY_KEY_FEATURES
-            + cols
-        ].rename(columns={"snapshot_num": "last_snapshot"}),
-        on=["id"] + _GROUPBY_KEY_FEATURES[:-1] + ["last_snapshot"],
+
+    lookup_cols = ["id"] + _GROUPBY_KEY_FEATURES + cols
+    existing_cols = [column for column in lookup_cols if column in X_active.columns]
+    active_lookup = (
+        X_active[existing_cols]
+        .rename(columns={"snapshot_num": "last_snapshot"})
+        .copy()
     )
-    X = pd.concat((X_active, X_inactive)).sort_values(_GROUPBY_KEY_FEATURES + ["active", "id"])
+
+    if "last_snapshot" in active_lookup.columns:
+        active_lookup["last_snapshot"] = pd.to_numeric(
+            active_lookup["last_snapshot"], errors="coerce"
+        )
+    if "last_snapshot" in X_inactive.columns:
+        X_inactive["last_snapshot"] = pd.to_numeric(
+            X_inactive["last_snapshot"], errors="coerce"
+        )
+
+    merge_keys = ["id"] + _GROUPBY_KEY_FEATURES[:-1] + ["last_snapshot"]
+    available_keys = [key for key in merge_keys if key in active_lookup.columns]
+    if available_keys:
+        X_inactive = X_inactive.merge(
+            active_lookup,
+            on=available_keys,
+            how="left",
+        )
+
+    X = pd.concat((X_active, X_inactive)).sort_values(
+        _GROUPBY_KEY_FEATURES + ["active", "id"]
+    )
     return X
 
 
