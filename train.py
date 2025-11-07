@@ -24,9 +24,9 @@ from bid_predictor.tracking import (
     log_run_parameters,
     start_catboost_mlflow_stream,
 )
-from bid_predictor.data import prepare_features
+from bid_predictor.data import prepare_features, load_training_data
 from bid_predictor.utils import detect_execution_environment
-from bid_predictor.ui import load_dataset_cached
+# from bid_predictor.ui import load_dataset_cached
 from catboost import CatBoostClassifier
 from dotenv import load_dotenv
 
@@ -275,15 +275,20 @@ def main():
         "sagemaker_notebook",
         "sagemaker_terminal",
     ):
+        # train_file = (
+        #     os.environ.get("S3_BUCKET_DATA")
+        #     + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+        # )
         train_file = (
             os.environ.get("S3_BUCKET_DATA")
-            + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        )
+            + "/data/etihad/bid_and_flight_data_snapshots_etihad_w_inactives_v3.parquet"
+        )        
     else:
         train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         # train_file = "../bid_data_snapshots_v2.parquet"
 
-    data = load_dataset_cached(train_file)
+    # data = load_dataset_cached(train_file)
+    data = load_training_data(train_file)
 
     args = parse_args()
     feature_config = load_feature_config(args.feature_config)

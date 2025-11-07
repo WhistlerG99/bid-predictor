@@ -28,8 +28,8 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "snapshot-bid-predictor"
-feature_config = "feature_config/feature_config_bid_rank_2_v5.yaml"
+experiment_name = "snapshot-w-inactives"
+feature_config = "feature_config/feature_config_w_inactives.yaml"
 iterations = 500
 
 est = Estimator(
@@ -64,10 +64,15 @@ est = Estimator(
 )
 
 
+# train_s3 = (
+#     os.environ.get("S3_BUCKET_DATA")
+#     + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+# )
+
 train_s3 = (
     os.environ.get("S3_BUCKET_DATA")
-    + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-)
+    + "/data/etihad/bid_and_flight_data_snapshots_etihad_w_inactives_v3.parquet"
+)    
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,

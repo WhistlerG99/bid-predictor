@@ -280,6 +280,24 @@ def add_quantiles(data):
     return data
 
 
+def eval_transforms(X, func, cols):
+    """Fills the inactive offers <cols> with the <func> using the values at the time it was a last active bid"""
+    X_active = X[X.active==True]
+    X_inactive = X[X.active==False]
+
+    X_active = func(X_active)
+    X_inactive = X_inactive.merge(
+        X_active[
+            ["id"]
+            + _GROUPBY_KEY_FEATURES
+            + cols
+        ].rename(columns={"snapshot_num": "last_snapshot"}),
+        on=["id"] + _GROUPBY_KEY_FEATURES[:-1] + ["last_snapshot"],
+    )
+    X = pd.concat((X_active, X_inactive)).sort_values(_GROUPBY_KEY_FEATURES + ["active", "id"])
+    return X
+
+
 # --- Wrappers around your existing funcs so they can be used in pipelines ---
 def add_flight_code_wrapper(X):
     """Safely apply :func:`add_flight_code` within sklearn pipelines."""
@@ -301,25 +319,22 @@ def add_days_b4_depart_wrapper(X):
 def add_bid_rank_wrapper(X):
     """Safely apply :func:`add_flight_code` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
-        return add_bid_rank(X)
-    else:
-        return X
+        X = eval_transforms(X, add_bid_rank, ["bid_rank"])
+    return X
 
 
 def add_group_features_wrapper(X):
     """Safely apply :func:`add_group_features` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
-        return add_group_features(X)
-    else:
-        return X
+        X = eval_transforms(X, add_group_features, ["num_offers", "usd_base_amount_max"])
+    return X
 
 
 def add_quantiles_wrapper(X):
     """Safely apply :func:`add_quantiles` within sklearn pipelines."""
     if isinstance(X, pd.DataFrame):
-        return add_quantiles(X)
-    else:
-        return X
+        X = eval_transforms(X, add_quantiles, ["usd_base_amount_25%", "usd_base_amount_50%", "usd_base_amount_75%"])
+    return X
 
 
 class ColumnReducer(BaseEstimator, TransformerMixin):
