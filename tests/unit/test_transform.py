@@ -109,3 +109,43 @@ def test_column_reducer_selects_existing_columns():
     reducer.fit(df)
     reduced = reducer.transform(df)
     assert list(reduced.columns) == ["a", "b"]
+
+
+def _make_eval_transform_df(active_snapshot, inactive_snapshot):
+    base = {
+        "id": [1, 1],
+        "active": [True, False],
+        "carrier_code": ["AC", "AC"],
+        "flight_number": ["1", "1"],
+        "travel_date": pd.to_datetime(["2023-07-02", "2023-07-02"]),
+        "upgrade_type": ["BUS", "BUS"],
+        "snapshot_num": [active_snapshot, inactive_snapshot],
+        "last_snapshot": [active_snapshot, inactive_snapshot],
+    }
+    return pd.DataFrame(base)
+
+
+def test_eval_transforms_merges_when_last_snapshot_is_numeric_like_strings():
+    df = _make_eval_transform_df("001", "001")
+
+    def annotate(frame):
+        frame = frame.copy()
+        frame["filled"] = 7
+        return frame
+
+    result = transform.eval_transforms(df, annotate, ["filled"])
+    inactive_row = result.loc[result.active == False].iloc[0]
+    assert inactive_row["filled"] == 7
+
+
+def test_eval_transforms_merges_when_last_snapshot_is_non_numeric():
+    df = _make_eval_transform_df("snap_1", "snap_1")
+
+    def annotate(frame):
+        frame = frame.copy()
+        frame["bonus"] = 3
+        return frame
+
+    result = transform.eval_transforms(df, annotate, ["bonus"])
+    inactive_row = result.loc[result.active == False].iloc[0]
+    assert inactive_row["bonus"] == 3

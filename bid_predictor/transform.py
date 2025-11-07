@@ -280,6 +280,33 @@ def add_quantiles(data):
     return data
 
 
+def _lossless_numeric(series: pd.Series):
+    """Attempt to coerce a series to numeric without introducing NaNs."""
+    numeric = pd.to_numeric(series, errors="coerce")
+    non_na_mask = series.notna()
+    if not non_na_mask.any():
+        return numeric, True
+    return (numeric, not numeric[non_na_mask].isna().any())
+
+
+def _align_merge_key_types(
+    active_lookup: pd.DataFrame, X_inactive: pd.DataFrame, key: str
+):
+    """Ensure merge keys share a dtype between active and inactive slices."""
+    if key not in active_lookup.columns or key not in X_inactive.columns:
+        return
+
+    active_numeric, active_ok = _lossless_numeric(active_lookup[key])
+    inactive_numeric, inactive_ok = _lossless_numeric(X_inactive[key])
+
+    if active_ok and inactive_ok:
+        active_lookup[key] = active_numeric
+        X_inactive[key] = inactive_numeric
+    else:
+        active_lookup[key] = active_lookup[key].astype("string")
+        X_inactive[key] = X_inactive[key].astype("string")
+
+
 def eval_transforms(X, func, cols):
     """Fills the inactive offers <cols> with the <func> using the values at the time it was a last active bid"""
     X_active = X[X.active == True].copy()  # noqa: E712 - intentional identity comparison
@@ -295,14 +322,7 @@ def eval_transforms(X, func, cols):
         .copy()
     )
 
-    if "last_snapshot" in active_lookup.columns:
-        active_lookup["last_snapshot"] = pd.to_numeric(
-            active_lookup["last_snapshot"], errors="coerce"
-        )
-    if "last_snapshot" in X_inactive.columns:
-        X_inactive["last_snapshot"] = pd.to_numeric(
-            X_inactive["last_snapshot"], errors="coerce"
-        )
+    _align_merge_key_types(active_lookup, X_inactive, "last_snapshot")
 
     merge_keys = ["id"] + _GROUPBY_KEY_FEATURES[:-1] + ["last_snapshot"]
     available_keys = [key for key in merge_keys if key in active_lookup.columns]
