@@ -892,6 +892,16 @@ def build_adjustment_grid(
             scenario_df["last_snapshot"] = pd.to_numeric(
                 scenario_df["last_snapshot"], errors="coerce"
             )
+            if "snapshot_num" in scenario_df.columns:
+                snapshot_numeric = pd.to_numeric(
+                    scenario_df["snapshot_num"], errors="coerce"
+                )
+                scenario_df["last_snapshot"] = scenario_df["last_snapshot"].fillna(
+                    snapshot_numeric
+                )
+            scenario_df["last_snapshot"] = scenario_df["last_snapshot"].fillna(
+                step_index + 1
+            )
         frames.append(scenario_df)
 
     return pd.concat(frames, ignore_index=True)
@@ -980,6 +990,16 @@ def records_to_dataframe(records: Optional[Sequence[Dict[str, object]]]) -> pd.D
             parsed = pd.to_datetime(df[column], errors="coerce")
             if parsed.notna().any():
                 df[column] = parsed
+    if "last_snapshot" in df.columns:
+        last_snapshot = pd.to_numeric(df["last_snapshot"], errors="coerce")
+        if "snapshot_num" in df.columns:
+            snapshot_numeric = pd.to_numeric(df["snapshot_num"], errors="coerce")
+            last_snapshot = last_snapshot.fillna(snapshot_numeric)
+        if last_snapshot.isna().any():
+            fallback = last_snapshot.dropna()
+            default_value = float(fallback.iloc[0]) if not fallback.empty else 0.0
+            last_snapshot = last_snapshot.fillna(default_value)
+        df["last_snapshot"] = last_snapshot
     return df
 
 

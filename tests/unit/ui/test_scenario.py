@@ -42,6 +42,17 @@ def test_records_to_dataframe_handles_empty_input():
     assert df.empty
 
 
+def test_records_to_dataframe_aligns_last_snapshot_with_snapshot_num():
+    records = [
+        {"Bid #": 1, "snapshot_num": 4, "last_snapshot": ""},
+        {"Bid #": 2, "snapshot_num": 4},
+    ]
+
+    df = records_to_dataframe(records)
+
+    assert list(df["last_snapshot"]) == [4.0, 4.0]
+
+
 def test_extract_baseline_snapshot_merges_snapshots():
     dataset = pd.DataFrame(
         [
@@ -256,3 +267,36 @@ def test_build_adjustment_grid_applies_seat_overrides_for_time_feature():
         hours = row["scenario_feature_value"]
         expected_current = row["departure_timestamp"] - pd.Timedelta(hours=hours)
         assert row["current_timestamp"] == expected_current
+
+
+def test_build_adjustment_grid_fills_missing_last_snapshot_values():
+    df = pd.DataFrame(
+        [
+            {
+                "Bid #": 1,
+                "usd_base_amount": 100.0,
+                "snapshot_num": 3,
+                "last_snapshot": None,
+                "active": True,
+            },
+            {
+                "Bid #": 2,
+                "usd_base_amount": 95.0,
+                "snapshot_num": 3,
+                "last_snapshot": "",
+                "active": False,
+            },
+        ]
+    )
+
+    feature = ScenarioFeature(
+        key="usd_base_amount",
+        scope="global",
+        label="USD base amount",
+        is_integer=False,
+    )
+
+    grid = build_adjustment_grid(df, feature, start=110.0, stop=120.0, count=2)
+
+    assert not grid["last_snapshot"].isna().any()
+    assert sorted(grid["last_snapshot"].unique()) == [1.0, 2.0]
