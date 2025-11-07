@@ -19,7 +19,7 @@ features:
     impute_median: false
   flight_code:
     categorical: true
-    include_in_model: true
+    include_in_model: false
     derived: true
     flight_feature: true
     bid_feature: false
@@ -27,7 +27,7 @@ features:
     impute_median: false
   travel_date:
     categorical: false
-    include_in_model: true
+    include_in_model: false
     derived: false
     flight_feature: true
     bid_feature: false
