@@ -10,6 +10,7 @@ PyYAML==6.0.2
 feature-engine==1.9.3
 scikit-optimize==0.10.2
 pytest
+sagemaker
 sagemaker-mlflow
 psutil
 pynvml
