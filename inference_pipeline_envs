@@ -1,0 +1,16 @@
+region = "us-east-1"
+role_arn = "arn:aws:iam::622055002283:role/ami-nonprod-sagemaker-execution"
+pipeline_name = "bid-predictor-batch-inference"
+mlflow_tracking_uri="arn:aws:sagemaker:us-east-1:622055002283:mlflow-tracking-server/tracking-server-5vt5uv9jpcqmxz-c3e5i8l64ccsh3-dev"
+mlflow_model_name = "snapshot-bid-predictor"
+mlflow_model_version = 12
+mlflow_model_stage = "Production"
+inference_image_uri = "622055002283.dkr.ecr.us-east-1.amazonaws.com/bid-predictor-sklearn-gpu:latest"
+// model_entry_point
+// model_source_dir
+default_batch_input = "s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet"
+default_batch_output = "s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/data/output/output.parquet"
+transform_content_type = "application/x-parquet" // "text/csv"
+transform_output_accept = "application/x-parquet" // "text/csv",
+instance_type = "ml.m5.xlarge"
+instance_count = 1

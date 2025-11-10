@@ -52,7 +52,13 @@ from sagemaker.workflow.parameters import ParameterInteger, ParameterString
 from sagemaker.workflow.pipeline import Pipeline
 from sagemaker.workflow.pipeline_context import PipelineSession
 from sagemaker.workflow.steps import TransformStep
+import mlflow
+from dotenv import load_dotenv
+load_dotenv()
 
+mlflow_tracking_uri = os.getenv("MLFLOW_AWS_ARN")
+mlflow.set_tracking_uri(mlflow_tracking_uri)
+mlflow.set_registry_uri(mlflow_tracking_uri)
 
 def _get_model_artifact_uri(
     *,
@@ -106,7 +112,7 @@ def _build_pipeline_session(region_name: str) -> PipelineSession:
 
     boto_session = boto3.Session(region_name=region_name)
     sagemaker_session = Session(boto_session=boto_session)
-    return PipelineSession(boto_session=boto_session, sagemaker_session=sagemaker_session)
+    return PipelineSession(boto_session=boto_session, sagemaker_client=sagemaker_session)
 
 
 def create_batch_inference_pipeline(
@@ -282,24 +288,24 @@ def _build_arg_parser() -> argparse.ArgumentParser:
             "CatBoost-based bid predictor registered in MLflow."
         )
     )
-    parser.add_argument("--region", dest="region", required=True, help="AWS region name")
-    parser.add_argument("--role-arn", dest="role_arn", required=True, help="SageMaker IAM role")
-    parser.add_argument("--pipeline-name", dest="pipeline_name", required=True)
+    parser.add_argument("--region", dest="region", default="us-east-1", required=False, help="AWS region name")
+    parser.add_argument("--role-arn", dest="role_arn", default="arn:aws:iam::622055002283:role/ami-nonprod-sagemaker-execution", required=False, help="SageMaker IAM role")
+    parser.add_argument("--pipeline-name", default="bid-predictor-batch-inference", dest="pipeline_name", required=False)
     parser.add_argument(
         "--mlflow-tracking-uri",
         dest="mlflow_tracking_uri",
-        default=os.getenv("MLFLOW_TRACKING_URI"),
-        help="SageMaker MLflow tracking URI (defaults to the MLFLOW_TRACKING_URI environment variable).",
+        default=os.getenv("MLFLOW_AWS_ARN"),
+        help="SageMaker MLflow tracking URI (defaults to the MLFLOW_AWS_ARN environment variable).",
     )
-    parser.add_argument("--mlflow-model-name", dest="mlflow_model_name", required=True)
-    parser.add_argument("--mlflow-model-version", dest="mlflow_model_version")
+    parser.add_argument("--mlflow-model-name", default="snapshot-bid-predictor", dest="mlflow_model_name", required=False)
+    parser.add_argument("--mlflow-model-version", default=12, dest="mlflow_model_version")
     parser.add_argument(
         "--mlflow-model-stage",
         dest="mlflow_model_stage",
         default="Production",
         help="MLflow model stage to resolve when a specific version is not provided.",
     )
-    parser.add_argument("--inference-image-uri", dest="inference_image_uri", required=True)
+    parser.add_argument("--inference-image-uri", default="622055002283.dkr.ecr.us-east-1.amazonaws.com/bid-predictor-sklearn-gpu:latest", dest="inference_image_uri", required=False)
     parser.add_argument("--model-entry-point", dest="model_entry_point")
     parser.add_argument("--model-source-dir", dest="model_source_dir")
     parser.add_argument(
@@ -311,24 +317,26 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--default-batch-input",
         dest="default_batch_input",
-        required=True,
+        default="s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/data/air_canada_and_lot/evaluation_sets/eval_bid_data_snapshots_v2_3_or_mode_bids.parquet",
+        required=False,
         help="Default S3 URI for the batch transform input data.",
     )
     parser.add_argument(
         "--default-batch-output",
         dest="default_batch_output",
-        required=True,
+        default="s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/data/output/output.parquet",
+        required=False,
         help="Default S3 prefix for the batch transform predictions.",
     )
     parser.add_argument(
         "--transform-content-type",
         dest="transform_content_type",
-        default="text/csv",
+        default="application/x-parquet",#"text/csv",
     )
     parser.add_argument(
         "--transform-output-accept",
         dest="transform_output_accept",
-        default="text/csv",
+        default="application/x-parquet",#"text/csv",
     )
     parser.add_argument(
         "--instance-type",
@@ -355,7 +363,7 @@ def main(args: Optional[list[str]] = None) -> None:
     if not parsed.mlflow_tracking_uri:
         parser.error(
             "MLflow tracking URI must be provided either via --mlflow-tracking-uri or the "
-            "MLFLOW_TRACKING_URI environment variable."
+            "MLFLOW_AWS_ARN environment variable."
         )
 
     pipeline = create_batch_inference_pipeline(
