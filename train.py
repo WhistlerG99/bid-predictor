@@ -3,6 +3,7 @@ import sys
 import argparse
 import warnings
 import inspect
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Set
 
@@ -11,6 +12,7 @@ import yaml
 import mlflow
 import pyarrow.dataset as ds
 import sklearn
+import joblib
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
 from bid_predictor.tracking import (
@@ -266,6 +268,28 @@ def train_and_log_model(
         log_feature_importances(pipeline, X_train, y_train, cat_features)
         log_evaluation_figures(y_test, y_pred, proba)
         log_pipeline_model(pipeline)
+        _persist_model_artifacts(pipeline)
+
+
+def _persist_model_artifacts(pipeline) -> None:
+    """Persist the trained pipeline and inference entry point for SageMaker."""
+
+    model_dir = os.environ.get("SM_MODEL_DIR")
+    if not model_dir:
+        return
+
+    target_dir = Path(model_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = target_dir / "pipeline.joblib"
+    joblib.dump(pipeline, model_path)
+
+    # Copy the inference script into the model archive so it is available for batch jobs.
+    inference_src = Path(__file__).resolve().with_name("inference.py")
+    if inference_src.exists():
+        code_dir = target_dir / "code"
+        code_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(inference_src, code_dir / "inference.py")
 
 
 def main():
