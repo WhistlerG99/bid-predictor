@@ -28,17 +28,19 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "snapshot-bid-predictor"
-feature_config = "feature_config/feature_config_bid_rank_2_v5.yaml"
-iterations = 500
+experiment_name = "bid-predictor"
+base_job_name = "bid-predictor"
+feature_config = "feature_config/feature_config_snapshot_bid_predictor_v12.yaml"
+catboost_config = "feature_config/catboost_params_snapshot_bid_predictor_v12.yaml"
+iterations = 2000
 
 est = Estimator(
-    image_uri=image_uri,
+    # image_uri=image_uri,
     # role=ROLE_ARN,
     instance_count=1,
     instance_type=instance_type,  # GPU instance
     sagemaker_session=sess,
-    base_job_name="snapshot-bid-predictor-gpu",
+    base_job_name=base_job_name,
     # pass anything your train.py parses; ensure CatBoost runs on GPU
     hyperparameters={
         # only matters if your build_pipeline uses these
@@ -47,6 +49,7 @@ est = Estimator(
         "iterations": iterations,
         "experiment-name": experiment_name,
         "feature-config": feature_config,
+        "catboost-config": catboost_config,
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
@@ -64,10 +67,9 @@ est = Estimator(
 )
 
 
-train_s3 = (
-    os.environ.get("S3_BUCKET_DATA")
-    + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-)
+train_s3 = os.environ.get("S3_BUCKET_DATA","")
+train_s3 += "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,
@@ -78,7 +80,7 @@ inputs = {
     )
 }
 
-job_name = "snapshot-bid-predictor-gpu-" + dt.datetime.utcnow().strftime(
+job_name = f"{base_job_name}-" + dt.datetime.utcnow().strftime(
     "%Y-%m-%d-%H-%M-%S"
 )
 print(f"Submitting job: {job_name}")

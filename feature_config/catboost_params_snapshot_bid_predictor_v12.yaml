@@ -1,0 +1,12 @@
+catboost:
+  iterations: 500
+  depth: 6
+  l2_leaf_reg: 3.0
+  loss_function: Logloss
+  auto_class_weights: Balanced
+  train_dir: /opt/ml/output/catboost
+  eval_metric: AUC
+  allow_writing_files: true
+  task_type: GPU
+  devices: '0'
+  random_state: 42

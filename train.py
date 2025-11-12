@@ -274,9 +274,10 @@ def train_and_log_model(
 def _persist_model_artifacts(pipeline) -> None:
     """Persist the trained pipeline and inference entry point for SageMaker."""
 
-    model_dir = os.environ.get("SM_MODEL_DIR")
-    if not model_dir:
+    if detect_execution_environment()[0] != "sagemaker_job":
         return
+
+    model_dir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")
 
     target_dir = Path(model_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -291,6 +292,9 @@ def _persist_model_artifacts(pipeline) -> None:
         code_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(inference_src, code_dir / "inference.py")
 
+    print(f"Saved model to {model_dir}")            
+
+
 
 def main():
     if detect_execution_environment()[0] == "sagemaker_job":
@@ -299,10 +303,8 @@ def main():
         "sagemaker_notebook",
         "sagemaker_terminal",
     ):
-        train_file = (
-            os.environ.get("S3_BUCKET_DATA")
-            + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        )
+        train_file = os.environ.get("S3_BUCKET_DATA", "")
+        train_file += "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
     else:
         train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         # train_file = "../bid_data_snapshots_v2.parquet"
