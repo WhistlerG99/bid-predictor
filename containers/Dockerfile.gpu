@@ -49,7 +49,7 @@ RUN mkdir -p /opt/ml/code /opt/ml/input /opt/ml/model /opt/ml/output /opt/ml/out
  && chown -R trainer:trainer /opt/ml /opt/program
 
 # drop in a wrapper that fixes perms at *runtime*
-COPY entrypoint.sh /usr/local/bin/_sm_entry.sh
+COPY containers/entrypoint.sh /usr/local/bin/_sm_entry.sh
 RUN chmod +x /usr/local/bin/_sm_entry.sh
 
 # keep sagemaker-training; we’ll exec its entrypoint after chown
