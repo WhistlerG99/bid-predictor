@@ -293,3 +293,9 @@ def invocations():
     except Exception as e:
         LOGGER.exception("Invocation failed: %s", e)
         return f"Error during prediction: {e}", 500
+    
+
+# NEW: start Flask app when run as a script
+if __name__ == "__main__":
+    LOGGER.info("Starting Flask app on 0.0.0.0:8080")
+    app.run(host="0.0.0.0", port=8080)

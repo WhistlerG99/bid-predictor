@@ -1,8 +1,6 @@
 # containers/Docker.inference
-# CUDA runtime with cuDNN on Ubuntu 22.04 (amd64)
 FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
 
-# System setup
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv python3-dev \
@@ -11,34 +9,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git wget \
  && rm -rf /var/lib/apt/lists/*
 
-# Make sure python points to python3
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 10
-
-# Upgrade pip tooling
 RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Copy and install your deps (same requirements.txt as training image)
-# NOTE: path is relative to the *build context* (the repo root), not this Dockerfile
+# Same requirements you used for training
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir matplotlib flask gunicorn joblib
+    && pip install --no-cache-dir flask joblib pyarrow
 
-# Runtime env
 ENV MPLBACKEND=Agg
 ENV PYTHONUNBUFFERED=1
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
-# Workdir for your app
 WORKDIR /opt/program
 
-# inference.py lives at repo root; again, paths are relative to build context
+# inference.py is in repo root (build context = .)
 COPY inference.py /opt/program/inference.py
 
-# SageMaker looks for port 8080
 EXPOSE 8080
 
-# Tell SageMaker this image can bind to a port (usable for endpoints)
 LABEL com.amazonaws.sagemaker.capabilities.accept-bind-to-port=true
 
-# Start Flask app with gunicorn on port 8080
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "1", "inference:app"]
+# 🔑 KEY CHANGE:
+# For inference, SageMaker runs: docker run image serve
+# This ENTRYPOINT makes that effectively: python inference.py serve
+ENTRYPOINT ["python", "/opt/program/inference.py"]
+CMD ["serve"]
