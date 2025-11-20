@@ -17,13 +17,13 @@ repo = "bid-predictor-sklearn-gpu"
 tag = "latest"
 image_uri = f"{account}.dkr.ecr.{REGION}.amazonaws.com/{repo}:{tag}"
 
-task_type = "CPU"
-instance_type = "ml.m5.xlarge"
-devices = "0"
-
-# task_type = "GPU"
-# instance_type = "ml.g5.xlarge"
+# task_type = "CPU"
+# instance_type = "ml.m5.xlarge"
 # devices = "0"
+
+task_type = "GPU"
+instance_type = "ml.g5.xlarge"
+devices = "0"
 
 # instance_type = "ml.g5.12xlarge" # 4 GPUs
 # devices = "-1"
@@ -69,7 +69,7 @@ est = Estimator(
 train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data"
 
 # train_s3 += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-train_s3 += "/etihad/bid_and_flight_data_snapshots_etihad.parquet"
+train_s3 += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
 
 inputs = {
     "train": TrainingInput(
