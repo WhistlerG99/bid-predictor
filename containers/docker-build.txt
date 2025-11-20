@@ -40,14 +40,19 @@ export REPO_NAME=bid-predictor-sklearn-inference-gpu
 export IMAGE_TAG=latest
 export ECR_URI=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${IMAGE_TAG}
 
+
 # 2) Create ECR repo (if not already there)
 aws ecr create-repository \
-  --repository-name ${REPO_NAME} \
-  --region ${AWS_REGION}
+  --repository-name $REPO_NAME \
+  --region $AWS_REGION 2>/dev/null || echo "ECR repo $REPO_NAME already exists"
+
 
 # 3) Login to ECR
-aws ecr get-login-password --region ${AWS_REGION} \
-  | docker login --username AWS --password-stdin ${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+aws ecr get-login-password --region $AWS_REGION \
+  | docker login \
+      --username AWS \
+      --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
 
 +++++++++++++ This works (creates the correct type of manifest) +++++++++++++++++
 # 4) Build and push the Image
@@ -58,6 +63,13 @@ docker buildx build \
   -t $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG \
   --push .
 
+
+
+docker build \
+  --network sagemaker \
+  -f containers/Dockerfile.inference \
+  -t $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG \
+  .
 
 # Sanity Check (should read something like `application/vnd.docker.distribution.manifest.v2+json`
  not `application/vnd.oci.*`)

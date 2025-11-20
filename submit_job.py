@@ -17,20 +17,22 @@ repo = "bid-predictor-sklearn-gpu"
 tag = "latest"
 image_uri = f"{account}.dkr.ecr.{REGION}.amazonaws.com/{repo}:{tag}"
 
-# task_type = "CPU"
-# instance_type = "ml.m5.xlarge"
+task_type = "CPU"
+instance_type = "ml.m5.xlarge"
+devices = "0"
+
+# task_type = "GPU"
+# instance_type = "ml.g5.xlarge"
 # devices = "0"
 
-task_type = "GPU"
-instance_type = "ml.g5.xlarge"
-devices = "0"
 # instance_type = "ml.g5.12xlarge" # 4 GPUs
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "snapshot-bid-predictor"
-feature_config = "feature_config/feature_config_bid_rank_2_v5.yaml"
-iterations = 500
+experiment_name = "snapshot-bid-predictor-etihad"
+# feature_config = "feature_config/feature_config_bid_rank_2_v5.yaml"
+feature_config = "feature_config/feature_config_etihad.yaml"
+iterations = 1000
 
 est = Estimator(
     image_uri=image_uri,
@@ -64,10 +66,11 @@ est = Estimator(
 )
 
 
-train_s3 = (
-    os.environ.get("S3_BUCKET_DATA")
-    + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-)
+train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data"
+
+# train_s3 += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+train_s3 += "/etihad/bid_and_flight_data_snapshots_etihad.parquet"
+
 inputs = {
     "train": TrainingInput(
         s3_data=train_s3,

@@ -3,6 +3,7 @@ import sys
 import argparse
 import warnings
 import inspect
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Set
 
@@ -11,6 +12,7 @@ import yaml
 import mlflow
 import pyarrow.dataset as ds
 import sklearn
+import joblib
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
 from bid_predictor.tracking import (
@@ -137,6 +139,30 @@ def _merge_catboost_params(
             continue
         merged[key] = value
     return merged
+
+
+def _persist_model_artifacts(pipeline) -> None:
+    """Persist the trained pipeline and inference entry point for SageMaker."""
+
+    if detect_execution_environment()[0] != "sagemaker_job":
+        return
+
+    model_dir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")
+
+    target_dir = Path(model_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = target_dir / "pipeline.joblib"
+    joblib.dump(pipeline, model_path)
+
+    # # Copy the inference script into the model archive so it is available for batch jobs.
+    # inference_src = Path(__file__).resolve().with_name("inference.py")
+    # if inference_src.exists():
+    #     code_dir = target_dir / "code"
+    #     code_dir.mkdir(parents=True, exist_ok=True)
+    #     shutil.copy2(inference_src, code_dir / "inference.py")
+
+    print(f"Saved model to {model_dir}")       
 
 
 def parse_args():
@@ -266,6 +292,7 @@ def train_and_log_model(
         log_feature_importances(pipeline, X_train, y_train, cat_features)
         log_evaluation_figures(y_test, y_pred, proba)
         log_pipeline_model(pipeline)
+        _persist_model_artifacts(pipeline)
 
 
 def main():
@@ -275,10 +302,9 @@ def main():
         "sagemaker_notebook",
         "sagemaker_terminal",
     ):
-        train_file = (
-            os.environ.get("S3_BUCKET_DATA")
-            + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        )
+        train_file = os.environ.get("S3_BUCKET_DATA") + "/data"
+        # train_file += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+        train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
     else:
         train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         # train_file = "../bid_data_snapshots_v2.parquet"

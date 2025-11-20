@@ -236,7 +236,12 @@ class FeatureConfiguredPipeline(Pipeline):
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, *, cat_features, **cb_params):
         """Initialize the CatBoost wrapper with environment-aware settings."""
-        if detect_execution_environment()[0] == "sagemaker_job":
+        # if detect_execution_environment()[0] == "sagemaker_job":
+        if detect_execution_environment()[0] in (
+            "sagemaker_notebook",
+            "sagemaker_job",
+            "sagemaker_terminal",
+        ):
             train_dir = get_output_dir()
             cb_params["train_dir"] = train_dir
             cb_params["allow_writing_files"] = True

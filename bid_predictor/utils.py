@@ -112,7 +112,7 @@ def get_output_dir():
         os.makedirs(output_dir, exist_ok=True)
     except PermissionError:
         # Fall back to /tmp to avoid failing the whole job
-        get_output_dir = os.path.join("/tmp", "catboost")
+        output_dir = os.path.join("/tmp", "catboost")
         os.makedirs(output_dir, exist_ok=True)
         print(f"WARNING: /opt/ml/output not writable; using {output_dir}")
     return output_dir
