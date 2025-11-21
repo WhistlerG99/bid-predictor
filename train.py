@@ -26,9 +26,8 @@ from bid_predictor.tracking import (
     log_run_parameters,
     start_catboost_mlflow_stream,
 )
-from bid_predictor.data import prepare_features
+from bid_predictor.data import load_dataset_cached, prepare_features
 from bid_predictor.utils import detect_execution_environment
-from bid_predictor.ui import load_dataset_cached
 from catboost import CatBoostClassifier
 from dotenv import load_dotenv
 
