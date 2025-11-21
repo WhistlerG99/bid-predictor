@@ -122,14 +122,63 @@ def model_fn(model_dir: str) -> dict:
 
 
 def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
+    cols = [
+        'offer_id',
+        'partner_id',
+        'product_id',
+        'conf_num',
+        'carrier_code',
+        'flight_number',
+        'departure_timestamp',
+        'origination_code',
+        'destination_code',
+        'days_before_departure',
+        'seats_available',
+        'item_count',
+        'usd_base_amount',
+        'fare_class',
+        'created_timestamp',
+        'offer_time',
+        'multiplier_fare_class',
+        'multiplier_loyalty',
+        'multiplier_success_history',
+        'multiplier_payment_type',
+        'upgrade_type',
+        'from_cabin',
+        "usd_base_amount_25%",
+        "usd_base_amount_50%",
+        "usd_base_amount_75%",
+        "usd_base_amount_max",
+        "num_offers",
+        "bid_rank",
+        "acceptance_prob",
+        "accept_prob_timestamp",
+    ]
+
+    cols_derived = [
+        "days_before_departure",
+        "usd_base_amount_25%",
+        "usd_base_amount_50%",
+        "usd_base_amount_75%",
+        "usd_base_amount_max",
+        "num_offers",
+        "bid_rank",
+    ]
+
+    data = data.reset_index(drop=True)
     pre_features = model_state["pre_features"]
-    model = model_state["model"]
+    model = model_state["model"]    
+    if "conf_num" not in data:
+        data["conf_num"] = ""
 
-    data_ = data[pre_features]
-    probs = model.predict_proba(data_)[:, 1]
-    data["acceptance_prob"] = probs
+    X = data[pre_features]
+    probs, X_tf = model.transform_and_predict_proba(X)
+    data = pd.concat((data, X_tf[cols_derived]), axis=1)
 
-    return data
+    data["acceptance_prob"] = probs[:,1]
+    data["accept_prob_timestamp"] = pd.Timestamp.now()
+
+    return data[cols]
 
 
 def input_fn(request_body: bytes, content_type: str) -> Union[pd.DataFrame, np.ndarray]:
