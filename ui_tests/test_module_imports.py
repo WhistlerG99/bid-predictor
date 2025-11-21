@@ -52,13 +52,15 @@ class _DummyDash:
 
 @pytest.fixture(autouse=True)
 def _stub_dash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Provide a lightweight Dash stub when the dependency is missing."""
+    """Provide a lightweight Dash stub when the dependency is missing or incomplete."""
 
     try:
-        import_module("dash")
-        return
+        dash_module = import_module("dash")
     except ModuleNotFoundError:
-        pass
+        dash_module = None
+
+    if dash_module is not None and hasattr(dash_module, "ctx"):
+        return
 
     dash_stub = types.ModuleType("dash")
     dash_stub.Dash = _DummyDash
@@ -67,14 +69,19 @@ def _stub_dash(monkeypatch: pytest.MonkeyPatch) -> None:
     dash_stub.State = type("State", (), {})
     dash_stub.callback_context = None
     dash_stub.no_update = object()
+    dash_stub.ctx = types.SimpleNamespace(triggered=[])
     dash_stub.dcc = _DummyModule("dash.dcc")
     dash_stub.html = _DummyModule("dash.html")
     dash_stub.dash_table = _DummyModule("dash.dash_table")
+    exceptions = types.ModuleType("dash.exceptions")
+    exceptions.PreventUpdate = type("PreventUpdate", (Exception,), {})
+    dash_stub.exceptions = exceptions
 
     monkeypatch.setitem(sys.modules, "dash", dash_stub)
     monkeypatch.setitem(sys.modules, "dash.dcc", dash_stub.dcc)
     monkeypatch.setitem(sys.modules, "dash.html", dash_stub.html)
     monkeypatch.setitem(sys.modules, "dash.dash_table", dash_stub.dash_table)
+    monkeypatch.setitem(sys.modules, "dash.exceptions", exceptions)
 
 
 @pytest.mark.parametrize("module_name", MODULE_NAMES)
