@@ -155,12 +155,16 @@ def _persist_model_artifacts(pipeline) -> None:
     model_path = target_dir / "pipeline.joblib"
     joblib.dump(pipeline, model_path)
 
-    # # Copy the inference script into the model archive so it is available for batch jobs.
-    # inference_src = Path(__file__).resolve().with_name("inference.py")
-    # if inference_src.exists():
-    #     code_dir = target_dir / "code"
-    #     code_dir.mkdir(parents=True, exist_ok=True)
-    #     shutil.copy2(inference_src, code_dir / "inference.py")
+    # Copy the "bid_predictor" directory next to pipeline.joblib
+    bid_predictor_src = Path(__file__).resolve().with_name("bid_predictor")
+    if bid_predictor_src.exists() and bid_predictor_src.is_dir():
+        bid_predictor_dst = target_dir / "bid_predictor"
+
+        # If it already exists from a previous run, replace it
+        if bid_predictor_dst.exists():
+            shutil.rmtree(bid_predictor_dst)
+
+        shutil.copytree(bid_predictor_src, bid_predictor_dst)
 
     print(f"Saved model to {model_dir}")       
 
@@ -183,6 +187,7 @@ def parse_args():
     # your own toggles
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
+    p.add_argument("--run-name", type=str, default=None)
     p.add_argument("--testing", action="store_true")
     p.add_argument(
         "--catboost-config",
@@ -204,6 +209,8 @@ def train_and_log_model(
     feature_config,
     args,
 ):
+    run_name = f"run-{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}"
+
     cat_features = list(feature_config["cat_features"])
     features = list(feature_config["features"])
     pre_features = feature_config["pre_features"]
@@ -211,6 +218,7 @@ def train_and_log_model(
     var_args = vars(args)
     testing = var_args.pop("testing")
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+    run_name = var_args.pop("run_name", run_name)
     explicit_flags = set(var_args.pop("_explicit_flags", set()))
     catboost_config_path = var_args.pop("catboost_config", None)
 
@@ -219,7 +227,6 @@ def train_and_log_model(
     )
 
     mlflow.set_experiment(experiment_name)
-    run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
         run_name=run_name,
         nested=(mlflow.active_run() is not None),
