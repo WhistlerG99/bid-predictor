@@ -75,30 +75,6 @@ CSV_HAS_HEADER = os.environ.get("CSV_HAS_HEADER", "").lower() in {"1", "true", "
 COERCE_NUMERIC = os.environ.get("COERCE_NUMERIC", "1").lower() in {"1", "true", "yes"}
 
 # ---------- Helpers ----------
-def _ensure_feature_order(df: pd.DataFrame, columns: Optional[List[str]]) -> Union[pd.DataFrame, np.ndarray]:
-    """
-    If columns is provided, select/reorder the DataFrame accordingly.
-    If not, return df as-is. For NumPy inputs (not used here), just return ndarray.
-    """
-    if columns is None:
-        return df
-    missing = [c for c in columns if c not in df.columns]
-    if missing:
-        raise ValueError(f"Missing expected columns: {missing}. Got: {list(df.columns)}")
-    # Reorder and drop extras if any
-    return df.reindex(columns=columns)
-
-def _coerce_numeric(df: pd.DataFrame) -> pd.DataFrame:
-    if not COERCE_NUMERIC:
-        return df
-    for c in df.columns:
-        try:
-            df[c] = pd.to_numeric(df[c], errors="ignore")
-        except Exception:
-            # Leave as-is if coercion fails
-            pass
-    return df
-
 def _to_json_payload(obj: Any) -> Tuple[str, str]:
     if isinstance(obj, (np.ndarray,)):
         out = obj.tolist()
@@ -108,13 +84,6 @@ def _to_json_payload(obj: Any) -> Tuple[str, str]:
         out = obj
     return json.dumps({"predictions": out}), "application/json"
 
-def _proba_to_df(proba: np.ndarray, classes: Optional[List[Any]]) -> pd.DataFrame:
-    if classes is None:
-        # Generic column names
-        cols = [f"class_{i}" for i in range(proba.shape[1])]
-    else:
-        cols = [str(c) for c in classes]
-    return pd.DataFrame(proba, columns=cols)
 
 def _parquet_response_from_array_or_df(pred: Union[np.ndarray, pd.DataFrame]) -> Tuple[bytes, str]:
     if not _HAS_PARQUET:
@@ -134,31 +103,12 @@ def _parquet_response_from_array_or_df(pred: Union[np.ndarray, pd.DataFrame]) ->
     return buf.getvalue(), "application/x-parquet"
 
 
-def list_dirs(base_dir="/opt", max_depth=2):
-    """
-    Logs the directory structure starting from base_dir up to max_depth levels deep.
-    """
-    base_dir = os.path.abspath(base_dir)
-    base_depth = base_dir.rstrip(os.sep).count(os.sep)
-
-    for root, dirs, _ in os.walk(base_dir):
-        depth = root.rstrip(os.sep).count(os.sep) - base_depth
-        if depth > max_depth:
-            # prevent descending further
-            dirs[:] = []
-            continue
-
-        indent = "    " * depth
-        LOGGER.info("%s📁 %s", indent, os.path.basename(root) or root)
-
-
 # ---------- SageMaker-style entrypoints (reused by Flask) ----------
 def model_fn(model_dir: str) -> dict:
     """
     Load artifacts from /opt/ml/model.
     Expects pipeline.joblib. Returns dict with model + pre_features.
     """
-    list_dirs("/opt/ml", 3)
     model_path = os.path.join(model_dir, "pipeline.joblib")
     model = joblib.load(model_path)
 
