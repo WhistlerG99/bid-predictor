@@ -27,7 +27,7 @@ if DEV:
     PIPELINE_NAME = "BidPredictorBatchInferenceDev5"
     DATA_PREFIX = (
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
-        "bid_predictor_live_data_by_partners/test"
+        "bid_predictor_live_data_by_partners_test"
     )
     IMAGE_NAME = "bid-predictor-sklearn-inference-gpu-test"
 else:

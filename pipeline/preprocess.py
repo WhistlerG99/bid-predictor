@@ -37,8 +37,6 @@ def select_model_for_carrier(carrier_code: str) -> str:
     resp = s3.list_objects_v2(Bucket=MODEL_BUCKET, Prefix=prefix)
     contents = resp.get("Contents", [])
 
-    logger.info(f"Contents: {contents}")
-
     candidates = []
     for obj in contents:
         key = obj["Key"]
