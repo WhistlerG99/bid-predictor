@@ -7,7 +7,7 @@ from sagemaker.model import Model
 
 from sagemaker.transformer import Transformer
 from sagemaker.workflow.steps import TransformStep
-from sagemaker.inputs import TransformInput, BatchDataCaptureConfig  # CHANGED
+from sagemaker.inputs import TransformInput, BatchDataCaptureConfig
 
 from sagemaker.workflow.parameters import ParameterString
 from sagemaker.processing import ProcessingInput, ProcessingOutput
@@ -15,18 +15,20 @@ from sagemaker.processing import ScriptProcessor
 from sagemaker.workflow.steps import ProcessingStep
 
 from sagemaker.workflow.execution_variables import ExecutionVariables
-from sagemaker.workflow.functions import Join
+from sagemaker.workflow.functions import Join, JsonGet
+from sagemaker.workflow.properties import PropertyFile
 
-DEV=False
+
+BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
+MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
+
+DEV = True
 if DEV:
     PIPELINE_NAME = "BidPredictorBatchInferenceDev5"
     DATA_PREFIX = (
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners/test"
     )
-    PARTNER_CODE = "EY"
-    # MODEL_NAME = "snapshot-bid-predictor-gpu-2025-11-20-13-41-06"
-    MODEL_NAME = "bid-predictor-ey-2025-11-21-17-24-01"
     IMAGE_NAME = "bid-predictor-sklearn-inference-gpu-test"
 else:
     PIPELINE_NAME = "BidPredictorBatchInference"
@@ -34,25 +36,12 @@ else:
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners"
     )
-    PARTNER_CODE = "EY"
-    # MODEL_NAME = "snapshot-bid-predictor-gpu-2025-11-20-13-41-06"
-    MODEL_NAME = "bid-predictor-ey-2025-11-21-17-24-01"
-    IMAGE_NAME = "bid-predictor-sklearn-inference-gpu"    
+    IMAGE_NAME = "bid-predictor-sklearn-inference-gpu"
 
 
 def main():
     pipeline_session = PipelineSession()
     role = sagemaker.get_execution_role()
-
-    bucket = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-
-    # Model artifacts
-    prefix = (
-        f"dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev/"
-        f"{MODEL_NAME}/output"
-    )
-    model_file_name = "model"
-    model_data = f"s3://{bucket}/{prefix}/{model_file_name}.tar.gz"
 
     instance_type = "ml.m5.xlarge"
 
@@ -61,30 +50,38 @@ def main():
         f"{IMAGE_NAME}:latest"
     )
 
-    # ---------- Model step ----------
-    custom_model = Model(
-        model_data=model_data,
-        role=role,
-        image_uri=image_uri,
-        sagemaker_session=pipeline_session,
-    )
-
-    model_step = ModelStep(
-        name="CreateBidPredictorModel",
-        step_args=custom_model.create(instance_type=instance_type),
-    )
-
     # ---------- Base S3 layout ----------
-    # <base_dir> = s3://bucket/<DATA_PREFIX>/test
-    base_dir = f"s3://{bucket}/{DATA_PREFIX}"
+    base_dir = f"s3://{BUCKET_NAME}/{DATA_PREFIX}"
+
+    # ---------- Input parameters ----------
+    # InputPrefix represents the FULL S3 key of the input file
+    # e.g. "dzd_.../output/bid_predictor_live_data_by_partners/<partner>/<file>.parquet"
+    input_prefix = ParameterString(
+        name="InputPrefix",
+        default_value=(
+            "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
+            "bid_predictor_live_data_by_partners/EY/availability-offers-example.parquet"
+        ),
+    )
+
+    # Build full S3 URI from bucket + input_prefix
+    input_data_uri = Join(
+        on="",  # use empty separator for proper URI assembly
+        values=[
+            "s3://",
+            BUCKET_NAME,
+            "/",
+            input_prefix,
+        ],
+    )
 
     # final CSV:
-    # <base_dir>/output/availability-offers-probability-<timestamp>.csv
+    # <base_dir>/output/<partner>/availability-offers-probability-<timestamp>.csv
     final_output_path = Join(
         on="/",
         values=[
             base_dir,
-            f"output/{PARTNER_CODE}",
+            "output",
         ],
     )
 
@@ -109,6 +106,16 @@ def main():
         ],
     )
 
+    # model_config output
+    # <base_dir>/processing/<pipeline_exec_id>/model_config/
+    model_config_output_path = Join(  # CHANGED
+        on="/",
+        values=[
+            processing_root,
+            "model_config",
+        ],
+    )
+
     # transformer output:
     # <base_dir>/processing/<pipeline_exec_id>/transformer/
     transformer_output_path = Join(
@@ -121,7 +128,7 @@ def main():
 
     # data capture path:
     # <base_dir>/processing/<pipeline_exec_id>/data_capture/
-    data_capture_path = Join(  # CHANGED
+    data_capture_path = Join(
         on="/",
         values=[
             processing_root,
@@ -129,13 +136,8 @@ def main():
         ],
     )
 
-    # ---------- Input parameter ----------
-    input_data_uri = ParameterString(
-        name="InputData",
-        default_value=f"{base_dir}/{PARTNER_CODE}/",
-    )
-
     # ---------- Preprocessing step ----------
+    # ScriptProcessor now gets env vars so preprocess.py can select the model
     script_processor = ScriptProcessor(
         role=role,
         image_uri=image_uri,
@@ -143,9 +145,22 @@ def main():
         instance_type=instance_type,
         instance_count=1,
         sagemaker_session=pipeline_session,
+        env={  # pass model bucket & base prefix for dynamic selection
+            "MODEL_BUCKET": BUCKET_NAME,
+            "MODEL_BASE_PREFIX": MODEL_BASE_PREFIX,
+        },
     )
 
-    # preprocess.py is expected to write /opt/ml/processing/output/processed.parquet
+    # PropertyFile now points to output_name="model_config"
+    model_config_prop = PropertyFile(
+        name="ModelConfig",
+        output_name="model_config",
+        path="model_config.json",
+    )
+
+    # preprocess.py is expected to:
+    # - write /opt/ml/processing/output/processed.parquet
+    # - write /opt/ml/processing/output/model_config.json with {"model_data": "s3://.../model.tar.gz"}
     processing_step = ProcessingStep(
         name="PreprocessOffers",
         processor=script_processor,
@@ -161,8 +176,35 @@ def main():
                 output_name="preprocessed",
                 source="/opt/ml/processing/output",
                 destination=preprocessor_output_path,
-            )
+            ),
+            ProcessingOutput(  # second output for model_config
+                output_name="model_config",
+                source="/opt/ml/processing/model_config",
+                destination=model_config_output_path,
+            ),            
         ],
+        property_files=[model_config_prop],  # expose model_config.json as step properties
+    )
+
+    # Use JsonGet to read "model_data" from model_config.json
+    dynamic_model_data = JsonGet(
+        step_name=processing_step.name,
+        property_file=model_config_prop,
+        json_path="model_data",
+    )
+
+    # ---------- Model step ----------
+    # Use dynamic_model_data instead of hard-coded S3 URI
+    custom_model = Model(
+        model_data=dynamic_model_data,  # CHANGED
+        role=role,
+        image_uri=image_uri,
+        sagemaker_session=pipeline_session,
+    )
+
+    model_step = ModelStep(
+        name="CreateBidPredictorModel",
+        step_args=custom_model.create(instance_type=instance_type),
     )
 
     # ---------- Batch Transform step ----------
@@ -189,15 +231,12 @@ def main():
             content_type="application/x-parquet",  # model expects Parquet
             split_type="None",
             batch_data_capture_config=BatchDataCaptureConfig(
-                destination_s3_uri=data_capture_path  
+                destination_s3_uri=data_capture_path
             ),
         ),
     )
 
     # ---------- Postprocessing to CSV ----------
-    # postprocess.py should:
-    # - read *.parquet / *.parquet.out from /opt/ml/processing/input
-    # - write availability-offers-probability-<timestamp>.csv to /opt/ml/processing/output
     postprocess_processor = ScriptProcessor(
         role=role,
         image_uri=image_uri,
@@ -230,10 +269,16 @@ def main():
     )
 
     # ---------- Pipeline ----------
+    # Ordering so that Preprocess (which selects model) runs before ModelStep
     pipeline = Pipeline(
         name=PIPELINE_NAME,
-        parameters=[input_data_uri],
-        steps=[model_step, processing_step, batch_transform_step, postprocess_step],
+        parameters=[input_prefix],
+        steps=[
+            processing_step,       # must run first to produce model_data + processed.parquet
+            model_step,
+            batch_transform_step,
+            postprocess_step,
+        ],
         sagemaker_session=pipeline_session,
     )
 

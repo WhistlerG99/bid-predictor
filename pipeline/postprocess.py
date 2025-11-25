@@ -47,14 +47,17 @@ def main():
         )
 
     timestamp = df["file_timestamp"].iloc[0]
+    carrier_code = df["carrier_code"].iloc[0]
+    output_dir = OUTPUT_DIR + "/" + carrier_code
+
     logger.info(f"Using file_timestamp={timestamp} for final CSV name")
 
     # Optional: drop file_timestamp from final CSV if you don't want it in output
     df = df.drop(columns=["file_timestamp"])
 
     output_filename = f"availability-offers-probability-{timestamp}.csv"
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    output_path = os.path.join(OUTPUT_DIR, output_filename)
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, output_filename)
 
     df.to_csv(output_path, index=False)
     logger.info(f"Wrote final CSV to: {output_path}")
