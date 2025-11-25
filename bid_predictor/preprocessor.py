@@ -63,7 +63,7 @@ def load_offer_data(path):
 
 def preprocess_data(df_flights, df_offers):
     """Join flight and offer datasets and engineer shared temporal features."""
-    df_flights_ = df_flights.drop(columns=["equip"]).drop_duplicates(
+    df_flights_ = df_flights.drop(columns=["equip"], errors='ignore').drop_duplicates(
         subset=[
             "carrier_code",
             "flight_number",
@@ -121,8 +121,8 @@ def preprocess_data(df_flights, df_offers):
         data["departure_local_date_time"]
     )
 
-    dates = pd.to_datetime(df_offers["travel_dt"], errors="coerce")
-    times = pd.to_timedelta(df_offers["dep_tm"], errors="coerce")
+    dates = pd.to_datetime(data["travel_date"], errors="coerce")
+    times = pd.to_timedelta(data["dep_tm"], errors="coerce")
     data["departure_timestamp"] = dates + times
 
     data["departure_timestamp_utc"] = data["departure_timestamp"] - pd.to_timedelta(
