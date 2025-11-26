@@ -162,11 +162,28 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
             ]
             if key in dataset.columns
         ]
-        order_columns = group_keys + (["offer_id"] if "offer_id" in dataset.columns else [])
-        if group_keys and order_columns:
-            sorted_df = dataset.sort_values(order_columns)
-            bid_numbers = sorted_df.groupby(group_keys).cumcount() + 1
-            dataset.loc[sorted_df.index, "Bid #"] = bid_numbers
+        if group_keys:
+            dataset["Bid #"] = pd.NA
+            for _, group in dataset.groupby(group_keys, sort=False):
+                offers = group["offer_id"]
+                try:
+                    ordered_offers = (
+                        pd.Series(offers.dropna().unique())
+                        .sort_values(kind="mergesort")
+                        .tolist()
+                    )
+                except Exception:
+                    ordered_offers = (
+                        pd.Series(offers.dropna().astype(str).unique())
+                        .sort_values(kind="mergesort")
+                        .tolist()
+                    )
+                label_map = {value: idx + 1 for idx, value in enumerate(ordered_offers)}
+                dataset.loc[group.index, "Bid #"] = offers.map(label_map)
+
+            missing = dataset["Bid #"].isna()
+            if missing.any():
+                dataset.loc[missing, "Bid #"] = pd.factorize(dataset.loc[missing, "offer_id"])[0] + 1
             dataset["Bid #"] = dataset["Bid #"].astype(int)
         else:
             dataset["Bid #"] = pd.factorize(dataset["offer_id"])[0] + 1
@@ -217,10 +234,15 @@ def _prepare_records(snapshot_df: pd.DataFrame) -> List[Dict[str, object]]:
     return records
 
 
-def _build_predictions(records: Sequence[Dict[str, object]]) -> Dict[str, object]:
+def _build_predictions(df: pd.DataFrame) -> Dict[str, object]:
     probability_map: Dict[str, object] = {}
-    for idx, record in enumerate(records):
-        probability_map[f"bid_{idx}"] = record.get("Acceptance Probability")
+    probabilities = df.get("Acceptance Probability")
+    if probabilities is None:
+        probabilities = df.get("acceptance_prob")
+    if probabilities is None:
+        probabilities = []
+    for idx, value in enumerate(probabilities):
+        probability_map[f"bid_{idx}"] = value
     return {"probabilities": probability_map, "derived_features": []}
 
 
@@ -484,11 +506,12 @@ def register_acceptance_callbacks(app: Dash) -> None:
             return summary, figure, warning, no_update, [], [], ""
 
         snapshot_df = subset.loc[subset["snapshot_num"] == str(snapshot_value)].copy()
+        snapshot_df = snapshot_df.reset_index(drop=True)
         if snapshot_df.empty:
             return summary, figure, "No rows found for the selected snapshot.", no_update, [], [], ""
 
+        predictions = _build_predictions(snapshot_df)
         records = _prepare_records(snapshot_df)
-        predictions = _build_predictions(records)
         columns, data_rows, style_rules = _render_table(
             records, predictions, _acceptance_feature_config()
         )
