@@ -92,6 +92,14 @@ def _list_remote_files(filesystem: pyfs.FileSystem, uri: str) -> List[str]:
     raise ValueError(f"Unsupported S3 path type for {uri}")
 
 
+def _scale_acceptance_probabilities(series: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    non_na = numeric.dropna()
+    if not non_na.empty and non_na.max() <= 1:
+        numeric = numeric * 100.0
+    return numeric
+
+
 @lru_cache(maxsize=4)
 def load_acceptance_dataset(path: str) -> pd.DataFrame:
     """Load a CSV or parquet dataset containing acceptance probabilities.
@@ -196,8 +204,16 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
             dataset["Bid #"] = dataset["Bid #"].astype(int)
         else:
             dataset["Bid #"] = pd.factorize(dataset["offer_id"])[0] + 1
-    if "Acceptance Probability" not in dataset.columns and "acceptance_prob" in dataset.columns:
-        dataset["Acceptance Probability"] = dataset["acceptance_prob"]
+    probability_source = None
+    if "Acceptance Probability" in dataset.columns:
+        probability_source = dataset["Acceptance Probability"]
+    elif "acceptance_prob" in dataset.columns:
+        probability_source = dataset["acceptance_prob"]
+
+    if probability_source is not None:
+        scaled = _scale_acceptance_probabilities(probability_source)
+        dataset["Acceptance Probability"] = scaled
+        dataset["acceptance_prob"] = scaled
 
     dataset["offer_status"] = dataset.get("offer_status", "pending")
     return dataset
