@@ -99,6 +99,7 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
                 raise ValueError(f"Unsupported file extension for {file_path}")
 
     dataset = pd.concat(frames, ignore_index=True, sort=False)
+    dataset = dataset.drop_duplicates().reset_index(drop=True)
     if dataset.empty:
         raise ValueError("The loaded dataset is empty.")
 
