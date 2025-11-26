@@ -3,6 +3,7 @@ import sys
 import argparse
 import warnings
 import inspect
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Set
 
@@ -11,6 +12,7 @@ import yaml
 import mlflow
 import pyarrow.dataset as ds
 import sklearn
+import joblib
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
 from bid_predictor.tracking import (
@@ -139,6 +141,34 @@ def _merge_catboost_params(
     return merged
 
 
+def _persist_model_artifacts(pipeline) -> None:
+    """Persist the trained pipeline and inference entry point for SageMaker."""
+
+    if detect_execution_environment()[0] != "sagemaker_job":
+        return
+
+    model_dir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")
+
+    target_dir = Path(model_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = target_dir / "pipeline.joblib"
+    joblib.dump(pipeline, model_path)
+
+    # Copy the "bid_predictor" directory next to pipeline.joblib
+    bid_predictor_src = Path(__file__).resolve().with_name("bid_predictor")
+    if bid_predictor_src.exists() and bid_predictor_src.is_dir():
+        bid_predictor_dst = target_dir / "bid_predictor"
+
+        # If it already exists from a previous run, replace it
+        if bid_predictor_dst.exists():
+            shutil.rmtree(bid_predictor_dst)
+
+        shutil.copytree(bid_predictor_src, bid_predictor_dst)
+
+    print(f"Saved model to {model_dir}")       
+
+
 def parse_args():
     p = argparse.ArgumentParser()
     _register_catboost_arguments(p)
@@ -157,6 +187,7 @@ def parse_args():
     # your own toggles
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
+    p.add_argument("--run-name", type=str, default=None)
     p.add_argument("--testing", action="store_true")
     p.add_argument(
         "--catboost-config",
@@ -178,6 +209,8 @@ def train_and_log_model(
     feature_config,
     args,
 ):
+    run_name = f"run-{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}"
+
     cat_features = list(feature_config["cat_features"])
     features = list(feature_config["features"])
     pre_features = feature_config["pre_features"]
@@ -185,6 +218,7 @@ def train_and_log_model(
     var_args = vars(args)
     testing = var_args.pop("testing")
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+    run_name = var_args.pop("run_name", run_name)
     explicit_flags = set(var_args.pop("_explicit_flags", set()))
     catboost_config_path = var_args.pop("catboost_config", None)
 
@@ -193,7 +227,6 @@ def train_and_log_model(
     )
 
     mlflow.set_experiment(experiment_name)
-    run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
     with mlflow.start_run(
         run_name=run_name,
         nested=(mlflow.active_run() is not None),
@@ -266,6 +299,7 @@ def train_and_log_model(
         log_feature_importances(pipeline, X_train, y_train, cat_features)
         log_evaluation_figures(y_test, y_pred, proba)
         log_pipeline_model(pipeline)
+        _persist_model_artifacts(pipeline)
 
 
 def main():
@@ -275,10 +309,9 @@ def main():
         "sagemaker_notebook",
         "sagemaker_terminal",
     ):
-        train_file = (
-            os.environ.get("S3_BUCKET_DATA")
-            + "/data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        )
+        train_file = os.environ.get("S3_BUCKET_DATA") + "/data"
+        # train_file += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+        train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
     else:
         train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         # train_file = "../bid_data_snapshots_v2.parquet"

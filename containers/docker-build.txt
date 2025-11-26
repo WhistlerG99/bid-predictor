@@ -1,22 +1,80 @@
 
 aws configure sso # if first time
 
-aws sso login --profile my-sso DevManage-622055002283
+export AWS_PROFILE=DevManage-622055002283
+aws sso login
 
 
+# Building the Training Image
+
+# 1) Set environment variables
 export AWS_REGION=us-east-1
-export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) # it's usually 622055002283
 export REPO=bid-predictor-sklearn-gpu
 export TAG=latest
 
+# 2) Create ECR repo (if not already there)
 aws ecr create-repository --repository-name $REPO >/dev/null 2>&1 || true
+
+# 3) Login to ECR
 aws ecr get-login-password --region $AWS_REGION \
 | docker login --username AWS --password-stdin \
   $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-# Build for amd64 and push (works from M-series Macs)
-docker buildx create --use >/dev/null 2>&1 || true
-docker buildx build --platform linux/amd64 \
-  -f Dockerfile.gpu \
+# 4) Build and push the Image
+docker buildx build \
+  --platform linux/amd64 \
+  --provenance=false --sbom=false \
+  -f containers/Dockerfile.gpu \
   -t $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:$TAG \
+  --push .  
+
+
+
+# Building the Inference Image
+
+# 1) Set environment Variables
+export AWS_REGION=us-east-1
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export REPO_NAME=bid-predictor-sklearn-inference-gpu
+export IMAGE_TAG=latest
+export ECR_URI=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${IMAGE_TAG}
+
+
+# 2) Create ECR repo (if not already there)
+aws ecr create-repository \
+  --repository-name $REPO_NAME \
+  --region $AWS_REGION 2>/dev/null || echo "ECR repo $REPO_NAME already exists"
+
+
+# 3) Login to ECR
+aws ecr get-login-password --region $AWS_REGION \
+  | docker login \
+      --username AWS \
+      --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+
++++++++++++++ This works (creates the correct type of manifest) +++++++++++++++++
+# 4) Build and push the Image
+docker buildx build \
+  --platform linux/amd64 \
+  --provenance=false --sbom=false \
+  -f containers/Dockerfile.inference \
+  -t $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG \
   --push .
+
+
+
+docker build \
+  --network sagemaker \
+  -f containers/Dockerfile.inference \
+  -t $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO_NAME:$IMAGE_TAG \
+  .
+
+# Sanity Check (should read something like `application/vnd.docker.distribution.manifest.v2+json`
+ not `application/vnd.oci.*`)
+aws ecr batch-get-image \
+  --repository-name ${REPO_NAME} \
+  --image-ids imageTag=${IMAGE_TAG} \
+  --query 'images[0].imageManifestMediaType' \
+  --output text

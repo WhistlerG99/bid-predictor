@@ -89,6 +89,11 @@ class FeatureConfiguredPipeline(Pipeline):
         X_tf = self._transform(X)
         probs = self[-1].predict_proba(X_tf)
         return probs, X_tf
+    
+    def transform_and_predict_proba(self, X):
+        X_tf = self[:1].transform(X)
+        probs = self[1:].predict_proba(X_tf)
+        return probs, X_tf    
 
     def _assign_feature_config(self, feature_config: Mapping[str, Any]) -> None:
         """Store a defensive copy of the feature configuration on the class.
@@ -236,7 +241,11 @@ class FeatureConfiguredPipeline(Pipeline):
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, *, cat_features, **cb_params):
         """Initialize the CatBoost wrapper with environment-aware settings."""
-        if detect_execution_environment()[0] == "sagemaker_job":
+        if detect_execution_environment()[0] in (
+            "sagemaker_notebook",
+            "sagemaker_job",
+            "sagemaker_terminal",
+        ):
             train_dir = get_output_dir()
             cb_params["train_dir"] = train_dir
             cb_params["allow_writing_files"] = True
@@ -323,13 +332,18 @@ def build_pipeline(feature_config=None, **kw):
     selected_features = feature_config["features"]
     categorical_features = feature_config["cat_features"]
 
-    steps = [
-        ("flight_code", add_flight_code_transformer),
-        ("depart", add_days_b4_depart_transformer),
-        ("bid_rank", add_bid_rank_transformer),
-        ("group", group_features_transformer),
-    ]
+    pipeline_feat_add = Pipeline(
+        steps=[
+            ("flight_code", add_flight_code_transformer),
+            ("depart", add_days_b4_depart_transformer),
+            ("bid_rank", add_bid_rank_transformer),
+            ("group", group_features_transformer),
+            ("quantile", quantiles_transformer),
+        ],
+        transform_input=["eval_set"],
+    )
 
+    steps_ft = []
     if "impute_value" in feature_config or "impute_median" in feature_config:
         variables = []
         if "impute_value" in feature_config:
@@ -340,7 +354,7 @@ def build_pipeline(feature_config=None, **kw):
                 variables.append(feature)
 
         if variables:
-            steps.append(
+            steps_ft.append(
                 (
                     "indicator",
                     AddMissingIndicatorCustom(
@@ -355,7 +369,7 @@ def build_pipeline(feature_config=None, **kw):
             imputer_dict[feature] = value
 
         if imputer_dict:
-            steps.append(
+            steps_ft.append(
                 (
                     "value_imputer",
                     ArbitraryNumberImputerCustom(
@@ -369,7 +383,7 @@ def build_pipeline(feature_config=None, **kw):
             variables.append(feature)
 
         if variables:
-            steps.append(
+            steps_ft.append(
                 (
                     "median_imputer",
                     MeanMedianImputerCustom(
@@ -394,7 +408,7 @@ def build_pipeline(feature_config=None, **kw):
             outlier_args["max_capping_dict"] = max_capping_dict
 
         if outlier_args:
-            steps.append(
+            steps_ft.append(
                 (
                     "outliers",
                     ArbitraryOutlierCapperCustom(
@@ -402,8 +416,6 @@ def build_pipeline(feature_config=None, **kw):
                     ),
                 )
             )
-
-    steps.append(("quantile", quantiles_transformer))
 
     if "bins" in feature_config:
         binning_dict = {}
@@ -424,7 +436,7 @@ def build_pipeline(feature_config=None, **kw):
                 raise ValueError(f"Invalid binning specification for feature {feature}")
 
         if binning_dict:
-            steps.append(
+            steps_ft.append(
                 (
                     "discrete",
                     ArbitraryDiscretiserCustom(
@@ -434,8 +446,14 @@ def build_pipeline(feature_config=None, **kw):
                 )
             )
 
+    pipeline_tf = Pipeline(steps=steps_ft, transform_input=["eval_set"])
+
     reduce_features_transformer = ColumnReducer(selected_features)
-    steps.append(("reduce", reduce_features_transformer))
+    steps= [
+        ("feature_add", pipeline_feat_add),
+        ("feature_transform", pipeline_tf),
+        ("reduce", reduce_features_transformer)
+    ]
 
     # CatBoostClassifier integrates with sklearn API
     clf = CBC(

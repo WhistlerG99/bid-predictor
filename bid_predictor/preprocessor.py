@@ -2,8 +2,15 @@ import pandas as pd
 
 
 def load_flight_data(path):
-    """Load raw flight metadata CSVs and derive calendar helper columns."""
-    df = pd.read_csv(path, low_memory=False)
+    """Load raw flight metadata CSVs or Parquets and derive calendar helper columns."""
+    if path.endswith(".csv"):
+        df = pd.read_csv(path, low_memory=False)
+    else:
+        try:
+            df = pd.read_parquet(path)
+        except Exception as e:
+            raise ValueError("Unsupported file format. Please provide a .csv or .parquet file.")
+
     df["departure_date_utc"] = pd.to_datetime(df.departure_date_utc)
     df["travel_year_month"] = pd.to_datetime(
         df.apply(
@@ -23,8 +30,14 @@ def load_flight_data(path):
 
 
 def load_offer_data(path):
-    """Load bid offer CSVs and normalize column names and categorical fields."""
-    df = pd.read_csv(path, low_memory=False)
+    """Load bid offer CSVs or Parquets and normalize column names and categorical fields."""
+    if path.endswith(".csv"):
+        df = pd.read_csv(path, low_memory=False)
+    else:
+        try:
+            df = pd.read_parquet(path)
+        except Exception as e:
+            raise ValueError("Unsupported file format. Please provide a .csv or .parquet file.")
     df = df.rename(
         columns={
             "operating_carrier": "carrier_code",
@@ -44,12 +57,13 @@ def load_offer_data(path):
     )
     for col in ["flight_number", "travel_year", "travel_month", "travel_dow"]:
         df[col] = pd.Categorical(df[col])
+    df = df.reset_index(drop=True)
     return df
 
 
 def preprocess_data(df_flights, df_offers):
     """Join flight and offer datasets and engineer shared temporal features."""
-    df_flights_ = df_flights.drop(columns=["equip"]).drop_duplicates(
+    df_flights_ = df_flights.drop(columns=["equip"], errors='ignore').drop_duplicates(
         subset=[
             "carrier_code",
             "flight_number",
@@ -106,11 +120,11 @@ def preprocess_data(df_flights, df_offers):
     data["departure_local_date_time"] = pd.to_datetime(
         data["departure_local_date_time"]
     )
-    data["departure_timestamp"] = pd.to_datetime(
-        data[["travel_dt", "dep_tm"]].apply(
-            lambda x: x["travel_dt"] + " " + x["dep_tm"], axis=1
-        )
-    )
+
+    dates = pd.to_datetime(data["travel_date"], errors="coerce")
+    times = pd.to_timedelta(data["dep_tm"], errors="coerce")
+    data["departure_timestamp"] = dates + times
+
     data["departure_timestamp_utc"] = data["departure_timestamp"] - pd.to_timedelta(
         data["utc_diff"], "m"
     )
@@ -127,7 +141,7 @@ def preprocess_data(df_flights, df_offers):
         axis=1,
     )
     data = data[data.instant_upgrade == 0].reset_index(drop=True)
-    data["usd_base_amount"] = (data["base_amount"] * data["inverse_rate"]).round(2)
+    data["usd_base_amount"] = (data["base_amount"].astype(float) * data["inverse_rate"].astype(float)).round(2)
     data["flight_number"] = pd.Categorical(data["flight_number"])
     return data
 
