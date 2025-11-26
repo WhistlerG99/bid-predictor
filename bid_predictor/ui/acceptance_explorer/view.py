@@ -1,0 +1,354 @@
+"""Callbacks and helpers for the acceptance probability explorer tab."""
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Tuple
+
+import pandas as pd
+from dash import Dash, Input, Output, State, html, no_update
+
+from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
+from ..formatting import prepare_bid_record
+from ..plotting import build_prediction_plot
+from ..tables import build_bid_table
+
+@lru_cache(maxsize=4)
+def load_acceptance_dataset(path: str) -> pd.DataFrame:
+    """Load a CSV or parquet dataset containing acceptance probabilities.
+
+    The loader accepts either a single file path or a directory containing one
+    or more CSV/parquet files. Acceptance probability and snapshot metadata are
+    inferred when missing to align with the snapshot-style UI.
+    """
+
+    resolved = Path(path).expanduser()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Dataset path does not exist: {resolved}")
+
+    files: List[Path]
+    if resolved.is_dir():
+        parquet_files = sorted(resolved.glob("*.parquet")) + sorted(resolved.glob("*.pq"))
+        csv_files = sorted(resolved.glob("*.csv"))
+        files = parquet_files + csv_files
+        if not files:
+            raise ValueError(
+                "No parquet or CSV files found in the provided directory."
+            )
+    else:
+        files = [resolved]
+
+    frames: List[pd.DataFrame] = []
+    for file_path in files:
+        suffix = file_path.suffix.lower()
+        if suffix in {".parquet", ".pq"}:
+            frames.append(pd.read_parquet(file_path))
+        elif suffix == ".csv":
+            frames.append(pd.read_csv(file_path))
+        else:
+            raise ValueError(f"Unsupported file extension for {file_path}")
+
+    dataset = pd.concat(frames, ignore_index=True, sort=False)
+    if dataset.empty:
+        raise ValueError("The loaded dataset is empty.")
+
+    if "accept_prob_timestamp" in dataset.columns:
+        timestamps = pd.to_datetime(dataset["accept_prob_timestamp"], errors="coerce")
+        dataset["current_timestamp"] = timestamps
+        if "snapshot_num" not in dataset.columns:
+            ordered = sorted({ts for ts in timestamps.dropna().unique()})
+            mapping = {value: idx + 1 for idx, value in enumerate(ordered)}
+            dataset["snapshot_num"] = timestamps.map(mapping)
+    if "Bid #" not in dataset.columns and "offer_id" in dataset.columns:
+        dataset["Bid #"] = pd.factorize(dataset["offer_id"])[0] + 1
+    if "travel_date" not in dataset.columns and "departure_timestamp" in dataset.columns:
+        dataset["travel_date"] = pd.to_datetime(
+            dataset["departure_timestamp"], errors="coerce"
+        ).dt.date
+    if "Acceptance Probability" not in dataset.columns and "acceptance_prob" in dataset.columns:
+        dataset["Acceptance Probability"] = dataset["acceptance_prob"]
+
+    dataset["offer_status"] = dataset.get("offer_status", "pending")
+    return dataset
+
+
+def _options_from_series(values: pd.Series) -> List[dict]:
+    return [
+        {"label": str(value), "value": str(value)}
+        for value in values.dropna().drop_duplicates().sort_values()
+    ]
+
+
+def _build_summary(
+    carrier: Optional[str],
+    flight_number: Optional[str],
+    travel_date: Optional[str],
+    upgrade: Optional[str],
+) -> html.Div:
+    return html.Ul(
+        [
+            html.Li(f"Carrier: {carrier}") if carrier else html.Li("Carrier not set"),
+            html.Li(f"Flight: {flight_number}")
+            if flight_number
+            else html.Li("Flight not set"),
+            html.Li(f"Travel date: {travel_date}")
+            if travel_date
+            else html.Li("Travel date not set"),
+            html.Li(f"Upgrade type: {upgrade}")
+            if upgrade
+            else html.Li("Upgrade type not set"),
+        ],
+        style={"paddingLeft": "1.2rem", "margin": "0"},
+    )
+
+
+def _prepare_records(snapshot_df: pd.DataFrame) -> List[Dict[str, object]]:
+    records: List[Dict[str, object]] = []
+    for record in snapshot_df.to_dict("records"):
+        cleaned = dict(record)
+        if "Acceptance Probability" not in cleaned:
+            cleaned["Acceptance Probability"] = cleaned.get("acceptance_prob")
+        records.append(prepare_bid_record(cleaned))
+    return records
+
+
+def _build_predictions(records: Sequence[Dict[str, object]]) -> Dict[str, object]:
+    probability_map: Dict[str, object] = {}
+    for idx, record in enumerate(records):
+        probability_map[f"bid_{idx}"] = record.get("Acceptance Probability")
+    return {"probabilities": probability_map, "derived_features": []}
+
+
+def _render_table(
+    records: Optional[List[Dict[str, object]]],
+    predictions: Dict[str, object],
+    feature_config: Optional[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
+    columns, data_rows, style_rules = build_bid_table(
+        records,
+        predictions,
+        feature_config=feature_config,
+        derived_feature_values=[],
+        show_comp_features=False,
+    )
+    for column in columns:
+        column["editable"] = False
+    for column in columns:
+        style_rules.append(
+            {"if": {"column_id": column.get("id")}, "pointerEvents": "none"}
+        )
+    return columns, data_rows, style_rules
+
+
+def register_acceptance_callbacks(app: Dash) -> None:
+    """Register callbacks for loading and viewing acceptance datasets."""
+
+    @app.callback(
+        Output("acceptance-carrier-dropdown", "options"),
+        Output("acceptance-carrier-dropdown", "value"),
+        Input("acceptance-dataset-path-store", "data"),
+    )
+    def populate_carriers(dataset_path: Optional[str]):
+        if not dataset_path:
+            return [], None
+        dataset = load_acceptance_dataset(dataset_path)
+        if "carrier_code" not in dataset.columns:
+            return [], None
+        options = _options_from_series(dataset["carrier_code"])
+        return options, options[0]["value"] if options else None
+
+    @app.callback(
+        Output("acceptance-flight-number-dropdown", "options"),
+        Output("acceptance-flight-number-dropdown", "value"),
+        Input("acceptance-carrier-dropdown", "value"),
+        State("acceptance-dataset-path-store", "data"),
+    )
+    def populate_flights(carrier: Optional[str], dataset_path: Optional[str]):
+        if not dataset_path or not carrier:
+            return [], None
+        dataset = load_acceptance_dataset(dataset_path)
+        if not {"carrier_code", "flight_number"}.issubset(dataset.columns):
+            return [], None
+        mask = dataset["carrier_code"] == carrier
+        options = _options_from_series(dataset.loc[mask, "flight_number"].astype(str))
+        return options, options[0]["value"] if options else None
+
+    @app.callback(
+        Output("acceptance-travel-date-dropdown", "options"),
+        Output("acceptance-travel-date-dropdown", "value"),
+        Input("acceptance-flight-number-dropdown", "value"),
+        State("acceptance-carrier-dropdown", "value"),
+        State("acceptance-dataset-path-store", "data"),
+    )
+    def populate_travel_dates(
+        flight_number: Optional[str],
+        carrier: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path or not carrier or not flight_number:
+            return [], None
+        dataset = load_acceptance_dataset(dataset_path)
+        if "travel_date" not in dataset.columns:
+            return [], None
+        mask = (
+            (dataset["carrier_code"] == carrier)
+            & (dataset["flight_number"].astype(str) == str(flight_number))
+        )
+        travel_dates = pd.to_datetime(dataset.loc[mask, "travel_date"], errors="coerce")
+        options = [
+            {"label": date.strftime("%Y-%m-%d"), "value": date.strftime("%Y-%m-%d")}
+            for date in travel_dates.dropna().drop_duplicates().sort_values()
+        ]
+        return options, options[0]["value"] if options else None
+
+    @app.callback(
+        Output("acceptance-upgrade-dropdown", "options"),
+        Output("acceptance-upgrade-dropdown", "value"),
+        Input("acceptance-travel-date-dropdown", "value"),
+        State("acceptance-carrier-dropdown", "value"),
+        State("acceptance-flight-number-dropdown", "value"),
+        State("acceptance-dataset-path-store", "data"),
+    )
+    def populate_upgrades(
+        travel_date: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path or not carrier or not flight_number or not travel_date:
+            return [], None
+        dataset = load_acceptance_dataset(dataset_path)
+        if "upgrade_type" not in dataset.columns:
+            return [], None
+        travel_date_dt = pd.to_datetime(travel_date).date()
+        mask = (
+            (dataset["carrier_code"] == carrier)
+            & (dataset["flight_number"].astype(str) == str(flight_number))
+            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
+        )
+        options = _options_from_series(dataset.loc[mask, "upgrade_type"])
+        return options, options[0]["value"] if options else None
+
+    @app.callback(
+        Output("acceptance-snapshot-dropdown", "options"),
+        Output("acceptance-snapshot-dropdown", "value"),
+        Input("acceptance-upgrade-dropdown", "value"),
+        State("acceptance-carrier-dropdown", "value"),
+        State("acceptance-flight-number-dropdown", "value"),
+        State("acceptance-travel-date-dropdown", "value"),
+        State("acceptance-dataset-path-store", "data"),
+    )
+    def populate_snapshots(
+        upgrade: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        travel_date: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        if not dataset_path or not carrier or not flight_number or not travel_date or not upgrade:
+            return [], None
+        dataset = load_acceptance_dataset(dataset_path)
+        if "snapshot_num" not in dataset.columns:
+            return [], None
+        travel_date_dt = pd.to_datetime(travel_date).date()
+        mask = (
+            (dataset["carrier_code"] == carrier)
+            & (dataset["flight_number"].astype(str) == str(flight_number))
+            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
+            & (dataset["upgrade_type"] == upgrade)
+        )
+        snapshots = dataset.loc[mask, "snapshot_num"].astype(str)
+        options = _options_from_series(snapshots)
+        return options, options[0]["value"] if options else None
+
+    @app.callback(
+        Output("acceptance-flight-summary", "children"),
+        Output("acceptance-prediction-graph", "figure"),
+        Output("acceptance-warning", "children"),
+        Output("acceptance-bid-table", "columns"),
+        Output("acceptance-bid-table", "data"),
+        Output("acceptance-bid-table", "style_data_conditional"),
+        Output("acceptance-table-feedback", "children"),
+        Input("acceptance-snapshot-dropdown", "value"),
+        State("acceptance-carrier-dropdown", "value"),
+        State("acceptance-flight-number-dropdown", "value"),
+        State("acceptance-travel-date-dropdown", "value"),
+        State("acceptance-upgrade-dropdown", "value"),
+        State("acceptance-dataset-path-store", "data"),
+    )
+    def render_view(
+        snapshot_value: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        travel_date: Optional[str],
+        upgrade_type: Optional[str],
+        dataset_path: Optional[str],
+    ):
+        summary = _build_summary(carrier, flight_number, travel_date, upgrade_type)
+        if not dataset_path:
+            return summary, build_prediction_plot(pd.DataFrame()), "Load a dataset to begin.", no_update, [], [], ""
+
+        if not all([carrier, flight_number, travel_date, upgrade_type]):
+            return summary, build_prediction_plot(pd.DataFrame()), "", no_update, [], [], "Select a carrier, flight, travel date, and upgrade type."
+
+        dataset = load_acceptance_dataset(dataset_path)
+        required_columns = {
+            "carrier_code",
+            "flight_number",
+            "travel_date",
+            "upgrade_type",
+        }
+        if not required_columns.issubset(dataset.columns):
+            empty_fig = build_prediction_plot(pd.DataFrame())
+            return (
+                summary,
+                empty_fig,
+                "Dataset is missing required columns for this view.",
+                no_update,
+                [],
+                [],
+                "",
+            )
+
+        travel_date_dt = pd.to_datetime(travel_date).date()
+        mask = (
+            (dataset["carrier_code"] == carrier)
+            & (dataset["flight_number"].astype(str) == str(flight_number))
+            & (pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt)
+            & (dataset["upgrade_type"] == upgrade_type)
+        )
+        subset = dataset.loc[mask].copy()
+        if subset.empty:
+            empty_fig = build_prediction_plot(pd.DataFrame())
+            return summary, empty_fig, "No rows found for the selected flight.", no_update, [], [], ""
+
+        subset["snapshot_num"] = subset.get("snapshot_num").astype(str)
+        subset["Acceptance Probability"] = subset.get(
+            "Acceptance Probability", subset.get("acceptance_prob")
+        )
+        graph_df = subset.copy()
+        if "accept_prob_timestamp" in graph_df.columns and "current_timestamp" not in graph_df.columns:
+            graph_df["current_timestamp"] = pd.to_datetime(
+                graph_df["accept_prob_timestamp"], errors="coerce"
+            )
+
+        figure = build_prediction_plot(graph_df)
+        warning = "" if snapshot_value else "Select a snapshot to view bid details."
+
+        if not snapshot_value:
+            return summary, figure, warning, no_update, [], [], ""
+
+        snapshot_df = subset.loc[subset["snapshot_num"] == str(snapshot_value)].copy()
+        if snapshot_df.empty:
+            return summary, figure, "No rows found for the selected snapshot.", no_update, [], [], ""
+
+        records = _prepare_records(snapshot_df)
+        predictions = _build_predictions(records)
+        columns, data_rows, style_rules = _render_table(
+            records, predictions, DEFAULT_UI_FEATURE_CONFIG
+        )
+
+        return summary, figure, warning, columns, data_rows, style_rules, ""
+
+
+__all__ = ["register_acceptance_callbacks", "load_acceptance_dataset"]
