@@ -137,6 +137,9 @@ def build_bid_table(
             elif feature == "days_before_departure":
                 numeric = safe_float(value)
                 row[column_id] = round(numeric, 4) if numeric is not None else value
+            elif feature == "hours_before_departure":
+                numeric = safe_float(value)
+                row[column_id] = round(numeric, 4) if numeric is not None else value
             elif feature == "usd_base_amount":
                 numeric = safe_float(value)
                 row[column_id] = round(numeric, 2) if numeric is not None else value

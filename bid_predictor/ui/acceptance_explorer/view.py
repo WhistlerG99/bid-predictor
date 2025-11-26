@@ -19,6 +19,7 @@ _ACCEPTANCE_TABLE_FEATURES = [
     "offer_id",
     "conf_num",
     "days_before_departure",
+    "hours_before_departure",
     "seats_available",
     "created_timestamp",
     "usd_base_amount_25%",
@@ -33,18 +34,27 @@ _ACCEPTANCE_TABLE_FEATURES = [
 
 def _acceptance_feature_config() -> Dict[str, List[str]]:
     config = deepcopy(DEFAULT_UI_FEATURE_CONFIG)
-    display_features = []
+    priority_features = ["offer_id", "conf_num"]
+    tail_features = ["hours_before_departure", "Current Time", "Acceptance Probability"]
+
+    display_features: List[str] = []
     seen: set[str] = set()
-    for feature in list(config.get("display_features", [])) + _ACCEPTANCE_TABLE_FEATURES:
+
+    for feature in priority_features:
         if feature in seen:
             continue
         seen.add(feature)
         display_features.append(feature)
-    tail_features = ["Current Time", "Acceptance Probability"]
-    display_features = [feature for feature in display_features if feature not in tail_features]
+
+    base_candidates = list(config.get("display_features", [])) + _ACCEPTANCE_TABLE_FEATURES
+    for feature in base_candidates:
+        if feature in tail_features or feature in seen:
+            continue
+        seen.add(feature)
+        display_features.append(feature)
+
     for feature in tail_features:
         if feature in seen:
-            display_features.append(feature)
             continue
         seen.add(feature)
         display_features.append(feature)
@@ -168,6 +178,9 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
         dataset["travel_date"] = pd.to_datetime(
             dataset["departure_timestamp"], errors="coerce"
         ).dt.date
+    if "hours_before_departure" not in dataset.columns and "days_before_departure" in dataset.columns:
+        days = pd.to_numeric(dataset["days_before_departure"], errors="coerce")
+        dataset["hours_before_departure"] = days * 24
     if "Bid #" not in dataset.columns and "offer_id" in dataset.columns:
         group_keys = [
             key
@@ -438,6 +451,7 @@ def register_acceptance_callbacks(app: Dash) -> None:
         return options, options[0]["value"] if options else None
 
     @app.callback(
+        Output("acceptance-departure-timestamp", "children"),
         Output("acceptance-origination-code", "children"),
         Output("acceptance-destination-code", "children"),
         Input("acceptance-dataset-path-store", "data"),
@@ -454,11 +468,11 @@ def register_acceptance_callbacks(app: Dash) -> None:
         upgrade: Optional[str],
     ):
         if not dataset_path or not carrier or not flight_number:
-            return "–", "–"
+            return "–", "–", "–"
 
         dataset = load_acceptance_dataset(dataset_path)
         if not {"carrier_code", "flight_number"}.issubset(dataset.columns):
-            return "–", "–"
+            return "–", "–", "–"
 
         mask = (dataset["carrier_code"] == carrier) & (
             dataset["flight_number"].astype(str) == str(flight_number)
@@ -471,11 +485,14 @@ def register_acceptance_callbacks(app: Dash) -> None:
 
         subset = dataset.loc[mask]
         if subset.empty:
-            return "–", "–"
+            return "–", "–", "–"
 
         origin = subset.iloc[0].get("origination_code", "–")
         destination = subset.iloc[0].get("destination_code", "–")
-        return origin or "–", destination or "–"
+        departure = subset.iloc[0].get("departure_timestamp", "–")
+        if hasattr(departure, "isoformat"):
+            departure = departure.isoformat()
+        return departure or "–", origin or "–", destination or "–"
 
     @app.callback(
         Output("acceptance-flight-summary", "children"),

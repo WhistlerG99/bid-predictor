@@ -71,6 +71,14 @@ def _build_filter_card() -> html.Div:
             ),
             html.Div(
                 [
+                    html.Label(
+                        "Departure timestamp", style={"fontWeight": "600"}
+                    ),
+                    html.Div(
+                        id="acceptance-departure-timestamp",
+                        style={"padding": "0.4rem 0", "color": "#16324f"},
+                        children="–",
+                    ),
                     html.Label("Origination", style={"fontWeight": "600"}),
                     html.Div(
                         id="acceptance-origination-code",
