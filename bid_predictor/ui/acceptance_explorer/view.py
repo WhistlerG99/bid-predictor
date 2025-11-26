@@ -307,8 +307,11 @@ def _render_table(
         style_rules.append(
             {"if": {"column_id": column.get("id")}, "pointerEvents": "none"}
         )
-    style_rules.insert(
-        0, {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4f6"}
+    style_rules.append(
+        {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4f6"}
+    )
+    style_rules.append(
+        {"if": {"row_index": "even"}, "backgroundColor": "#ffffff"}
     )
     return columns, data_rows, style_rules
 
@@ -562,6 +565,9 @@ def register_acceptance_callbacks(app: Dash) -> None:
 
         snapshot_df = subset.loc[subset["snapshot_num"] == str(snapshot_value)].copy()
         snapshot_df = snapshot_df.reset_index(drop=True)
+        if "Bid #" in snapshot_df.columns:
+            snapshot_df = snapshot_df.sort_values("Bid #", kind="mergesort")
+            snapshot_df = snapshot_df.reset_index(drop=True)
         if snapshot_df.empty:
             return summary, figure, "No rows found for the selected snapshot.", no_update, [], [], ""
 
