@@ -27,6 +27,7 @@ _ACCEPTANCE_TABLE_FEATURES = [
     "usd_base_amount_max",
     "num_offers",
     "bid_rank",
+    "Current Time",
 ]
 
 
@@ -36,6 +37,14 @@ def _acceptance_feature_config() -> Dict[str, List[str]]:
     seen: set[str] = set()
     for feature in list(config.get("display_features", [])) + _ACCEPTANCE_TABLE_FEATURES:
         if feature in seen:
+            continue
+        seen.add(feature)
+        display_features.append(feature)
+    tail_features = ["Current Time", "Acceptance Probability"]
+    display_features = [feature for feature in display_features if feature not in tail_features]
+    for feature in tail_features:
+        if feature in seen:
+            display_features.append(feature)
             continue
         seen.add(feature)
         display_features.append(feature)
@@ -230,6 +239,15 @@ def _prepare_records(snapshot_df: pd.DataFrame) -> List[Dict[str, object]]:
         cleaned = dict(record)
         if "Acceptance Probability" not in cleaned:
             cleaned["Acceptance Probability"] = cleaned.get("acceptance_prob")
+        if "Current Time" not in cleaned:
+            cleaned["Current Time"] = cleaned.get("current_timestamp") or cleaned.get(
+                "accept_prob_timestamp"
+            )
+        current_value = cleaned.get("Current Time")
+        if pd.isna(current_value):
+            cleaned["Current Time"] = ""
+        elif hasattr(current_value, "isoformat"):
+            cleaned["Current Time"] = current_value.isoformat()
         records.append(prepare_bid_record(cleaned))
     return records
 
@@ -251,11 +269,20 @@ def _render_table(
     predictions: Dict[str, object],
     feature_config: Optional[Dict[str, object]],
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[Dict[str, object]]]:
+    probability_map: Dict[str, object] = {}
+    derived_values = None
+    if isinstance(predictions, dict):
+        if "probabilities" in predictions or "derived_features" in predictions:
+            probability_map = dict(predictions.get("probabilities", {}))
+            derived_values = predictions.get("derived_features")
+        else:
+            probability_map = dict(predictions)
+
     columns, data_rows, style_rules = build_bid_table(
         records,
-        predictions,
+        probability_map,
         feature_config=feature_config,
-        derived_feature_values=[],
+        derived_feature_values=derived_values,
         show_comp_features=True,
     )
     for column in columns:
@@ -264,6 +291,9 @@ def _render_table(
         style_rules.append(
             {"if": {"column_id": column.get("id")}, "pointerEvents": "none"}
         )
+    style_rules.insert(
+        0, {"if": {"row_index": "odd"}, "backgroundColor": "#f3f4f6"}
+    )
     return columns, data_rows, style_rules
 
 
@@ -493,6 +523,15 @@ def register_acceptance_callbacks(app: Dash) -> None:
         subset["Acceptance Probability"] = subset.get(
             "Acceptance Probability", subset.get("acceptance_prob")
         )
+        if "Current Time" not in subset.columns:
+            if "accept_prob_timestamp" in subset.columns:
+                subset["Current Time"] = pd.to_datetime(
+                    subset["accept_prob_timestamp"], errors="coerce"
+                ).dt.strftime("%Y-%m-%d %H:%M:%S").fillna("")
+            elif "current_timestamp" in subset.columns:
+                subset["Current Time"] = pd.to_datetime(
+                    subset["current_timestamp"], errors="coerce"
+                ).dt.strftime("%Y-%m-%d %H:%M:%S").fillna("")
         graph_df = subset.copy()
         if "accept_prob_timestamp" in graph_df.columns and "current_timestamp" not in graph_df.columns:
             graph_df["current_timestamp"] = pd.to_datetime(
