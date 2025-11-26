@@ -24,16 +24,16 @@ def _list_remote_files(filesystem: pyfs.FileSystem, uri: str) -> List[str]:
     if info.type == pyfs.FileType.NotFound:
         raise FileNotFoundError(f"Dataset path does not exist: {uri}")
 
-    if info.is_file:
+    if info.type == pyfs.FileType.File:
         return [relative_path]
 
-    if info.is_dir:
+    if info.type == pyfs.FileType.Directory:
         selector = pyfs.FileSelector(relative_path, recursive=False)
         entries = filesystem.get_file_info(selector)
         files = [
             entry.path
             for entry in entries
-            if entry.is_file
+            if entry.type == pyfs.FileType.File
             and PurePosixPath(entry.path).suffix.lower() in {".parquet", ".pq", ".csv"}
         ]
         if not files:
