@@ -4,7 +4,7 @@ from .constants import (
     USD_MAX_COLUMN,
     USD_PERCENT_COLUMNS,
 )
-from ..data import (
+from .data import (
     load_dataset_cached,
     load_model_cached,
     prepare_prediction_dataframe,
