@@ -116,6 +116,14 @@ def build_bid_table(
                     except (TypeError, ValueError):
                         row[column_id] = value
                 continue
+            if feature == "Current Time":
+                timestamp_value = record.get("Current Time")
+                if timestamp_value is None:
+                    timestamp_value = record.get("current_timestamp") or record.get(
+                        "accept_prob_timestamp"
+                    )
+                row[column_id] = timestamp_value
+                continue
 
             value = record.get(feature)
             if feature == "fare_class":
@@ -124,6 +132,12 @@ def build_bid_table(
                 numeric = safe_float(value)
                 row[column_id] = int(numeric) if numeric is not None else value
             elif feature == "offer_time":
+                numeric = safe_float(value)
+                row[column_id] = round(numeric, 4) if numeric is not None else value
+            elif feature == "days_before_departure":
+                numeric = safe_float(value)
+                row[column_id] = round(numeric, 4) if numeric is not None else value
+            elif feature == "hours_before_departure":
                 numeric = safe_float(value)
                 row[column_id] = round(numeric, 4) if numeric is not None else value
             elif feature == "usd_base_amount":

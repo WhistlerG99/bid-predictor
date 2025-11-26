@@ -9,14 +9,21 @@ import pandas as pd
 
 INPUT_DIR = "/opt/ml/processing/input"
 OUTPUT_DIR = "/opt/ml/processing/output"
-MODEL_CONFIG_DIR = "/opt/ml/processing/model_config"  # CHANGED: new directory for model_config.json
+MODEL_CONFIG_DIR = (
+    "/opt/ml/processing/model_config"  # CHANGED: new directory for model_config.json
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # These will be passed via env from pipeline_setup.py
-MODEL_BUCKET = os.getenv("MODEL_BUCKET", "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8")
-MODEL_BASE_PREFIX = os.getenv("MODEL_BASE_PREFIX", "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev")  # e.g. "dzd_.../dev"
+MODEL_BUCKET = os.getenv(
+    "MODEL_BUCKET", "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
+)
+MODEL_BASE_PREFIX = os.getenv(
+    "MODEL_BASE_PREFIX", "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
+)  # e.g. "dzd_.../dev"
+
 
 def select_model_for_carrier(carrier_code: str) -> str:
     """
@@ -50,7 +57,7 @@ def select_model_for_carrier(carrier_code: str) -> str:
         prefix_str = f"bid-predictor-{carrier_code}-"
         if not model_dir.startswith(prefix_str):
             continue
-        ts_str = model_dir[len(prefix_str):]  # "YYYY-mm-dd-HH-MM-SS"
+        ts_str = model_dir[len(prefix_str) :]  # "YYYY-mm-dd-HH-MM-SS"
 
         candidates.append((ts_str, key))
 
@@ -80,7 +87,7 @@ def main():
     suffix = ".parquet"
     if not (basename.startswith(prefix) and basename.endswith(suffix)):
         raise ValueError(f"Unexpected parquet filename format: {basename}")
-    timestamp_str = basename[len(prefix):-len(suffix)]
+    timestamp_str = basename[len(prefix) : -len(suffix)]
     logger.info(f"Parsed file timestamp: {timestamp_str}")
 
     df = pd.read_parquet(parquet_file)
@@ -110,7 +117,9 @@ def main():
         axis=1,
     )
     df["snapshot_num"] = 1
-    df["current_timestamp"] = pd.Timestamp.now().round(freq="s")
+    df["current_timestamp"] = (
+        pd.Timestamp.now("utc").round(freq="s") + pd.to_timedelta(df["utc_diff"], "m")
+    ).dt.tz_localize(None)
     df["file_timestamp"] = timestamp_str
 
     for c in ["travel_date", "departure_timestamp"]:

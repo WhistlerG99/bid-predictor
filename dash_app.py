@@ -23,6 +23,11 @@ from bid_predictor.ui.feature_sensitivity import (
     build_feature_sensitivity_tab,
     register_feature_sensitivity_callbacks,
 )
+from bid_predictor.ui.acceptance_explorer import (
+    build_acceptance_tab,
+    load_acceptance_dataset,
+    register_acceptance_callbacks,
+)
 from bid_predictor.ui.snapshot import (
     build_snapshot_tab,
     register_snapshot_callbacks,
@@ -73,105 +78,180 @@ def create_app() -> Dash:
                 [
                     html.Div(
                         [
-                            html.Label("Dataset path", style={"fontWeight": "600"}),
-                            dcc.Input(
-                                id="dataset-path",
-                                type="text",
-                                value=default_dataset_path,
-                                placeholder="Path to bid_data_snapshots_v2.parquet",
-                                style={"width": "100%", "marginBottom": "0.5rem"},
-                            ),
-                            html.Button(
-                                "Load dataset",
-                                id="load-dataset",
-                                n_clicks=0,
+                            html.Div(
+                                [
+                                    html.Label(
+                                        "Dataset path", style={"fontWeight": "600"}
+                                    ),
+                                    dcc.Input(
+                                        id="dataset-path",
+                                        type="text",
+                                        value=default_dataset_path,
+                                        placeholder="Path to bid_data_snapshots_v2.parquet",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Button(
+                                        "Load dataset",
+                                        id="load-dataset",
+                                        n_clicks=0,
+                                        style={
+                                            "width": "100%",
+                                            "backgroundColor": "#1b4965",
+                                            "color": "white",
+                                            "border": "none",
+                                            "padding": "0.6rem",
+                                            "borderRadius": "6px",
+                                        },
+                                    ),
+                                    html.Div(
+                                        id="dataset-status",
+                                        className="status-message",
+                                        style={"marginTop": "0.5rem"},
+                                    ),
+                                ],
                                 style={
-                                    "width": "100%",
-                                    "backgroundColor": "#1b4965",
-                                    "color": "white",
-                                    "border": "none",
-                                    "padding": "0.6rem",
-                                    "borderRadius": "6px",
+                                    "flex": "1",
+                                    "padding": "1rem",
+                                    "backgroundColor": "#f7fff7",
+                                    "borderRadius": "12px",
+                                    "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.05)",
                                 },
                             ),
                             html.Div(
-                                id="dataset-status",
-                                className="status-message",
-                                style={"marginTop": "0.5rem"},
+                                [
+                                    html.Label(
+                                        "MLflow tracking URI",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="mlflow-tracking-uri",
+                                        type="text",
+                                        value=mlflow.get_tracking_uri(),
+                                        placeholder="http://localhost:5000",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Label("Model name", style={"fontWeight": "600"}),
+                                    dcc.Input(
+                                        id="model-name",
+                                        type="text",
+                                        placeholder="Registered model name",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Label(
+                                        "Model stage or version",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="model-stage",
+                                        type="text",
+                                        placeholder="e.g. Production or 5",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Button(
+                                        "Load model",
+                                        id="load-model",
+                                        n_clicks=0,
+                                        style={
+                                            "width": "100%",
+                                            "backgroundColor": "#ff6b6b",
+                                            "color": "white",
+                                            "border": "none",
+                                            "padding": "0.6rem",
+                                            "borderRadius": "6px",
+                                        },
+                                    ),
+                                    html.Div(
+                                        id="model-status",
+                                        className="status-message",
+                                        style={"marginTop": "0.5rem"},
+                                    ),
+                                ],
+                                style={
+                                    "flex": "1",
+                                    "padding": "1rem",
+                                    "backgroundColor": "#f7fff7",
+                                    "borderRadius": "12px",
+                                    "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.05)",
+                                },
                             ),
                         ],
+                        id="standard-controls",
                         style={
-                            "flex": "1",
-                            "padding": "1rem",
-                            "backgroundColor": "#f7fff7",
-                            "borderRadius": "12px",
-                            "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.05)",
+                            "display": "flex",
+                            "flexWrap": "wrap",
+                            "gap": "1.5rem",
+                            "marginBottom": "1.5rem",
                         },
                     ),
                     html.Div(
                         [
-                            html.Label(
-                                "MLflow tracking URI", style={"fontWeight": "600"}
-                            ),
-                            dcc.Input(
-                                id="mlflow-tracking-uri",
-                                type="text",
-                                value=mlflow.get_tracking_uri(),
-                                placeholder="http://localhost:5000",
-                                style={"width": "100%", "marginBottom": "0.5rem"},
-                            ),
-                            html.Label("Model name", style={"fontWeight": "600"}),
-                            dcc.Input(
-                                id="model-name",
-                                type="text",
-                                placeholder="Registered model name",
-                                style={"width": "100%", "marginBottom": "0.5rem"},
-                            ),
-                            html.Label(
-                                "Model stage or version", style={"fontWeight": "600"}
-                            ),
-                            dcc.Input(
-                                id="model-stage",
-                                type="text",
-                                placeholder="e.g. Production or 5",
-                                style={"width": "100%", "marginBottom": "0.5rem"},
-                            ),
-                            html.Button(
-                                "Load model",
-                                id="load-model",
-                                n_clicks=0,
+                            html.Div(
+                                [
+                                    html.Label(
+                                        "Acceptance dataset path",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="acceptance-dataset-path",
+                                        type="text",
+                                        placeholder="Path to acceptance probability data",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Button(
+                                        "Load acceptance dataset",
+                                        id="load-acceptance-dataset",
+                                        n_clicks=0,
+                                        style={
+                                            "width": "100%",
+                                            "backgroundColor": "#1b4965",
+                                            "color": "white",
+                                            "border": "none",
+                                            "padding": "0.6rem",
+                                            "borderRadius": "6px",
+                                        },
+                                    ),
+                                    html.Div(
+                                        id="acceptance-dataset-status",
+                                        className="status-message",
+                                        style={"marginTop": "0.5rem"},
+                                    ),
+                                ],
                                 style={
-                                    "width": "100%",
-                                    "backgroundColor": "#ff6b6b",
-                                    "color": "white",
-                                    "border": "none",
-                                    "padding": "0.6rem",
-                                    "borderRadius": "6px",
+                                    "flex": "1",
+                                    "padding": "1rem",
+                                    "backgroundColor": "#f7fff7",
+                                    "borderRadius": "12px",
+                                    "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.05)",
                                 },
                             ),
-                            html.Div(
-                                id="model-status",
-                                className="status-message",
-                                style={"marginTop": "0.5rem"},
-                            ),
                         ],
+                        id="acceptance-controls",
                         style={
-                            "flex": "1",
-                            "padding": "1rem",
-                            "backgroundColor": "#f7fff7",
-                            "borderRadius": "12px",
-                            "boxShadow": "0 2px 8px rgba(0, 0, 0, 0.05)",
+                            "display": "none",
+                            "flexWrap": "wrap",
+                            "gap": "1.5rem",
+                            "marginBottom": "1.5rem",
                         },
                     ),
                 ],
-                style={
-                    "display": "flex",
-                    "flexWrap": "wrap",
-                    "gap": "1.5rem",
-                    "marginBottom": "1.5rem",
-                },
             ),
             dcc.Store(id="dataset-path-store"),
+            dcc.Store(id="acceptance-dataset-path-store"),
             dcc.Store(id="model-uri-store"),
             dcc.Store(id="bid-records-store"),
             dcc.Store(id="snapshot-meta-store"),
@@ -196,6 +276,7 @@ def create_app() -> Dash:
                 children=[
                     build_snapshot_tab(),
                     build_feature_sensitivity_tab(),
+                    build_acceptance_tab(),
                 ],
                 style={"marginTop": "1rem"},
             ),
@@ -209,8 +290,32 @@ def create_app() -> Dash:
 
     register_snapshot_callbacks(app)
     register_feature_sensitivity_callbacks(app)
+    register_acceptance_callbacks(app)
 
     # Callbacks -----------------------------------------------------------------------------
+
+    @app.callback(
+        Output("standard-controls", "style"),
+        Output("acceptance-controls", "style"),
+        Input("main-tabs", "value"),
+    )
+    def toggle_control_panels(active_tab: str):
+        standard_style = {
+            "display": "flex",
+            "flexWrap": "wrap",
+            "gap": "1.5rem",
+            "marginBottom": "1.5rem",
+        }
+        acceptance_style = {
+            "display": "none",
+            "flexWrap": "wrap",
+            "gap": "1.5rem",
+            "marginBottom": "1.5rem",
+        }
+        if active_tab == "acceptance":
+            standard_style["display"] = "none"
+            acceptance_style["display"] = "flex"
+        return standard_style, acceptance_style
 
     @app.callback(
         Output("dataset-status", "children"),
@@ -230,6 +335,24 @@ def create_app() -> Dash:
 
         status = f"Loaded dataset with {len(dataset):,} rows."
         return status, path
+
+    @app.callback(
+        Output("acceptance-dataset-status", "children"),
+        Output("acceptance-dataset-path-store", "data"),
+        Input("load-acceptance-dataset", "n_clicks"),
+        State("acceptance-dataset-path", "value"),
+        prevent_initial_call=True,
+    )
+    def load_acceptance_dataset_path(n_clicks: int, path: str):
+        if not path:
+            return "Please provide a dataset path.", None
+
+        try:
+            dataset = load_acceptance_dataset(path)
+        except Exception as exc:  # pragma: no cover - user feedback
+            return f"Failed to load acceptance dataset: {exc}", None
+
+        return f"Loaded acceptance dataset with {len(dataset):,} rows.", path
 
     @app.callback(
         Output("model-status", "children"),
