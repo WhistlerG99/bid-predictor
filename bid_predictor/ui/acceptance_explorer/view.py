@@ -2,51 +2,101 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from dash import Dash, Input, Output, State, html, no_update
+from pyarrow import fs as pyfs
 
 from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import prepare_bid_record
 from ..plotting import build_prediction_plot
 from ..tables import build_bid_table
 
+def _is_s3_path(path: str) -> bool:
+    return path.startswith("s3://")
+
+
+def _list_remote_files(filesystem: pyfs.FileSystem, uri: str) -> List[str]:
+    relative_path = uri.replace("s3://", "", 1)
+    info = filesystem.get_file_info([relative_path])[0]
+    if info.type == pyfs.FileType.NotFound:
+        raise FileNotFoundError(f"Dataset path does not exist: {uri}")
+
+    if info.is_file:
+        return [relative_path]
+
+    if info.is_dir:
+        selector = pyfs.FileSelector(relative_path, recursive=False)
+        entries = filesystem.get_file_info(selector)
+        files = [
+            entry.path
+            for entry in entries
+            if entry.is_file
+            and PurePosixPath(entry.path).suffix.lower() in {".parquet", ".pq", ".csv"}
+        ]
+        if not files:
+            raise ValueError(
+                "No parquet or CSV files found in the provided directory."
+            )
+        return sorted(files)
+
+    raise ValueError(f"Unsupported S3 path type for {uri}")
+
+
 @lru_cache(maxsize=4)
 def load_acceptance_dataset(path: str) -> pd.DataFrame:
     """Load a CSV or parquet dataset containing acceptance probabilities.
 
     The loader accepts either a single file path or a directory containing one
-    or more CSV/parquet files. Acceptance probability and snapshot metadata are
-    inferred when missing to align with the snapshot-style UI.
+    or more CSV/parquet files. Local paths and S3 URIs are supported for use
+    from SageMaker Spaces or local environments. Acceptance probability and
+    snapshot metadata are inferred when missing to align with the snapshot-style
+    UI.
     """
 
-    resolved = Path(path).expanduser()
-    if not resolved.exists():
-        raise FileNotFoundError(f"Dataset path does not exist: {resolved}")
-
-    files: List[Path]
-    if resolved.is_dir():
-        parquet_files = sorted(resolved.glob("*.parquet")) + sorted(resolved.glob("*.pq"))
-        csv_files = sorted(resolved.glob("*.csv"))
-        files = parquet_files + csv_files
-        if not files:
-            raise ValueError(
-                "No parquet or CSV files found in the provided directory."
-            )
-    else:
-        files = [resolved]
-
     frames: List[pd.DataFrame] = []
-    for file_path in files:
-        suffix = file_path.suffix.lower()
-        if suffix in {".parquet", ".pq"}:
-            frames.append(pd.read_parquet(file_path))
-        elif suffix == ".csv":
-            frames.append(pd.read_csv(file_path))
+    if _is_s3_path(path):
+        filesystem = pyfs.S3FileSystem()
+        files = _list_remote_files(filesystem, path)
+        for remote_path in files:
+            suffix = PurePosixPath(remote_path).suffix.lower()
+            with filesystem.open_input_file(remote_path) as handle:
+                if suffix in {".parquet", ".pq"}:
+                    frames.append(pd.read_parquet(handle))
+                elif suffix == ".csv":
+                    frames.append(pd.read_csv(handle))
+                else:
+                    raise ValueError(
+                        f"Unsupported file extension for s3://{remote_path}"
+                    )
+    else:
+        resolved = Path(path).expanduser()
+        if not resolved.exists():
+            raise FileNotFoundError(f"Dataset path does not exist: {resolved}")
+
+        if resolved.is_dir():
+            parquet_files = sorted(resolved.glob("*.parquet")) + sorted(
+                resolved.glob("*.pq")
+            )
+            csv_files = sorted(resolved.glob("*.csv"))
+            files = parquet_files + csv_files
+            if not files:
+                raise ValueError(
+                    "No parquet or CSV files found in the provided directory."
+                )
         else:
-            raise ValueError(f"Unsupported file extension for {file_path}")
+            files = [resolved]
+
+        for file_path in files:
+            suffix = file_path.suffix.lower()
+            if suffix in {".parquet", ".pq"}:
+                frames.append(pd.read_parquet(file_path))
+            elif suffix == ".csv":
+                frames.append(pd.read_csv(file_path))
+            else:
+                raise ValueError(f"Unsupported file extension for {file_path}")
 
     dataset = pd.concat(frames, ignore_index=True, sort=False)
     if dataset.empty:
