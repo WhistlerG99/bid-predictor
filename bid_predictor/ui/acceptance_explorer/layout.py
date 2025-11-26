@@ -71,6 +71,29 @@ def _build_filter_card() -> html.Div:
             ),
             html.Div(
                 [
+                    html.Label("Origination", style={"fontWeight": "600"}),
+                    html.Div(
+                        id="acceptance-origination-code",
+                        style={"padding": "0.4rem 0", "color": "#16324f"},
+                        children="–",
+                    ),
+                    html.Label("Destination", style={"fontWeight": "600"}),
+                    html.Div(
+                        id="acceptance-destination-code",
+                        style={"padding": "0.4rem 0", "color": "#16324f"},
+                        children="–",
+                    ),
+                ],
+                style={
+                    "backgroundColor": "#f8fafc",
+                    "borderRadius": "10px",
+                    "padding": "0.75rem",
+                    "boxShadow": "inset 0 0 0 1px rgba(27, 73, 101, 0.06)",
+                    "marginBottom": "1rem",
+                },
+            ),
+            html.Div(
+                [
                     html.H3(
                         "Selected flight",
                         style={"margin": "0 0 0.5rem 0", "color": "#1b4965"},

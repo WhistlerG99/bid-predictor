@@ -1,6 +1,7 @@
 """Callbacks and helpers for the acceptance probability explorer tab."""
 from __future__ import annotations
 
+from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -13,6 +14,43 @@ from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import prepare_bid_record
 from ..plotting import build_prediction_plot
 from ..tables import build_bid_table
+
+_ACCEPTANCE_TABLE_FEATURES = [
+    "offer_id",
+    "conf_num",
+    "days_before_departure",
+    "seats_available",
+    "created_timestamp",
+    "usd_base_amount_25%",
+    "usd_base_amount_50%",
+    "usd_base_amount_75%",
+    "usd_base_amount_max",
+    "num_offers",
+    "bid_rank",
+]
+
+
+def _acceptance_feature_config() -> Dict[str, List[str]]:
+    config = deepcopy(DEFAULT_UI_FEATURE_CONFIG)
+    display_features = []
+    seen: set[str] = set()
+    for feature in list(config.get("display_features", [])) + _ACCEPTANCE_TABLE_FEATURES:
+        if feature in seen:
+            continue
+        seen.add(feature)
+        display_features.append(feature)
+    config["display_features"] = display_features
+
+    readonly = []
+    seen_readonly: set[str] = set()
+    for feature in list(config.get("readonly_features", [])) + _ACCEPTANCE_TABLE_FEATURES:
+        if feature in seen_readonly:
+            continue
+        seen_readonly.add(feature)
+        readonly.append(feature)
+    config["readonly_features"] = readonly
+    return config
+
 
 def _is_s3_path(path: str) -> bool:
     return path.startswith("s3://")
@@ -99,7 +137,6 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
                 raise ValueError(f"Unsupported file extension for {file_path}")
 
     dataset = pd.concat(frames, ignore_index=True, sort=False)
-    dataset = dataset.drop_duplicates().reset_index(drop=True)
     if dataset.empty:
         raise ValueError("The loaded dataset is empty.")
 
@@ -110,12 +147,29 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
             ordered = sorted({ts for ts in timestamps.dropna().unique()})
             mapping = {value: idx + 1 for idx, value in enumerate(ordered)}
             dataset["snapshot_num"] = timestamps.map(mapping)
-    if "Bid #" not in dataset.columns and "offer_id" in dataset.columns:
-        dataset["Bid #"] = pd.factorize(dataset["offer_id"])[0] + 1
     if "travel_date" not in dataset.columns and "departure_timestamp" in dataset.columns:
         dataset["travel_date"] = pd.to_datetime(
             dataset["departure_timestamp"], errors="coerce"
         ).dt.date
+    if "Bid #" not in dataset.columns and "offer_id" in dataset.columns:
+        group_keys = [
+            key
+            for key in [
+                "carrier_code",
+                "flight_number",
+                "travel_date",
+                "upgrade_type",
+            ]
+            if key in dataset.columns
+        ]
+        order_columns = group_keys + (["offer_id"] if "offer_id" in dataset.columns else [])
+        if group_keys and order_columns:
+            sorted_df = dataset.sort_values(order_columns)
+            bid_numbers = sorted_df.groupby(group_keys).cumcount() + 1
+            dataset.loc[sorted_df.index, "Bid #"] = bid_numbers
+            dataset["Bid #"] = dataset["Bid #"].astype(int)
+        else:
+            dataset["Bid #"] = pd.factorize(dataset["offer_id"])[0] + 1
     if "Acceptance Probability" not in dataset.columns and "acceptance_prob" in dataset.columns:
         dataset["Acceptance Probability"] = dataset["acceptance_prob"]
 
@@ -180,7 +234,7 @@ def _render_table(
         predictions,
         feature_config=feature_config,
         derived_feature_values=[],
-        show_comp_features=False,
+        show_comp_features=True,
     )
     for column in columns:
         column["editable"] = False
@@ -313,6 +367,46 @@ def register_acceptance_callbacks(app: Dash) -> None:
         return options, options[0]["value"] if options else None
 
     @app.callback(
+        Output("acceptance-origination-code", "children"),
+        Output("acceptance-destination-code", "children"),
+        Input("acceptance-dataset-path-store", "data"),
+        Input("acceptance-carrier-dropdown", "value"),
+        Input("acceptance-flight-number-dropdown", "value"),
+        Input("acceptance-travel-date-dropdown", "value"),
+        Input("acceptance-upgrade-dropdown", "value"),
+    )
+    def populate_route_details(
+        dataset_path: Optional[str],
+        carrier: Optional[str],
+        flight_number: Optional[str],
+        travel_date: Optional[str],
+        upgrade: Optional[str],
+    ):
+        if not dataset_path or not carrier or not flight_number:
+            return "–", "–"
+
+        dataset = load_acceptance_dataset(dataset_path)
+        if not {"carrier_code", "flight_number"}.issubset(dataset.columns):
+            return "–", "–"
+
+        mask = (dataset["carrier_code"] == carrier) & (
+            dataset["flight_number"].astype(str) == str(flight_number)
+        )
+        if travel_date and "travel_date" in dataset.columns:
+            travel_date_dt = pd.to_datetime(travel_date).date()
+            mask &= pd.to_datetime(dataset["travel_date"]).dt.date == travel_date_dt
+        if upgrade and "upgrade_type" in dataset.columns:
+            mask &= dataset["upgrade_type"] == upgrade
+
+        subset = dataset.loc[mask]
+        if subset.empty:
+            return "–", "–"
+
+        origin = subset.iloc[0].get("origination_code", "–")
+        destination = subset.iloc[0].get("destination_code", "–")
+        return origin or "–", destination or "–"
+
+    @app.callback(
         Output("acceptance-flight-summary", "children"),
         Output("acceptance-prediction-graph", "figure"),
         Output("acceptance-warning", "children"),
@@ -396,7 +490,7 @@ def register_acceptance_callbacks(app: Dash) -> None:
         records = _prepare_records(snapshot_df)
         predictions = _build_predictions(records)
         columns, data_rows, style_rules = _render_table(
-            records, predictions, DEFAULT_UI_FEATURE_CONFIG
+            records, predictions, _acceptance_feature_config()
         )
 
         return summary, figure, warning, columns, data_rows, style_rules, ""
