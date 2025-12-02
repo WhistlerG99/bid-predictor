@@ -33,6 +33,8 @@ from bid_predictor.ui.snapshot import (
     register_snapshot_callbacks,
 )
 
+DEFAULT_ACCEPTANCE_TABLE = "model_prediction_testing.audit_bid_predictor"
+
 if detect_execution_environment()[0] in (
         "sagemaker_notebook",
         "sagemaker_terminal",
@@ -199,6 +201,33 @@ def create_app() -> Dash:
                         [
                             html.Div(
                                 [
+                                    html.Div(
+                                        [
+                                            html.Label(
+                                                "Data source",
+                                                style={"fontWeight": "600"},
+                                            ),
+                                            dcc.RadioItems(
+                                                id="acceptance-source",
+                                                options=[
+                                                    {
+                                                        "label": "Local / S3 file",
+                                                        "value": "path",
+                                                    },
+                                                    {
+                                                        "label": "AWS Redshift (ENV)",
+                                                        "value": "redshift",
+                                                    },
+                                                ],
+                                                value="path",
+                                                labelStyle={
+                                                    "display": "block",
+                                                    "marginBottom": "0.25rem",
+                                                },
+                                                style={"marginBottom": "0.5rem"},
+                                            ),
+                                        ]
+                                    ),
                                     html.Label(
                                         "Acceptance dataset path",
                                         style={"fontWeight": "600"},
@@ -207,6 +236,35 @@ def create_app() -> Dash:
                                         id="acceptance-dataset-path",
                                         type="text",
                                         placeholder="Path to acceptance probability data",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Label(
+                                        "Table name (Redshift)",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="acceptance-table-name",
+                                        type="text",
+                                        value=DEFAULT_ACCEPTANCE_TABLE,
+                                        placeholder="schema.table",
+                                        style={
+                                            "width": "100%",
+                                            "marginBottom": "0.5rem",
+                                        },
+                                    ),
+                                    html.Label(
+                                        "Recent hours (optional)",
+                                        style={"fontWeight": "600"},
+                                    ),
+                                    dcc.Input(
+                                        id="acceptance-hours",
+                                        type="number",
+                                        min=1,
+                                        step=1,
+                                        placeholder="e.g. 24",
                                         style={
                                             "width": "100%",
                                             "marginBottom": "0.5rem",
@@ -341,18 +399,46 @@ def create_app() -> Dash:
         Output("acceptance-dataset-path-store", "data"),
         Input("load-acceptance-dataset", "n_clicks"),
         State("acceptance-dataset-path", "value"),
+        State("acceptance-source", "value"),
+        State("acceptance-table-name", "value"),
+        State("acceptance-hours", "value"),
         prevent_initial_call=True,
     )
-    def load_acceptance_dataset_path(n_clicks: int, path: str):
-        if not path:
-            return "Please provide a dataset path.", None
+    def load_acceptance_dataset_path(
+        n_clicks: int,
+        path: str,
+        source: str,
+        table_name: str,
+        hours: Optional[int],
+    ):
+        dataset_config = None
+        if source == "redshift":
+            dataset_config = {
+                "source": "redshift",
+                "table": table_name or DEFAULT_ACCEPTANCE_TABLE,
+            }
+            if hours not in (None, ""):
+                dataset_config["hours"] = hours
+        else:
+            if not path:
+                return "Please provide a dataset path.", None
+            dataset_config = {"source": "path", "path": path}
 
         try:
-            dataset = load_acceptance_dataset(path)
+            dataset = load_acceptance_dataset(dataset_config)
         except Exception as exc:  # pragma: no cover - user feedback
             return f"Failed to load acceptance dataset: {exc}", None
 
-        return f"Loaded acceptance dataset with {len(dataset):,} rows.", path
+        if source == "redshift":
+            hours_text = (
+                f" from last {int(hours)} hours" if hours not in (None, "") else ""
+            )
+            summary = (
+                f"Loaded {len(dataset):,} rows from {dataset_config['table']}{hours_text}."
+            )
+        else:
+            summary = f"Loaded acceptance dataset with {len(dataset):,} rows."
+        return summary, dataset_config
 
     @app.callback(
         Output("model-status", "children"),

@@ -1,19 +1,27 @@
 """Callbacks and helpers for the acceptance probability explorer tab."""
 from __future__ import annotations
 
+import os
+import re
+from contextlib import closing
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
+import psycopg2
 from dash import Dash, Input, Output, State, html, no_update
+from dotenv import load_dotenv
 from pyarrow import fs as pyfs
 
 from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import prepare_bid_record
 from ..plotting import build_prediction_plot
 from ..tables import build_bid_table
+
+DEFAULT_ACCEPTANCE_TABLE = "model_prediction_testing.audit_bid_predictor"
+load_dotenv()
 
 _ACCEPTANCE_TABLE_FEATURES = [
     "offer_id",
@@ -110,60 +118,27 @@ def _scale_acceptance_probabilities(series: pd.Series) -> pd.Series:
     return numeric
 
 
-@lru_cache(maxsize=4)
-def load_acceptance_dataset(path: str) -> pd.DataFrame:
-    """Load a CSV or parquet dataset containing acceptance probabilities.
+def _validate_table_name(table_name: str) -> str:
+    if not table_name or not re.match(r"^[A-Za-z0-9_.]+$", table_name):
+        raise ValueError(
+            "Table name must include only letters, numbers, underscores, or periods."
+        )
+    return table_name
 
-    The loader accepts either a single file path or a directory containing one
-    or more CSV/parquet files. Local paths and S3 URIs are supported for use
-    from SageMaker Spaces or local environments. Acceptance probability and
-    snapshot metadata are inferred when missing to align with the snapshot-style
-    UI.
-    """
 
-    frames: List[pd.DataFrame] = []
-    if _is_s3_path(path):
-        filesystem = pyfs.S3FileSystem()
-        files = _list_remote_files(filesystem, path)
-        for remote_path in files:
-            suffix = PurePosixPath(remote_path).suffix.lower()
-            with filesystem.open_input_file(remote_path) as handle:
-                if suffix in {".parquet", ".pq"}:
-                    frames.append(pd.read_parquet(handle))
-                elif suffix == ".csv":
-                    frames.append(pd.read_csv(handle))
-                else:
-                    raise ValueError(
-                        f"Unsupported file extension for s3://{remote_path}"
-                    )
-    else:
-        resolved = Path(path).expanduser()
-        if not resolved.exists():
-            raise FileNotFoundError(f"Dataset path does not exist: {resolved}")
+def _redshift_credentials() -> Dict[str, str]:
+    required = ["HOST", "DATABASE", "USER", "PASSWORD", "PORT"]
+    values = {name: os.getenv(name) for name in required}
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise EnvironmentError(
+            "Missing environment variables for Redshift connection: "
+            + ", ".join(missing)
+        )
+    return {name: str(values[name]) for name in required}
 
-        if resolved.is_dir():
-            parquet_files = sorted(resolved.glob("*.parquet")) + sorted(
-                resolved.glob("*.pq")
-            )
-            csv_files = sorted(resolved.glob("*.csv"))
-            files = parquet_files + csv_files
-            if not files:
-                raise ValueError(
-                    "No parquet or CSV files found in the provided directory."
-                )
-        else:
-            files = [resolved]
 
-        for file_path in files:
-            suffix = file_path.suffix.lower()
-            if suffix in {".parquet", ".pq"}:
-                frames.append(pd.read_parquet(file_path))
-            elif suffix == ".csv":
-                frames.append(pd.read_csv(file_path))
-            else:
-                raise ValueError(f"Unsupported file extension for {file_path}")
-
-    dataset = pd.concat(frames, ignore_index=True, sort=False)
+def _normalize_acceptance_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
     if dataset.empty:
         raise ValueError("The loaded dataset is empty.")
 
@@ -230,6 +205,111 @@ def load_acceptance_dataset(path: str) -> pd.DataFrame:
 
     dataset["offer_status"] = dataset.get("offer_status", "pending")
     return dataset
+
+
+@lru_cache(maxsize=4)
+def _load_acceptance_dataset_from_path(path: str) -> pd.DataFrame:
+    frames: List[pd.DataFrame] = []
+    if _is_s3_path(path):
+        filesystem = pyfs.S3FileSystem()
+        files = _list_remote_files(filesystem, path)
+        for remote_path in files:
+            suffix = PurePosixPath(remote_path).suffix.lower()
+            with filesystem.open_input_file(remote_path) as handle:
+                if suffix in {".parquet", ".pq"}:
+                    frames.append(pd.read_parquet(handle))
+                elif suffix == ".csv":
+                    frames.append(pd.read_csv(handle))
+                else:
+                    raise ValueError(
+                        f"Unsupported file extension for s3://{remote_path}"
+                    )
+    else:
+        resolved = Path(path).expanduser()
+        if not resolved.exists():
+            raise FileNotFoundError(f"Dataset path does not exist: {resolved}")
+
+        if resolved.is_dir():
+            parquet_files = sorted(resolved.glob("*.parquet")) + sorted(
+                resolved.glob("*.pq")
+            )
+            csv_files = sorted(resolved.glob("*.csv"))
+            files = parquet_files + csv_files
+            if not files:
+                raise ValueError(
+                    "No parquet or CSV files found in the provided directory."
+                )
+        else:
+            files = [resolved]
+
+        for file_path in files:
+            suffix = file_path.suffix.lower()
+            if suffix in {".parquet", ".pq"}:
+                frames.append(pd.read_parquet(file_path))
+            elif suffix == ".csv":
+                frames.append(pd.read_csv(file_path))
+            else:
+                raise ValueError(f"Unsupported file extension for {file_path}")
+
+    dataset = pd.concat(frames, ignore_index=True, sort=False)
+    return _normalize_acceptance_dataset(dataset)
+
+
+@lru_cache(maxsize=4)
+def _load_acceptance_dataset_from_redshift(
+    table_name: str, hours: Optional[int]
+) -> pd.DataFrame:
+    validated_table = _validate_table_name(table_name)
+    credentials = _redshift_credentials()
+    query = f"SELECT * FROM {validated_table}"
+    params: Tuple[object, ...] = ()
+    if hours is not None:
+        query += " WHERE accept_prob_timestamp >= DATEADD(hour, -%s, GETDATE())"
+        params = (hours,)
+
+    connection = psycopg2.connect(
+        host=credentials["HOST"],
+        dbname=credentials["DATABASE"],
+        user=credentials["USER"],
+        password=credentials["PASSWORD"],
+        port=int(credentials["PORT"]),
+    )
+    with closing(connection) as conn:
+        frame = pd.read_sql_query(query, conn, params=params or None)
+    return _normalize_acceptance_dataset(frame)
+
+
+def load_acceptance_dataset(config: str | Mapping[str, object]) -> pd.DataFrame:
+    """Load acceptance data from a file path or Redshift table."""
+
+    if isinstance(config, str):
+        return _load_acceptance_dataset_from_path(config)
+
+    if not config:
+        raise ValueError("No acceptance dataset source provided.")
+
+    source = str(config.get("source") or "path").lower()
+    if source == "redshift":
+        table = str(config.get("table") or DEFAULT_ACCEPTANCE_TABLE)
+        hours_value = config.get("hours")
+        hours: Optional[int] = None
+        if hours_value not in (None, ""):
+            try:
+                hours = int(hours_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Recent hours must be an integer.") from exc
+            if hours <= 0:
+                raise ValueError("Recent hours must be positive.")
+        return _load_acceptance_dataset_from_redshift(table, hours)
+
+    if source != "path":
+        raise ValueError(f"Unsupported acceptance dataset source: {source}")
+
+    path_value = config.get("path")
+    if not path_value:
+        raise ValueError("Please provide a dataset path.")
+
+    return _load_acceptance_dataset_from_path(str(path_value))
 
 
 def _options_from_series(values: pd.Series) -> List[dict]:
@@ -337,10 +417,10 @@ def register_acceptance_callbacks(app: Dash) -> None:
         Output("acceptance-carrier-dropdown", "value"),
         Input("acceptance-dataset-path-store", "data"),
     )
-    def populate_carriers(dataset_path: Optional[str]):
-        if not dataset_path:
+    def populate_carriers(dataset_config: Optional[object]):
+        if not dataset_config:
             return [], None
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         if "carrier_code" not in dataset.columns:
             return [], None
         options = _options_from_series(dataset["carrier_code"])
@@ -352,10 +432,10 @@ def register_acceptance_callbacks(app: Dash) -> None:
         Input("acceptance-carrier-dropdown", "value"),
         State("acceptance-dataset-path-store", "data"),
     )
-    def populate_flights(carrier: Optional[str], dataset_path: Optional[str]):
-        if not dataset_path or not carrier:
+    def populate_flights(carrier: Optional[str], dataset_config: Optional[object]):
+        if not dataset_config or not carrier:
             return [], None
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         if not {"carrier_code", "flight_number"}.issubset(dataset.columns):
             return [], None
         mask = dataset["carrier_code"] == carrier
@@ -372,11 +452,11 @@ def register_acceptance_callbacks(app: Dash) -> None:
     def populate_travel_dates(
         flight_number: Optional[str],
         carrier: Optional[str],
-        dataset_path: Optional[str],
+        dataset_config: Optional[object],
     ):
-        if not dataset_path or not carrier or not flight_number:
+        if not dataset_config or not carrier or not flight_number:
             return [], None
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         if "travel_date" not in dataset.columns:
             return [], None
         mask = (
@@ -402,11 +482,11 @@ def register_acceptance_callbacks(app: Dash) -> None:
         travel_date: Optional[str],
         carrier: Optional[str],
         flight_number: Optional[str],
-        dataset_path: Optional[str],
+        dataset_config: Optional[object],
     ):
-        if not dataset_path or not carrier or not flight_number or not travel_date:
+        if not dataset_config or not carrier or not flight_number or not travel_date:
             return [], None
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         if "upgrade_type" not in dataset.columns:
             return [], None
         travel_date_dt = pd.to_datetime(travel_date).date()
@@ -432,11 +512,11 @@ def register_acceptance_callbacks(app: Dash) -> None:
         carrier: Optional[str],
         flight_number: Optional[str],
         travel_date: Optional[str],
-        dataset_path: Optional[str],
+        dataset_config: Optional[object],
     ):
-        if not dataset_path or not carrier or not flight_number or not travel_date or not upgrade:
+        if not dataset_config or not carrier or not flight_number or not travel_date or not upgrade:
             return [], None
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         if "snapshot_num" not in dataset.columns:
             return [], None
         travel_date_dt = pd.to_datetime(travel_date).date()
@@ -461,16 +541,16 @@ def register_acceptance_callbacks(app: Dash) -> None:
         Input("acceptance-upgrade-dropdown", "value"),
     )
     def populate_route_details(
-        dataset_path: Optional[str],
+        dataset_config: Optional[object],
         carrier: Optional[str],
         flight_number: Optional[str],
         travel_date: Optional[str],
         upgrade: Optional[str],
     ):
-        if not dataset_path or not carrier or not flight_number:
+        if not dataset_config or not carrier or not flight_number:
             return "–", "–", "–"
 
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         if not {"carrier_code", "flight_number"}.issubset(dataset.columns):
             return "–", "–", "–"
 
@@ -515,16 +595,16 @@ def register_acceptance_callbacks(app: Dash) -> None:
         flight_number: Optional[str],
         travel_date: Optional[str],
         upgrade_type: Optional[str],
-        dataset_path: Optional[str],
+        dataset_config: Optional[object],
     ):
         summary = _build_summary(carrier, flight_number, travel_date, upgrade_type)
-        if not dataset_path:
+        if not dataset_config:
             return summary, build_prediction_plot(pd.DataFrame()), "Load a dataset to begin.", no_update, [], [], ""
 
         if not all([carrier, flight_number, travel_date, upgrade_type]):
             return summary, build_prediction_plot(pd.DataFrame()), "", no_update, [], [], "Select a carrier, flight, travel date, and upgrade type."
 
-        dataset = load_acceptance_dataset(dataset_path)
+        dataset = load_acceptance_dataset(dataset_config)
         required_columns = {
             "carrier_code",
             "flight_number",
