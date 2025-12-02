@@ -148,6 +148,15 @@ def _normalize_acceptance_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
     if dataset.empty:
         raise ValueError("The loaded dataset is empty.")
 
+    base_amount_aliases = {
+        "usd_base_amount_25_percent": "usd_base_amount_25%",
+        "usd_base_amount_50_percent": "usd_base_amount_50%",
+        "usd_base_amount_75_percent": "usd_base_amount_75%",
+    }
+    for alias, canonical in base_amount_aliases.items():
+        if canonical not in dataset.columns and alias in dataset.columns:
+            dataset[canonical] = dataset[alias]
+
     if "accept_prob_timestamp" in dataset.columns:
         timestamps = pd.to_datetime(dataset["accept_prob_timestamp"], errors="coerce")
         dataset["current_timestamp"] = timestamps
@@ -203,11 +212,14 @@ def _normalize_acceptance_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
         probability_source = dataset["Acceptance Probability"]
     elif "acceptance_prob" in dataset.columns:
         probability_source = dataset["acceptance_prob"]
+    elif "accept_prob" in dataset.columns:
+        probability_source = dataset["accept_prob"]
 
     if probability_source is not None:
         scaled = _scale_acceptance_probabilities(probability_source)
         dataset["Acceptance Probability"] = scaled
         dataset["acceptance_prob"] = scaled
+        dataset["accept_prob"] = scaled
 
     dataset["offer_status"] = dataset.get("offer_status", "pending")
     return dataset
@@ -353,7 +365,9 @@ def _prepare_records(snapshot_df: pd.DataFrame) -> List[Dict[str, object]]:
     for record in snapshot_df.to_dict("records"):
         cleaned = dict(record)
         if "Acceptance Probability" not in cleaned:
-            cleaned["Acceptance Probability"] = cleaned.get("acceptance_prob")
+            cleaned["Acceptance Probability"] = cleaned.get("acceptance_prob") or cleaned.get(
+                "accept_prob"
+            )
         if "Current Time" not in cleaned:
             cleaned["Current Time"] = cleaned.get("current_timestamp") or cleaned.get(
                 "accept_prob_timestamp"
@@ -371,7 +385,7 @@ def _build_predictions(df: pd.DataFrame) -> Dict[str, object]:
     probability_map: Dict[str, object] = {}
     probabilities = df.get("Acceptance Probability")
     if probabilities is None:
-        probabilities = df.get("acceptance_prob")
+        probabilities = df.get("acceptance_prob") or df.get("accept_prob")
     if probabilities is None:
         probabilities = []
     for idx, value in enumerate(probabilities):
@@ -643,7 +657,7 @@ def register_acceptance_callbacks(app: Dash) -> None:
 
         subset["snapshot_num"] = subset.get("snapshot_num").astype(str)
         subset["Acceptance Probability"] = subset.get(
-            "Acceptance Probability", subset.get("acceptance_prob")
+            "Acceptance Probability", subset.get("acceptance_prob") or subset.get("accept_prob")
         )
         if "Current Time" not in subset.columns:
             if "accept_prob_timestamp" in subset.columns:
