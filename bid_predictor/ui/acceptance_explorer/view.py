@@ -127,7 +127,13 @@ def _validate_table_name(table_name: str) -> str:
 
 
 def _redshift_credentials() -> Dict[str, str]:
-    required = ["HOST", "DATABASE", "USER", "PASSWORD", "PORT"]
+    required = [
+        "REDSHIFT_HOST",
+        "REDSHIFT_DATABASE",
+        "REDSHIFT_USER",
+        "REDSHIFT_PASSWORD",
+        "REDSHIFT_PORT",
+    ]
     values = {name: os.getenv(name) for name in required}
     missing = [name for name, value in values.items() if not value]
     if missing:
@@ -268,11 +274,11 @@ def _load_acceptance_dataset_from_redshift(
         params = (hours,)
 
     connection = psycopg2.connect(
-        host=credentials["HOST"],
-        dbname=credentials["DATABASE"],
-        user=credentials["USER"],
-        password=credentials["PASSWORD"],
-        port=int(credentials["PORT"]),
+        host=credentials["REDSHIFT_HOST"],
+        dbname=credentials["REDSHIFT_DATABASE"],
+        user=credentials["REDSHIFT_USER"],
+        password=credentials["REDSHIFT_PASSWORD"],
+        port=int(credentials["REDSHIFT_PORT"]),
     )
     with closing(connection) as conn:
         frame = pd.read_sql_query(query, conn, params=params or None)
