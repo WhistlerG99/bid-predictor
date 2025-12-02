@@ -108,10 +108,14 @@ def create_app() -> Dash:
                                             "borderRadius": "6px",
                                         },
                                     ),
-                                    html.Div(
-                                        id="dataset-status",
-                                        className="status-message",
-                                        style={"marginTop": "0.5rem"},
+                                    dcc.Loading(
+                                        id="dataset-loading",
+                                        type="circle",
+                                        children=html.Div(
+                                            id="dataset-status",
+                                            className="status-message",
+                                            style={"marginTop": "0.5rem"},
+                                        ),
                                     ),
                                 ],
                                 style={
@@ -174,10 +178,14 @@ def create_app() -> Dash:
                                             "borderRadius": "6px",
                                         },
                                     ),
-                                    html.Div(
-                                        id="model-status",
-                                        className="status-message",
-                                        style={"marginTop": "0.5rem"},
+                                    dcc.Loading(
+                                        id="model-loading",
+                                        type="circle",
+                                        children=html.Div(
+                                            id="model-status",
+                                            className="status-message",
+                                            style={"marginTop": "0.5rem"},
+                                        ),
                                     ),
                                 ],
                                 style={
@@ -283,10 +291,14 @@ def create_app() -> Dash:
                                             "borderRadius": "6px",
                                         },
                                     ),
-                                    html.Div(
-                                        id="acceptance-dataset-status",
-                                        className="status-message",
-                                        style={"marginTop": "0.5rem"},
+                                    dcc.Loading(
+                                        id="acceptance-dataset-loading",
+                                        type="circle",
+                                        children=html.Div(
+                                            id="acceptance-dataset-status",
+                                            className="status-message",
+                                            style={"marginTop": "0.5rem"},
+                                        ),
                                     ),
                                 ],
                                 style={
