@@ -272,6 +272,7 @@ def create_app() -> Dash:
                                         type="number",
                                         min=1,
                                         step=1,
+                                        value=12,
                                         placeholder="e.g. 24",
                                         style={
                                             "width": "100%",
@@ -435,6 +436,8 @@ def create_app() -> Dash:
             if not path:
                 return "Please provide a dataset path.", None
             dataset_config = {"source": "path", "path": path}
+            if hours not in (None, ""):
+                dataset_config["hours"] = hours
 
         try:
             dataset = load_acceptance_dataset(dataset_config)
@@ -449,7 +452,10 @@ def create_app() -> Dash:
                 f"Loaded {len(dataset):,} rows from {dataset_config['table']}{hours_text}."
             )
         else:
-            summary = f"Loaded acceptance dataset with {len(dataset):,} rows."
+            hours_text = (
+                f" from last {int(hours)} hours" if hours not in (None, "") else ""
+            )
+            summary = f"Loaded acceptance dataset{hours_text} with {len(dataset):,} rows."
         return summary, dataset_config
 
     @app.callback(

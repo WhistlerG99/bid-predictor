@@ -83,6 +83,18 @@ def _is_s3_path(path: str) -> bool:
     return path.startswith("s3://")
 
 
+def _parse_recent_hours(hours_value: object) -> Optional[int]:
+    if hours_value in (None, ""):
+        return None
+    try:
+        hours = int(hours_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Recent hours must be an integer.") from exc
+    if hours <= 0:
+        raise ValueError("Recent hours must be positive.")
+    return hours
+
+
 def _list_remote_files(filesystem: pyfs.FileSystem, uri: str) -> List[str]:
     relative_path = uri.replace("s3://", "", 1)
     info = filesystem.get_file_info([relative_path])[0]
@@ -108,6 +120,38 @@ def _list_remote_files(filesystem: pyfs.FileSystem, uri: str) -> List[str]:
         return sorted(files)
 
     raise ValueError(f"Unsupported S3 path type for {uri}")
+
+
+_TIMESTAMP_PATTERN = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})")
+
+
+def _extract_timestamp_from_name(name: str) -> Optional[pd.Timestamp]:
+    match = _TIMESTAMP_PATTERN.search(name)
+    if not match:
+        return None
+    try:
+        return pd.to_datetime(match.group(1), format="%Y-%m-%dT%H-%M-%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def _filter_files_by_recent_hours(files: Sequence[str], hours: Optional[int]) -> List[str]:
+    if hours is None:
+        return sorted(files)
+
+    dated_files: List[Tuple[str, Optional[pd.Timestamp]]] = []
+    for file_path in files:
+        timestamp = _extract_timestamp_from_name(PurePosixPath(file_path).name)
+        dated_files.append((file_path, timestamp))
+
+    timestamps = [ts for _, ts in dated_files if ts is not None and not pd.isna(ts)]
+    if not timestamps:
+        return sorted(files)
+
+    latest_timestamp = max(timestamps)
+    threshold = latest_timestamp - pd.Timedelta(hours=hours)
+    filtered = [path for path, ts in dated_files if ts is not None and ts >= threshold]
+    return sorted(filtered or [path for path, _ in dated_files])
 
 
 def _scale_acceptance_probabilities(series: pd.Series) -> pd.Series:
@@ -235,12 +279,13 @@ def _select_first_series(
 
 
 @lru_cache(maxsize=4)
-def _load_acceptance_dataset_from_path(path: str) -> pd.DataFrame:
+def _load_acceptance_dataset_from_path(path: str, hours: Optional[int]) -> pd.DataFrame:
     frames: List[pd.DataFrame] = []
     if _is_s3_path(path):
         filesystem = pyfs.S3FileSystem()
         files = _list_remote_files(filesystem, path)
-        for remote_path in files:
+        filtered_files = _filter_files_by_recent_hours(files, hours)
+        for remote_path in filtered_files:
             suffix = PurePosixPath(remote_path).suffix.lower()
             with filesystem.open_input_file(remote_path) as handle:
                 if suffix in {".parquet", ".pq"}:
@@ -266,6 +311,10 @@ def _load_acceptance_dataset_from_path(path: str) -> pd.DataFrame:
                 raise ValueError(
                     "No parquet or CSV files found in the provided directory."
                 )
+            filtered_files = _filter_files_by_recent_hours(
+                [str(path) for path in files], hours
+            )
+            files = [Path(file_path) for file_path in filtered_files]
         else:
             files = [resolved]
 
@@ -310,7 +359,7 @@ def load_acceptance_dataset(config: str | Mapping[str, object]) -> pd.DataFrame:
     """Load acceptance data from a file path or Redshift table."""
 
     if isinstance(config, str):
-        return _load_acceptance_dataset_from_path(config)
+        return _load_acceptance_dataset_from_path(config, None)
 
     if not config:
         raise ValueError("No acceptance dataset source provided.")
@@ -318,15 +367,7 @@ def load_acceptance_dataset(config: str | Mapping[str, object]) -> pd.DataFrame:
     source = str(config.get("source") or "path").lower()
     if source == "redshift":
         table = str(config.get("table") or DEFAULT_ACCEPTANCE_TABLE)
-        hours_value = config.get("hours")
-        hours: Optional[int] = None
-        if hours_value not in (None, ""):
-            try:
-                hours = int(hours_value)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("Recent hours must be an integer.") from exc
-            if hours <= 0:
-                raise ValueError("Recent hours must be positive.")
+        hours = _parse_recent_hours(config.get("hours"))
         return _load_acceptance_dataset_from_redshift(table, hours)
 
     if source != "path":
@@ -336,7 +377,9 @@ def load_acceptance_dataset(config: str | Mapping[str, object]) -> pd.DataFrame:
     if not path_value:
         raise ValueError("Please provide a dataset path.")
 
-    return _load_acceptance_dataset_from_path(str(path_value))
+    hours = _parse_recent_hours(config.get("hours"))
+
+    return _load_acceptance_dataset_from_path(str(path_value), hours)
 
 
 def _options_from_series(values: pd.Series) -> List[dict]:
