@@ -7,7 +7,7 @@ from contextlib import closing
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 import psycopg2
@@ -225,6 +225,15 @@ def _normalize_acceptance_dataset(dataset: pd.DataFrame) -> pd.DataFrame:
     return dataset
 
 
+def _select_first_series(
+    dataset: pd.DataFrame, columns: Iterable[str]
+) -> Optional[pd.Series]:
+    for column in columns:
+        if column in dataset.columns:
+            return dataset[column]
+    return None
+
+
 @lru_cache(maxsize=4)
 def _load_acceptance_dataset_from_path(path: str) -> pd.DataFrame:
     frames: List[pd.DataFrame] = []
@@ -383,9 +392,9 @@ def _prepare_records(snapshot_df: pd.DataFrame) -> List[Dict[str, object]]:
 
 def _build_predictions(df: pd.DataFrame) -> Dict[str, object]:
     probability_map: Dict[str, object] = {}
-    probabilities = df.get("Acceptance Probability")
-    if probabilities is None:
-        probabilities = df.get("acceptance_prob") or df.get("accept_prob")
+    probabilities = _select_first_series(
+        df, ["Acceptance Probability", "acceptance_prob", "accept_prob"]
+    )
     if probabilities is None:
         probabilities = []
     for idx, value in enumerate(probabilities):
@@ -656,9 +665,11 @@ def register_acceptance_callbacks(app: Dash) -> None:
             return summary, empty_fig, "No rows found for the selected flight.", no_update, [], [], ""
 
         subset["snapshot_num"] = subset.get("snapshot_num").astype(str)
-        subset["Acceptance Probability"] = subset.get(
-            "Acceptance Probability", subset.get("acceptance_prob") or subset.get("accept_prob")
+        probability_series = _select_first_series(
+            subset, ["Acceptance Probability", "acceptance_prob", "accept_prob"]
         )
+        if probability_series is not None:
+            subset["Acceptance Probability"] = probability_series
         if "Current Time" not in subset.columns:
             if "accept_prob_timestamp" in subset.columns:
                 subset["Current Time"] = pd.to_datetime(
