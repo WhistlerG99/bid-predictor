@@ -24,9 +24,9 @@
   - `result_writing.py`: CSV/JSON/YAML writers for tuning summaries (normalize numpy types first).
 
 ## Dash UI Helpers
-- `dash_app.py` at the repository root should focus on layout and callbacks. Move reusable logic into the `bid_predictor/ui/` package.
+- `dash_app.py` at the repository root should focus on layout and callbacks. Reusable logic lives in the top-level `ui/` package.
 - Each helper module in `ui/` should stay small and purpose-driven (e.g., data access, formatting, plotting).
-- Add or update unit tests under `tests/unit/ui/` whenever changing the UI helpers.
+- Add or update unit tests under `tests/ui/` whenever changing the UI helpers.
 
 ## Typical Tuning Flow (`tune_catboost.py`)
 1. Parse CLI arguments (data path, feature config, search config, CV, MLflow, artifact outputs).

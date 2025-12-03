@@ -15,7 +15,7 @@ from dash import (
     no_update,
 )
 
-from ...data import load_dataset_cached
+from ui.data import load_dataset_cached
 from ..formatting import (
     apply_bid_labels,
     compute_bid_label_map,

@@ -13,22 +13,22 @@ from dash import Dash, Input, Output, State, dcc, html
 from mlflow.exceptions import MlflowException
 from bid_predictor.utils import detect_execution_environment
 
-from bid_predictor.ui import (
+from ui import (
     DEFAULT_UI_FEATURE_CONFIG,
     build_ui_feature_config,
     load_dataset_cached,
     load_model_cached,
 )
-from bid_predictor.ui.feature_sensitivity import (
+from ui.feature_sensitivity import (
     build_feature_sensitivity_tab,
     register_feature_sensitivity_callbacks,
 )
-from bid_predictor.ui.acceptance_explorer import (
+from ui.acceptance_explorer import (
     build_acceptance_tab,
     load_acceptance_dataset,
     register_acceptance_callbacks,
 )
-from bid_predictor.ui.snapshot import (
+from ui.snapshot import (
     build_snapshot_tab,
     register_snapshot_callbacks,
 )

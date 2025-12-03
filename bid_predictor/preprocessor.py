@@ -3,6 +3,7 @@ import pandas as pd
 
 def load_flight_data(path):
     """Load raw flight metadata CSVs or Parquets and derive calendar helper columns."""
+    path = str(path)
     if path.endswith(".csv"):
         df = pd.read_csv(path, low_memory=False)
     else:
@@ -31,6 +32,7 @@ def load_flight_data(path):
 
 def load_offer_data(path):
     """Load bid offer CSVs or Parquets and normalize column names and categorical fields."""
+    path = str(path)
     if path.endswith(".csv"):
         df = pd.read_csv(path, low_memory=False)
     else:

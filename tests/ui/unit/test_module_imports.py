@@ -9,17 +9,17 @@ import pytest
 
 MODULE_NAMES = (
     "dash_app",
-    "bid_predictor.ui",
-    "bid_predictor.ui.snapshot",
-    "bid_predictor.ui.snapshot.layout",
-    "bid_predictor.ui.snapshot.filters",
-    "bid_predictor.ui.snapshot.predictions",
-    "bid_predictor.ui.snapshot.view",
-    "bid_predictor.ui.feature_sensitivity",
-    "bid_predictor.ui.feature_sensitivity.layout",
-    "bid_predictor.ui.feature_sensitivity.filters",
-    "bid_predictor.ui.feature_sensitivity.baseline",
-    "bid_predictor.ui.feature_sensitivity.table",
+    "ui",
+    "ui.snapshot",
+    "ui.snapshot.layout",
+    "ui.snapshot.filters",
+    "ui.snapshot.predictions",
+    "ui.snapshot.view",
+    "ui.feature_sensitivity",
+    "ui.feature_sensitivity.layout",
+    "ui.feature_sensitivity.filters",
+    "ui.feature_sensitivity.baseline",
+    "ui.feature_sensitivity.table",
 )
 
 

@@ -446,13 +446,18 @@ def build_pipeline(feature_config=None, **kw):
                 )
             )
 
-    pipeline_tf = Pipeline(steps=steps_ft, transform_input=["eval_set"])
+    if steps_ft:
+        pipeline_tf = Pipeline(steps=steps_ft, transform_input=["eval_set"])
+    else:
+        pipeline_tf = Pipeline(
+            steps=[("identity", "passthrough")],
+            transform_input=["eval_set"],
+        )
 
     reduce_features_transformer = ColumnReducer(selected_features)
-    steps= [
-        ("feature_add", pipeline_feat_add),
+    steps = list(pipeline_feat_add.steps) + [
         ("feature_transform", pipeline_tf),
-        ("reduce", reduce_features_transformer)
+        ("reduce", reduce_features_transformer),
     ]
 
     # CatBoostClassifier integrates with sklearn API

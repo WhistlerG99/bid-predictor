@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 from dash import Dash, Input, Output, State
 
-from ...data import load_dataset_cached
+from ui.data import load_dataset_cached
 from ..formatting import clear_derived_features, prepare_bid_record, sort_records_by_bid
 from ..scenario import (
     TIME_TO_DEPARTURE_SCENARIO_KEY,
