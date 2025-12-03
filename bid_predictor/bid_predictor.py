@@ -241,14 +241,14 @@ class FeatureConfiguredPipeline(Pipeline):
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, *, cat_features, **cb_params):
         """Initialize the CatBoost wrapper with environment-aware settings."""
+        cb_params = dict(cb_params)
         if detect_execution_environment()[0] in (
             "sagemaker_notebook",
             "sagemaker_job",
             "sagemaker_terminal",
         ):
-            train_dir = get_output_dir()
-            cb_params["train_dir"] = train_dir
-            cb_params["allow_writing_files"] = True
+            cb_params.setdefault("train_dir", get_output_dir())
+            cb_params.setdefault("allow_writing_files", True)
             self._callbacks = None
         else:
             self._callbacks = [MlflowCallback()]
@@ -446,13 +446,19 @@ def build_pipeline(feature_config=None, **kw):
                 )
             )
 
-    pipeline_tf = Pipeline(steps=steps_ft, transform_input=["eval_set"])
+    if steps_ft:
+        pipeline_tf = Pipeline(steps=steps_ft, transform_input=["eval_set"])
+    else:
+        pipeline_tf = Pipeline(
+            steps=[("identity", "passthrough")],
+            transform_input=["eval_set"],
+        )
 
     reduce_features_transformer = ColumnReducer(selected_features)
-    steps= [
+    steps = [
         ("feature_add", pipeline_feat_add),
         ("feature_transform", pipeline_tf),
-        ("reduce", reduce_features_transformer)
+        ("reduce", reduce_features_transformer),
     ]
 
     # CatBoostClassifier integrates with sklearn API

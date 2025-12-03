@@ -46,20 +46,23 @@ def main():
             "Check preprocess.py output."
         )
 
+    for c in ["departure_timestamp", "created_timestamp", "accept_prob_timestamp"]:
+        df[c] = pd.to_datetime(df[c]).dt.round("S").astype("datetime64[ms]")
+
     timestamp = df["file_timestamp"].iloc[0]
     carrier_code = df["carrier_code"].iloc[0]
     output_dir = OUTPUT_DIR + "/" + carrier_code
 
     logger.info(f"Using file_timestamp={timestamp} for final CSV name")
 
-    # Optional: drop file_timestamp from final CSV if you don't want it in output
+    # Optional: drop file_timestamp from final parquet if you don't want it in output
     df = df.drop(columns=["file_timestamp"])
 
-    output_filename = f"availability-offers-probability-{timestamp}.csv"
+    output_filename = f"availability-offers-probability-{timestamp}.parquet"
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, output_filename)
 
-    df.to_csv(output_path, index=False)
+    df.to_parquet(output_path, index=False)
     logger.info(f"Wrote final CSV to: {output_path}")
 
 

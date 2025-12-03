@@ -26,9 +26,8 @@ from bid_predictor.tracking import (
     log_run_parameters,
     start_catboost_mlflow_stream,
 )
-from bid_predictor.data import prepare_features
-from bid_predictor.utils import detect_execution_environment
-from bid_predictor.ui import load_dataset_cached
+from bid_predictor.data import load_dataset_cached, prepare_features
+from bid_predictor.utils import detect_execution_environment, get_output_dir
 from catboost import CatBoostClassifier
 from dotenv import load_dotenv
 
@@ -259,6 +258,8 @@ def train_and_log_model(
         catboost_kwargs = var_args.copy()
         catboost_kwargs.pop("feature_config", None)
         catboost_kwargs.pop("cat_features", None)
+        catboost_kwargs["train_dir"] = get_output_dir()
+        catboost_kwargs["allow_writing_files"] = True
 
         pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
 
@@ -270,7 +271,6 @@ def train_and_log_model(
             train_dir = pipeline[-1].cb_params.get(
                 "train_dir", "/opt/ml/output/catboost"
             )
-            # train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
 
             # start streaming before fit
             stop_stream = start_catboost_mlflow_stream(train_dir, run.info.run_id)
@@ -311,7 +311,8 @@ def main():
     ):
         train_file = os.environ.get("S3_BUCKET_DATA") + "/data"
         # train_file += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
+        # train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
+        train_file += "/saudia/bid_and_flight_data_snapshots.parquet"
     else:
         train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
         # train_file = "../bid_data_snapshots_v2.parquet"

@@ -17,13 +17,13 @@ repo = "bid-predictor-sklearn-gpu"
 tag = "latest"
 image_uri = f"{account}.dkr.ecr.{REGION}.amazonaws.com/{repo}:{tag}"
 
-task_type = "CPU"
-instance_type = "ml.m5.xlarge"
-devices = "0"
-
-# task_type = "GPU"
-# instance_type = "ml.g5.xlarge"
+# task_type = "CPU"
+# instance_type = "ml.m5.xlarge"
 # devices = "0"
+
+task_type = "GPU"
+instance_type = "ml.g5.xlarge"
+devices = "0"
 
 # instance_type = "ml.g5.12xlarge" # 4 GPUs
 # devices = "-1"

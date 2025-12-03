@@ -12,6 +12,11 @@ from bid_predictor.tuning.cross_validation import (
 )
 
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:This Pipeline instance is not fitted yet:FutureWarning"
+)
+
+
 @pytest.mark.integration
 def test_train_pipeline_is_deterministic(sample_training_dataframe, sample_feature_config, stub_mlflow, monkeypatch):
     captured = []

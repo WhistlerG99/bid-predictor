@@ -24,6 +24,9 @@ MODEL_BASE_PREFIX = os.getenv(
     "MODEL_BASE_PREFIX", "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
 )  # e.g. "dzd_.../dev"
 
+MODEL_NAME_PREFIX = os.getenv(
+    "MODEL_NAME_PREFIX", "bid-predictor"
+)  # e.g. "bid-predictor"
 
 def select_model_for_carrier(carrier_code: str) -> str:
     """
@@ -31,14 +34,14 @@ def select_model_for_carrier(carrier_code: str) -> str:
       <MODEL_BASE_PREFIX>/bid-predictor-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
     and return the S3 URI of the most recent one.
     """
-    if not MODEL_BUCKET or not MODEL_BASE_PREFIX:
-        raise RuntimeError("MODEL_BUCKET or MODEL_BASE_PREFIX not set")
+    if not MODEL_BUCKET or not MODEL_BASE_PREFIX or not MODEL_NAME_PREFIX:
+        raise RuntimeError("MODEL_BUCKET, MODEL_BASE_PREFIX or MODEL_NAME_PREFIX not set")
 
     s3 = boto3.client("s3")
 
     # keys look like:
     #   <MODEL_BASE_PREFIX>/bid-predictor-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
-    prefix = f"{MODEL_BASE_PREFIX}/bid-predictor-{carrier_code}-"
+    prefix = f"{MODEL_BASE_PREFIX}/{MODEL_NAME_PREFIX}-{carrier_code}-"
     logger.info(f"Listing models with prefix: s3://{MODEL_BUCKET}/{prefix}")
 
     resp = s3.list_objects_v2(Bucket=MODEL_BUCKET, Prefix=prefix)
@@ -51,10 +54,10 @@ def select_model_for_carrier(carrier_code: str) -> str:
             continue
 
         # Extract timestamp from the directory name
-        # key: .../bid-predictor-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
+        # key: .../<prefix>-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
         model_dir = key.rsplit("/", 1)[0].split("/")[-2]
-        # model_dir = "bid-predictor-<carrier>-YYYY-mm-dd-HH-MM-SS"
-        prefix_str = f"bid-predictor-{carrier_code}-"
+        # model_dir = "<prefix>-<carrier>-YYYY-mm-dd-HH-MM-SS"
+        prefix_str = f"{MODEL_NAME_PREFIX}-{carrier_code}-"
         if not model_dir.startswith(prefix_str):
             continue
         ts_str = model_dir[len(prefix_str) :]  # "YYYY-mm-dd-HH-MM-SS"

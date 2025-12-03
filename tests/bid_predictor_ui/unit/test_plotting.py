@@ -1,6 +1,6 @@
 import pandas as pd
 
-from bid_predictor.ui import BAR_COLOR_SEQUENCE, build_prediction_plot
+from bid_predictor_ui import BAR_COLOR_SEQUENCE, build_prediction_plot
 
 
 def test_build_prediction_plot_creates_traces():
