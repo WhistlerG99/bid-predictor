@@ -29,8 +29,9 @@ def test_cbc_filters_missing_cat_features(sample_feature_config, sample_training
 def test_build_pipeline_returns_expected_steps(sample_feature_config):
     pipeline = bid_predictor.build_pipeline(feature_config=sample_feature_config)
     step_names = [name for name, _ in pipeline.steps]
-    assert step_names[0:4] == ["flight_code", "depart", "bid_rank", "group"]
-    assert step_names[-1] == "clf"
+    assert step_names == ["feature_add", "feature_transform", "reduce", "clf"]
+    feature_add_step_names = [name for name, _ in pipeline.steps[0][1].steps] 
+    assert feature_add_step_names == ['flight_code', 'depart', 'bid_rank', 'group', 'quantile']
 
 
 def test_pipeline_omits_monotone_constraints_when_not_configured(sample_feature_config):

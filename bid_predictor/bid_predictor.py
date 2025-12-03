@@ -455,7 +455,8 @@ def build_pipeline(feature_config=None, **kw):
         )
 
     reduce_features_transformer = ColumnReducer(selected_features)
-    steps = list(pipeline_feat_add.steps) + [
+    steps = [
+        ("feature_add", pipeline_feat_add),
         ("feature_transform", pipeline_tf),
         ("reduce", reduce_features_transformer),
     ]

@@ -29,7 +29,7 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "bid-predictor-sv-test"
+experiment_name = "bid-predictor-sv"
 job_timestamp = f"{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}" #dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 job_name = f"{experiment_name}-{job_timestamp}"
 run_name = f"run-{job_timestamp}"
