@@ -30,6 +30,7 @@ if DEV:
         "bid_predictor_live_data_by_partners_test"
     )
     IMAGE_NAME = "bid-predictor-sklearn-inference-gpu-test"
+    MODEL_NAME_PREFIX = "bid-predictor-test"
 else:
     PIPELINE_NAME = "BidPredictorBatchInference"
     DATA_PREFIX = (
@@ -37,6 +38,7 @@ else:
         "bid_predictor_live_data_by_partners"
     )
     IMAGE_NAME = "bid-predictor-sklearn-inference-gpu"
+    MODEL_NAME_PREFIX = "bid-predictor"
 
 
 def main():
@@ -148,6 +150,7 @@ def main():
         env={  # pass model bucket & base prefix for dynamic selection
             "MODEL_BUCKET": BUCKET_NAME,
             "MODEL_BASE_PREFIX": MODEL_BASE_PREFIX,
+            "MODEL_NAME_PREFIX": MODEL_NAME_PREFIX,
         },
     )
 
