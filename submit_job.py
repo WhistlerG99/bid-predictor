@@ -17,19 +17,19 @@ repo = "bid-predictor-sklearn-gpu"
 tag = "latest"
 image_uri = f"{account}.dkr.ecr.{REGION}.amazonaws.com/{repo}:{tag}"
 
-task_type = "CPU"
-instance_type = "ml.m5.xlarge"
-devices = "0"
-
-# task_type = "GPU"
-# instance_type = "ml.g5.xlarge"
+# task_type = "CPU"
+# instance_type = "ml.m5.xlarge"
 # devices = "0"
+
+task_type = "GPU"
+instance_type = "ml.g5.xlarge"
+devices = "0"
 
 # instance_type = "ml.g5.12xlarge" # 4 GPUs
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "bid-predictor-sv"
+experiment_name = "bid-predictor-sv-test"
 job_timestamp = f"{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}" #dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 job_name = f"{experiment_name}-{job_timestamp}"
 run_name = f"run-{job_timestamp}"
