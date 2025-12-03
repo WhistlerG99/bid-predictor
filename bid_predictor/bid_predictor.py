@@ -237,6 +237,21 @@ class FeatureConfiguredPipeline(Pipeline):
             type(self).catboost_params = catboost_params
 
 
+class StatelessPipeline(Pipeline):
+    """Pipeline composed of fit-free transformers.
+
+    Sklearn's metadata routing probes transformers prior to fitting, which can
+    trigger warnings for pipelines whose steps do not learn state. Marking the
+    pipeline as not requiring fit avoids those pre-fit warnings while keeping
+    the public behaviour identical for stateless components.
+    """
+
+    def _more_tags(self):
+        tags = super()._more_tags()
+        tags["requires_fit"] = False
+        return tags
+
+
 # ---- 1) Minimal routing-aware wrapper
 class CBC(BaseEstimator, ClassifierMixin):
     def __init__(self, *, cat_features, **cb_params):
@@ -332,7 +347,7 @@ def build_pipeline(feature_config=None, **kw):
     selected_features = feature_config["features"]
     categorical_features = feature_config["cat_features"]
 
-    pipeline_feat_add = Pipeline(
+    pipeline_feat_add = StatelessPipeline(
         steps=[
             ("flight_code", add_flight_code_transformer),
             ("depart", add_days_b4_depart_transformer),
