@@ -5,7 +5,7 @@ from typing import Dict, List, Mapping, Optional, Sequence
 
 import pandas as pd
 
-from ui.data import get_model_feature_config, load_model_cached
+from .data import get_model_feature_config, load_model_cached
 from .feature_config import build_ui_feature_config
 
 
@@ -31,7 +31,7 @@ def predict(
     ----------
     model_uri:
         URI pointing to the persisted model artefact understood by
-        :func:`ui.data.load_model_cached`.
+        :func:`bid_predictor_ui.data.load_model_cached`.
     df:
         Feature rows to score; the original frame is modified in-place so
         callers receive the predictions alongside the inputs they passed in.

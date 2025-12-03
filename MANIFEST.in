@@ -1,2 +1,2 @@
 include bid_predictor/feature_config.yaml
-include ui/feature_range_defaults.yaml
+include bid_predictor_ui/feature_range_defaults.yaml

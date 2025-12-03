@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, State
 
-from ui.data import load_dataset_cached, prepare_prediction_dataframe
+from ..data import load_dataset_cached, prepare_prediction_dataframe
 from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..formatting import apply_bid_labels, compute_bid_label_map
 from ..plotting import build_prediction_plot

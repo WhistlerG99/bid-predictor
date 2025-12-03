@@ -9,17 +9,17 @@ import pytest
 
 MODULE_NAMES = (
     "dash_app",
-    "ui",
-    "ui.snapshot",
-    "ui.snapshot.layout",
-    "ui.snapshot.filters",
-    "ui.snapshot.predictions",
-    "ui.snapshot.view",
-    "ui.feature_sensitivity",
-    "ui.feature_sensitivity.layout",
-    "ui.feature_sensitivity.filters",
-    "ui.feature_sensitivity.baseline",
-    "ui.feature_sensitivity.table",
+    "bid_predictor_ui",
+    "bid_predictor_ui.snapshot",
+    "bid_predictor_ui.snapshot.layout",
+    "bid_predictor_ui.snapshot.filters",
+    "bid_predictor_ui.snapshot.predictions",
+    "bid_predictor_ui.snapshot.view",
+    "bid_predictor_ui.feature_sensitivity",
+    "bid_predictor_ui.feature_sensitivity.layout",
+    "bid_predictor_ui.feature_sensitivity.filters",
+    "bid_predictor_ui.feature_sensitivity.baseline",
+    "bid_predictor_ui.feature_sensitivity.table",
 )
 
 
@@ -65,16 +65,27 @@ def _stub_dash(monkeypatch: pytest.MonkeyPatch) -> None:
     dash_stub.Input = type("Input", (), {})
     dash_stub.Output = type("Output", (), {})
     dash_stub.State = type("State", (), {})
+    dash_stub.ctx = object()
     dash_stub.callback_context = None
     dash_stub.no_update = object()
     dash_stub.dcc = _DummyModule("dash.dcc")
     dash_stub.html = _DummyModule("dash.html")
     dash_stub.dash_table = _DummyModule("dash.dash_table")
 
+    exceptions = types.ModuleType("dash.exceptions")
+    exceptions.PreventUpdate = type("PreventUpdate", (Exception,), {})
+    dash_stub.exceptions = exceptions
+
     monkeypatch.setitem(sys.modules, "dash", dash_stub)
     monkeypatch.setitem(sys.modules, "dash.dcc", dash_stub.dcc)
     monkeypatch.setitem(sys.modules, "dash.html", dash_stub.html)
     monkeypatch.setitem(sys.modules, "dash.dash_table", dash_stub.dash_table)
+    monkeypatch.setitem(sys.modules, "dash.exceptions", exceptions)
+
+    if "psycopg2" not in sys.modules:
+        psycopg2_stub = types.ModuleType("psycopg2")
+        psycopg2_stub.connect = lambda *args, **kwargs: None  # type: ignore[assignment]
+        monkeypatch.setitem(sys.modules, "psycopg2", psycopg2_stub)
 
 
 @pytest.mark.parametrize("module_name", MODULE_NAMES)

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from ui.scenario import (
+from bid_predictor_ui.scenario import (
     TIME_TO_DEPARTURE_SCENARIO_KEY,
     ScenarioFeature,
     build_adjustment_grid,
