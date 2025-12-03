@@ -1,6 +1,6 @@
 import pandas as pd
 
-from bid_predictor.ui import (
+from ui import (
     BID_IDENTIFIER_COLUMNS,
     DEFAULT_UI_FEATURE_CONFIG,
     apply_bid_labels,

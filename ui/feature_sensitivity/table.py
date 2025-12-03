@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from dash import Dash, Input, Output, State, no_update
 
-from ...data import prepare_prediction_dataframe
+from ..data import prepare_prediction_dataframe
 from ..feature_config import DEFAULT_UI_FEATURE_CONFIG
 from ..predictions import extract_derived_feature_rows, predict
 from ..scenario import ScenarioFeature, resolve_locked_cells

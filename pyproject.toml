@@ -24,7 +24,7 @@ Repository = "https://example.com/bid-predictor"
 # --- tell setuptools where to find your package ---
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["bid_predictor*"]
+include = ["bid_predictor*", "ui*"]
 
 [tool.setuptools.dynamic]
 dependencies = { file = ["requirements.txt"] }

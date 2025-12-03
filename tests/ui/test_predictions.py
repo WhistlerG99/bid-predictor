@@ -1,6 +1,6 @@
 import pandas as pd
 
-from bid_predictor.ui.predictions import predict
+from ui.predictions import predict
 
 
 class DummyModel:
@@ -12,7 +12,7 @@ def test_predict_adds_probability_and_warning(monkeypatch):
     def fake_loader(model_uri: str):
         return DummyModel()
 
-    monkeypatch.setattr("bid_predictor.ui.predictions.load_model_cached", fake_loader)
+    monkeypatch.setattr("ui.predictions.load_model_cached", fake_loader)
     df = pd.DataFrame({"feature_a": [1.0, 2.0]})
     result = predict(
         "model://dummy",

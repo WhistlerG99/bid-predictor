@@ -1,4 +1,4 @@
-from bid_predictor.ui.tables import apply_table_edits, build_bid_table
+from ui.tables import apply_table_edits, build_bid_table
 
 
 def test_build_bid_table_formats_predictions():

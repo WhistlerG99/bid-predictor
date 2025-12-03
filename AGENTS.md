@@ -24,9 +24,9 @@
   - `result_writing.py`: CSV/JSON/YAML writers for tuning summaries (normalize numpy types first).
 
 ## Dash UI Helpers
-- `dash_app.py` at the repository root should focus on layout and callbacks. Move reusable logic into the `bid_predictor/ui/` package.
+- `dash_app.py` at the repository root should focus on layout and callbacks. Reusable logic now lives in the top-level `ui/` package.
 - Each helper module in `ui/` should stay small and purpose-driven (e.g., data access, formatting, plotting).
-- Add or update unit tests under `tests/unit/ui/` whenever changing the UI helpers.
+- Add or update unit tests under `tests/ui/` whenever changing the UI helpers.
 
 ## Typical Tuning Flow (`tune_catboost.py`)
 1. Parse CLI arguments (data path, feature config, search config, CV, MLflow, artifact outputs).
@@ -77,13 +77,13 @@
 - Writers sanitize values (NumPy scalars, nested dicts) before serialization.
 
 ## Testing Strategy
-- Unit tests live under `tests/unit/`, integration tests under `tests/integration/`.
-- Run the full suite with `pytest -q` from the repo root.
+- Core package unit tests live under `tests/bid_predictor/unit/`, integration tests under `tests/bid_predictor/integration/`, and UI unit tests under `tests/ui/`.
+- Run the full suite with `pytest -q` from the repo root, or target the UI and core package tests independently by pointing pytest at their respective folders.
 - The `--testing` CLI flag mirrors the integration suite's small evaluation split; use it when running scripts in CI-like contexts.
 
 ## Contribution Tips
 - Prefer modifying helper modules inside `bid_predictor/tuning/` when adding tuning-related functionality; keep `tune_catboost.py` focused on orchestration.
 - Maintain deterministic behavior: keep random seeds plumbed from CLI into CatBoost and CV splitters.
 - Normalize any user-facing or serialized outputs (NumPy -> Python types) to prevent downstream errors.
-- Update or add unit tests when touching tuning utilities; leverage existing fixtures in `tests/unit/test_tuning_modules.py`.
+- Update or add unit tests when touching tuning utilities; leverage existing fixtures in `tests/bid_predictor/unit/test_tuning_modules.py`.
 
