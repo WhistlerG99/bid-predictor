@@ -31,6 +31,9 @@ if DEV:
     )
     IMAGE_NAME = "bid-predictor-sklearn-inference-gpu-test"
     MODEL_NAME_PREFIX = "bid-predictor-test"
+
+    OUTPUT_BUCKET_NAME = BUCKET_NAME
+    OUTPUT_DATA_PREFIX = DATA_PREFIX+"/output"
 else:
     PIPELINE_NAME = "BidPredictorBatchInference"
     DATA_PREFIX = (
@@ -39,6 +42,9 @@ else:
     )
     IMAGE_NAME = "bid-predictor-sklearn-inference-gpu"
     MODEL_NAME_PREFIX = "bid-predictor"
+
+    OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"
+    OUTPUT_DATA_PREFIX = "bid_success_predictor_stg/file_name=audit_bid_predictor"
 
 
 def main():
@@ -77,13 +83,13 @@ def main():
         ],
     )
 
-    # final CSV:
-    # <base_dir>/output/<partner>/availability-offers-probability-<timestamp>.csv
+    # final parquet:
     final_output_path = Join(
         on="/",
         values=[
-            base_dir,
-            "output",
+            "s3:/",
+            OUTPUT_BUCKET_NAME,
+            OUTPUT_DATA_PREFIX,
         ],
     )
 
@@ -184,7 +190,7 @@ def main():
                 output_name="model_config",
                 source="/opt/ml/processing/model_config",
                 destination=model_config_output_path,
-            ),            
+            ),
         ],
         property_files=[model_config_prop],  # expose model_config.json as step properties
     )
@@ -239,7 +245,7 @@ def main():
         ),
     )
 
-    # ---------- Postprocessing to CSV ----------
+    # ---------- Postprocessing to Parquet ----------
     postprocess_processor = ScriptProcessor(
         role=role,
         image_uri=image_uri,
@@ -250,7 +256,7 @@ def main():
     )
 
     postprocess_step = ProcessingStep(
-        name="PostprocessToCsv",
+        name="PostprocessToParquet",
         processor=postprocess_processor,
         code="postprocess.py",
         inputs=[
@@ -264,7 +270,7 @@ def main():
         ],
         outputs=[
             ProcessingOutput(
-                output_name="final_csv",
+                output_name="final_parquet",
                 source="/opt/ml/processing/output",
                 destination=final_output_path,
             )
