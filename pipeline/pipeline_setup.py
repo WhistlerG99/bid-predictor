@@ -44,7 +44,7 @@ else:
     MODEL_NAME_PREFIX = "bid-predictor"
 
     OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"
-    OUTPUT_DATA_PREFIX = "bid_success_predictor_stg/file_name=audit_bid_predictor"
+    OUTPUT_DATA_PREFIX = "bid_success_predictor_stg"
 
 
 def main():

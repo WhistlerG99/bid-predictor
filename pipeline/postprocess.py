@@ -12,6 +12,20 @@ OUTPUT_DIR = "/opt/ml/processing/output"
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+OFFER_PROB_COLS = [
+    "offer_id",
+    "partner_id",
+    "product_id",
+    "carrier_code",
+    "flight_number",
+    "departure_timestamp",
+    "origination_code",
+    "destination_code",
+    "upgrade_type",
+    "accept_prob",
+    "accept_prob_timestamp",
+]
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -66,23 +80,38 @@ def main():
     timestamp = df["file_timestamp"].iloc[0]
     logger.info(f"Using file_timestamp={timestamp} for final parquet name")
 
+    # Drop file_timestamp from final parquet
+    df = df.drop(columns=["file_timestamp"])
+
     year, month, day = re.search(r"(\d{4})-(\d{2})-(\d{2})T", timestamp).groups()
     # now = datetime.now()
     # year, month, day = f"{now.year:04d}", f"{now.month:02d}", f"{now.day:02d}"
-    output_dir = OUTPUT_DIR + f"/year={year}/month={month}/day={day}"
+    
+    # Write output to file_name=audit_bid_predictor/
+    audit_dir = OUTPUT_DIR + f"/file_name=audit_bid_predictor/year={year}/month={month}/day={day}"
 
-    # Optional: drop file_timestamp from final parquet if you don't want it in output
-    df = df.drop(columns=["file_timestamp"])
-
-    output_filename = (
+    audit_filename = (
         f"{timestamp}-audit_bid_predictor-"
         f"{pipeline_execution_id}.parquet"
     )
-    os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, output_filename)
+    os.makedirs(audit_dir, exist_ok=True)
+    audit_path = os.path.join(audit_dir, audit_filename)
 
-    df.to_parquet(output_path, index=False)
-    logger.info(f"Wrote final parquet to: {output_path}")
+    df.to_parquet(audit_path, index=False)
+    logger.info(f"Wrote audit_bid_predictor parquet file to: {audit_path}")
+
+    # Write output to file_name=offer_probabilities/
+    offer_prob_dir = OUTPUT_DIR + f"/file_name=offer_probabilities/year={year}/month={month}/day={day}"
+
+    offer_prob_filename = (
+        f"{timestamp}-offer_probabilities-"
+        f"{pipeline_execution_id}.parquet"
+    )
+    os.makedirs(offer_prob_dir, exist_ok=True)
+    offer_prob_path = os.path.join(offer_prob_dir, offer_prob_filename)
+
+    df[OFFER_PROB_COLS].to_parquet(offer_prob_path, index=False)
+    logger.info(f"Wrote offer_probabilities parquet file to: {offer_prob_path}")
 
 
 if __name__ == "__main__":
