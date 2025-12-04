@@ -1,5 +1,4 @@
 # postprocess.py
-import argparse
 import glob
 import logging
 import os
@@ -27,21 +26,9 @@ OFFER_PROB_COLS = [
 ]
 
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--pipeline-execution-id",
-        default=os.getenv("PIPELINE_EXECUTION_ID"),
-        help="Pipeline execution id used to label the output parquet filename.",
-    )
-    return parser.parse_args()
-
-
 def main():
-    args = parse_args()
     # SageMaker Batch Transform writes *.parquet.out (and sometimes just *.out),
     # so we look for all of those.
-    pipeline_execution_id = args.pipeline_execution_id or "unknown-execution-id"
     parquet_files = (
         glob.glob(os.path.join(INPUT_DIR, "*.parquet")) +
         glob.glob(os.path.join(INPUT_DIR, "*.parquet.out"))
@@ -78,7 +65,10 @@ def main():
         df[c] = pd.to_datetime(df[c]).dt.round("s").astype("datetime64[ms]")
 
     timestamp = df["file_timestamp"].iloc[0]
-    logger.info(f"Using file_timestamp={timestamp} for final parquet name")
+    logger.info(f"Using file_timestamp={timestamp} in final parquet name")
+
+    carrier_code = df["carrier_code"].iloc[0].lower()
+    logger.info(f"Using carrier_code={carrier_code} in final parquet name")
 
     # Drop file_timestamp from final parquet
     df = df.drop(columns=["file_timestamp"])
@@ -92,7 +82,7 @@ def main():
 
     audit_filename = (
         f"{timestamp}-audit_bid_predictor-"
-        f"{pipeline_execution_id}.parquet"
+        f"{carrier_code}.parquet"
     )
     os.makedirs(audit_dir, exist_ok=True)
     audit_path = os.path.join(audit_dir, audit_filename)
@@ -105,7 +95,7 @@ def main():
 
     offer_prob_filename = (
         f"{timestamp}-offer_probabilities-"
-        f"{pipeline_execution_id}.parquet"
+        f"{carrier_code}.parquet"
     )
     os.makedirs(offer_prob_dir, exist_ok=True)
     offer_prob_path = os.path.join(offer_prob_dir, offer_prob_filename)
