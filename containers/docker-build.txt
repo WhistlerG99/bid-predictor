@@ -36,7 +36,7 @@ docker buildx build \
 # 1) Set environment Variables
 export AWS_REGION=us-east-1
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export REPO_NAME=bid-predictor-sklearn-inference-gpu
+export REPO_NAME=bid-predictor-sklearn-inference-gpu-test
 export IMAGE_TAG=latest
 export ECR_URI=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${IMAGE_TAG}
 

@@ -151,7 +151,7 @@ def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
         "usd_base_amount_max",
         "num_offers",
         "bid_rank",
-        "acceptance_prob",
+        "accept_prob",
         "accept_prob_timestamp",
         "file_timestamp",
     ]
@@ -176,7 +176,7 @@ def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
     probs, X_tf = model.transform_and_predict_proba(X)
     data = pd.concat((data, X_tf[cols_derived]), axis=1)
 
-    data["acceptance_prob"] = probs[:,1]
+    data["accept_prob"] = probs[:,1]
     data["accept_prob_timestamp"] = pd.Timestamp.now()
 
     # data = data[cols].rename({"usd_base_amount_25%": "usd_base_amount_25_percent",
