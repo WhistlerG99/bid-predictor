@@ -259,10 +259,6 @@ def main():
         name="PostprocessToParquet",
         processor=postprocess_processor,
         code="postprocess.py",
-        job_arguments=[
-            "--pipeline-execution-id",
-            ExecutionVariables.PIPELINE_EXECUTION_ID,
-        ],
         inputs=[
             ProcessingInput(
                 source=batch_transform_step
