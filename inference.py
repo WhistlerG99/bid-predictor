@@ -179,9 +179,13 @@ def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
     data["accept_prob"] = probs[:,1]
     data["accept_prob_timestamp"] = pd.Timestamp.now()
 
-    # data = data[cols].rename({"usd_base_amount_25%": "usd_base_amount_25_percent",
-    #                           "usd_base_amount_50%": "usd_base_amount_50_percent",
-    #                           "usd_base_amount_75%": "usd_base_amount_75_percent"})
+    data = data[cols].rename(
+        columns={
+            "usd_base_amount_25%": "usd_base_amount_25_percent",
+            "usd_base_amount_50%": "usd_base_amount_50_percent",
+            "usd_base_amount_75%": "usd_base_amount_75_percent"
+        }
+    )
 
     return data
 
