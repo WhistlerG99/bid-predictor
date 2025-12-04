@@ -1,9 +1,9 @@
 # postprocess.py
-import os
-import re
-# from datetime import datetime
+import argparse
 import glob
 import logging
+import os
+import re
 import pandas as pd
 
 INPUT_DIR = "/opt/ml/processing/input"
@@ -13,9 +13,21 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--pipeline-execution-id",
+        default=os.getenv("PIPELINE_EXECUTION_ID"),
+        help="Pipeline execution id used to label the output parquet filename.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     # SageMaker Batch Transform writes *.parquet.out (and sometimes just *.out),
     # so we look for all of those.
+    pipeline_execution_id = args.pipeline_execution_id or "unknown-execution-id"
     parquet_files = (
         glob.glob(os.path.join(INPUT_DIR, "*.parquet")) +
         glob.glob(os.path.join(INPUT_DIR, "*.parquet.out"))
@@ -52,21 +64,20 @@ def main():
         df[c] = pd.to_datetime(df[c]).dt.round("s").astype("datetime64[ms]")
 
     timestamp = df["file_timestamp"].iloc[0]
-    # carrier_code = df["carrier_code"].iloc[0]
-
     logger.info(f"Using file_timestamp={timestamp} for final parquet name")
 
     year, month, day = re.search(r"(\d{4})-(\d{2})-(\d{2})T", timestamp).groups()
     # now = datetime.now()
     # year, month, day = f"{now.year:04d}", f"{now.month:02d}", f"{now.day:02d}"
-
-    # output_dir = OUTPUT_DIR + f"/year={year}/month={month}/day={day}/" + carrier_code
     output_dir = OUTPUT_DIR + f"/year={year}/month={month}/day={day}"
 
     # Optional: drop file_timestamp from final parquet if you don't want it in output
     df = df.drop(columns=["file_timestamp"])
 
-    output_filename = f"{timestamp}-audit_bid_predictor.parquet"
+    output_filename = (
+        f"{timestamp}-audit_bid_predictor-"
+        f"{pipeline_execution_id}.parquet"
+    )
     os.makedirs(output_dir, exist_ok=True)
     output_path = os.path.join(output_dir, output_filename)
 
