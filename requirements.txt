@@ -10,6 +10,7 @@ psycopg2-binary==2.9.10
 PyYAML==6.0.2
 feature-engine==1.9.3
 scikit-optimize==0.10.2
+fastparquet==2024.11.0
 pytest
 sagemaker-mlflow
 psutil
