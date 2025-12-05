@@ -67,8 +67,8 @@ def main():
     timestamp = df["file_timestamp"].iloc[0]
     logger.info(f"Using file_timestamp={timestamp} in final parquet name")
 
-    carrier_code = df["carrier_code"].iloc[0].lower()
-    logger.info(f"Using carrier_code={carrier_code} in final parquet name")
+    partner_id = df["partner_id"].iloc[0]
+    logger.info(f"Using partner_id={partner_id}")
 
     # Drop file_timestamp from final parquet
     df = df.drop(columns=["file_timestamp"])
@@ -78,11 +78,10 @@ def main():
     # year, month, day = f"{now.year:04d}", f"{now.month:02d}", f"{now.day:02d}"
     
     # Write output to file_name=audit_bid_predictor/
-    audit_dir = OUTPUT_DIR + f"/file_name=audit_bid_predictor/year={year}/month={month}/day={day}"
+    audit_dir = OUTPUT_DIR + f"/file_name=audit_bid_predictor/partner_id={partner_id}/year={year}/month={month}/day={day}"
 
     audit_filename = (
-        f"{timestamp}-audit_bid_predictor-"
-        f"{carrier_code}.parquet"
+        f"{timestamp}-audit_bid_predictor.parquet"
     )
     os.makedirs(audit_dir, exist_ok=True)
     audit_path = os.path.join(audit_dir, audit_filename)
@@ -91,11 +90,10 @@ def main():
     logger.info(f"Wrote audit_bid_predictor parquet file to: {audit_path}")
 
     # Write output to file_name=offer_probabilities/
-    offer_prob_dir = OUTPUT_DIR + f"/file_name=offer_probabilities/year={year}/month={month}/day={day}"
+    offer_prob_dir = OUTPUT_DIR + f"/file_name=offer_probabilities/partner_id={partner_id}/year={year}/month={month}/day={day}"
 
     offer_prob_filename = (
-        f"{timestamp}-offer_probabilities-"
-        f"{carrier_code}.parquet"
+        f"{timestamp}-offer_probabilities.parquet"
     )
     os.makedirs(offer_prob_dir, exist_ok=True)
     offer_prob_path = os.path.join(offer_prob_dir, offer_prob_filename)
