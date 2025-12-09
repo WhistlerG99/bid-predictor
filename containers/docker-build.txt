@@ -1,7 +1,8 @@
 
 aws configure sso # if first time
 
-export AWS_PROFILE=DevManage-622055002283
+export AWS_PROFILE=DevManage-622055002283 # Stg
+export AWS_PROFILE=DevManage-382704342560 # Prod
 aws sso login
 
 
@@ -10,7 +11,7 @@ aws sso login
 # 1) Set environment variables
 export AWS_REGION=us-east-1
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text) # it's usually 622055002283
-export REPO=bid-predictor-sklearn-gpu
+export REPO=bid-predictor-training
 export TAG=latest
 
 # 2) Create ECR repo (if not already there)
@@ -36,7 +37,7 @@ docker buildx build \
 # 1) Set environment Variables
 export AWS_REGION=us-east-1
 export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-export REPO_NAME=bid-predictor-sklearn-inference-gpu-test
+export REPO_NAME=bid-predictor-inference-test
 export IMAGE_TAG=latest
 export ECR_URI=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${REPO_NAME}:${IMAGE_TAG}
 

@@ -29,7 +29,7 @@ if DEV:
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners_test"
     )
-    IMAGE_NAME = "bid-predictor-sklearn-inference-gpu-test"
+    IMAGE_NAME = "bid-predictor-inference-test"
     MODEL_NAME_PREFIX = "bid-predictor-test"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
@@ -40,7 +40,7 @@ else:
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners"
     )
-    IMAGE_NAME = "bid-predictor-sklearn-inference-gpu"
+    IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
 
     OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"

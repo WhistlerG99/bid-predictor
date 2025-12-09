@@ -13,7 +13,7 @@ REGION = os.environ.get("AWS_REGION", "us-east-1")
 sess = sagemaker.Session()
 
 account = sess.boto_session.client("sts").get_caller_identity()["Account"]
-repo = "bid-predictor-sklearn-gpu"
+repo = "bid-predictor-training"
 tag = "latest"
 image_uri = f"{account}.dkr.ecr.{REGION}.amazonaws.com/{repo}:{tag}"
 
