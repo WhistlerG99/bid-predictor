@@ -50,7 +50,7 @@ def build_prediction_plot(df: pd.DataFrame) -> go.Figure:
             (pd.to_datetime(work["departure_timestamp"]) - pd.to_datetime(work["current_timestamp"]))
             .dt.total_seconds()
             .div(3600)
-            .round()
+            .round(4)
         )
     elif "snapshot_num" in work.columns:
         work["time_until_departure_hours"] = work["snapshot_num"]
