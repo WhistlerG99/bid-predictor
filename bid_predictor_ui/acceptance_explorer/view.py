@@ -96,26 +96,35 @@ def _parse_recent_hours(hours_value: object) -> Optional[int]:
 
 
 def _list_remote_files(filesystem: pyfs.FileSystem, uri: str) -> List[str]:
+    """
+    Recursively list all parquet/csv files under an S3 directory (or return the file if a file is given).
+    Returns S3-relative paths (bucket/key), consistent with pyarrow FileSystem usage.
+    """
     relative_path = uri.replace("s3://", "", 1)
     info = filesystem.get_file_info([relative_path])[0]
+
     if info.type == pyfs.FileType.NotFound:
         raise FileNotFoundError(f"Dataset path does not exist: {uri}")
 
+    exts = {".parquet", ".pq", ".csv"}
+
     if info.type == pyfs.FileType.File:
-        return [relative_path]
+        if PurePosixPath(relative_path).suffix.lower() in exts:
+            return [relative_path]
+        raise ValueError("Provided file is not a parquet or CSV file.")
 
     if info.type == pyfs.FileType.Directory:
-        selector = pyfs.FileSelector(relative_path, recursive=False)
+        selector = pyfs.FileSelector(relative_path, recursive=True)
         entries = filesystem.get_file_info(selector)
         files = [
             entry.path
             for entry in entries
             if entry.type == pyfs.FileType.File
-            and PurePosixPath(entry.path).suffix.lower() in {".parquet", ".pq", ".csv"}
+            and PurePosixPath(entry.path).suffix.lower() in exts
         ]
         if not files:
             raise ValueError(
-                "No parquet or CSV files found in the provided directory."
+                "No parquet or CSV files found in the provided directory or its subdirectories."
             )
         return sorted(files)
 
