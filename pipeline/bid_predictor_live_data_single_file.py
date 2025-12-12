@@ -74,7 +74,7 @@ def main():
     args = parser.parse_args()
 
     DB_HOST = args.host
-    DB_PORT = args.port
+    DB_PORT = int(args.port)
     DB_NAME = args.database
     DB_USER = args.user
     DB_PASSWORD = args.password
