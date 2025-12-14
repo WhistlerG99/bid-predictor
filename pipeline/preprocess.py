@@ -120,9 +120,10 @@ def main():
         axis=1,
     )
     df["snapshot_num"] = 1
-    df["current_timestamp"] = (
-        pd.Timestamp.now("utc").round(freq="s") + pd.to_timedelta(df["utc_diff"], "m")
-    ).dt.tz_localize(None)
+    df["current_timestamp"] = pd.Timestamp.now("utc").round(freq="s").tz_localize(None) # TODO: change to local time
+    # df["current_timestamp"] = (
+    #     pd.Timestamp.now("utc").round(freq="s") + pd.to_timedelta(df["utc_diff"], "m")
+    # ).dt.tz_localize(None)
     df["file_timestamp"] = timestamp_str
 
     for c in ["travel_date", "departure_timestamp"]:
