@@ -67,7 +67,7 @@ if ENVIRONMENT.lower() == "dev":
 elif ENVIRONMENT.lower() == "stg":
     ACCOUNT_ID = "622055002283"
     REGION = "us-east-1"
-    
+
     PIPELINE_NAME = "BidPredictorBatchInference"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
