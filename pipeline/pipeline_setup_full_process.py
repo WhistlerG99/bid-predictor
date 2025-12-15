@@ -20,12 +20,28 @@ from sagemaker.workflow.properties import PropertyFile
 
 from sagemaker.network import NetworkConfig
 
+DEFAULT_REDSHIFT_HOST_STG = (
+    "redshift-serverless-wg-stg.234771642813"
+    ".us-east-1.redshift-serverless.amazonaws.com"
+)
+DEFAULT_REDSHIFT_PWD_STG = "/+R5T11uYH,x=zB[k"
 
-ENVIRONMENT = "preprod"
+DEFAULT_REDSHIFT_HOST_PRD = (
+    "redshift-serverless-wg-prd.234771642813"
+    ".us-east-1.redshift-serverless.amazonaws.com"
+)
+DEFAULT_REDSHIFT_PWD_PRD = "5A)J6^US6HG0{q)@v;£"
+
+DEFAULT_REDSHIFT_USER = "sagemaker"
+DEFAULT_REDSHIFT_PORT = "5439"
+
+
+ENVIRONMENT = "dev"
 if ENVIRONMENT.lower() == "dev":
     ACCOUNT_ID = "622055002283"
     REGION = "us-east-1"
-    PIPELINE_NAME = "BidPredictorBatchInferenceDev5"
+
+    PIPELINE_NAME = "BidPredictorBatchInferenceDev6"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
     MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
@@ -34,16 +50,24 @@ if ENVIRONMENT.lower() == "dev":
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners_test"
     )
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_STG
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_STG
+    DEFAULT_LOOKUP =f"s3://{BUCKET_NAME}/{DATA_PREFIX}/lookup_table_bid_predictor.csv"
+    DEFAULT_TEMP_PATH = f"s3://{BUCKET_NAME}/{DATA_PREFIX}/processing"
+
     IMAGE_NAME = "bid-predictor-inference-test"
     MODEL_NAME_PREFIX = "bid-predictor-test"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = DATA_PREFIX+"/output"
 
+    network_config = None
+
 elif ENVIRONMENT.lower() == "stg":
     ACCOUNT_ID = "622055002283"
     REGION = "us-east-1"
-
+    
     PIPELINE_NAME = "BidPredictorBatchInference"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
@@ -53,11 +77,19 @@ elif ENVIRONMENT.lower() == "stg":
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners"
     )
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_STG
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_STG
+    DEFAULT_LOOKUP =f"s3://{BUCKET_NAME}/{DATA_PREFIX}/lookup_table_bid_predictor.csv"
+    DEFAULT_TEMP_PATH = f"s3://{BUCKET_NAME}/{DATA_PREFIX}/processing"
+
     IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
 
     OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"
     OUTPUT_DATA_PREFIX = "bid_success_predictor_stg"
+
+    network_config = None
 
 elif ENVIRONMENT.lower() in ("preprd", "preprod"):
     ACCOUNT_ID = "382704342560"
@@ -65,16 +97,26 @@ elif ENVIRONMENT.lower() in ("preprd", "preprod"):
 
     PIPELINE_NAME = "BidPredictorBatchInferencePrePrd"
 
-    IMAGE_NAME = "bid-predictor-inference"
-
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
     MODEL_BASE_PREFIX = "bid_success_predictor/models"
-    MODEL_NAME_PREFIX = "bid-predictor"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
+    IMAGE_NAME = "bid-predictor-inference"
+    MODEL_NAME_PREFIX = "bid-predictor"
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_PRD
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_PRD
+    DEFAULT_LOOKUP = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/lookup_table_bid_predictor.csv"    
+    DEFAULT_TEMP_PATH = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/tmp"    
+
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = "bid_success_predictor_prd/output/results"
+
+    network_config = NetworkConfig(
+        subnets=['subnet-07cfb1a5945594ed2', 'subnet-094594e0b85e77bb6'],
+        security_group_ids=['sg-0d755d27b93bae7cf']
+    )
 
 elif ENVIRONMENT.lower() in ("prd", "prod"):
     ACCOUNT_ID = "382704342560"
@@ -82,39 +124,45 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
 
     PIPELINE_NAME = "BidPredictorBatchInferencePrd"
 
-    IMAGE_NAME = "bid-predictor-inference"
-
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
     MODEL_BASE_PREFIX = "bid_success_predictor/models"
-    MODEL_NAME_PREFIX = "bid-predictor"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
+    IMAGE_NAME = "bid-predictor-inference"
+    MODEL_NAME_PREFIX = "bid-predictor"
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_PRD
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_PRD
+    DEFAULT_LOOKUP = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/lookup_table_bid_predictor.csv"    
+    DEFAULT_TEMP_PATH = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/tmp"    
+    
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = "bid_success_predictor_prd/output/results"
 
+    network_config = NetworkConfig(
+        subnets=['subnet-07cfb1a5945594ed2', 'subnet-094594e0b85e77bb6'],
+        security_group_ids=['sg-0d755d27b93bae7cf']
+    )
 
 
 
 def main():
 
-    host_param = ParameterString(name="host", default_value="redshift-serverless-wg-prd.234771642813.us-east-1.redshift-serverless.amazonaws.com")
+    host_param = ParameterString(name="host", default_value=DEFAULT_REDSHIFT_HOST)
     database_param = ParameterString(name="database", default_value="dev")
-    user_param = ParameterString(name="user", default_value="sagemaker")
-    password_param = ParameterString(name="password", default_value="5A)J6^US6HG0{q)@v;£")
-    port_param = ParameterString(name="port", default_value="5439")
-    carrier_param = ParameterString(name="carrier", default_value="EY")
-    partner_csv_s3_path_param = ParameterString(name="partner_csv_s3_path", default_value="s3://sagemaker-us-east-1-382704342560/bid_success_predictor/lookup_table_bid_predictor.csv")
-    temp_s3_path_param = ParameterString(name="temp_s3_path", default_value="s3://sagemaker-us-east-1-382704342560/bid_success_predictor/tmp")
+    user_param = ParameterString(name="user", default_value=DEFAULT_REDSHIFT_USER)
+    password_param = ParameterString(name="password", default_value=DEFAULT_REDSHIFT_PWD)
+    port_param = ParameterString(name="port", default_value=DEFAULT_REDSHIFT_PORT)
+    carrier_param = ParameterString(name="carrier", default_value="SV")
+    partner_csv_s3_path_param = ParameterString(name="partner_csv_s3_path", default_value=DEFAULT_LOOKUP)
+    temp_s3_path_param = ParameterString(name="temp_s3_path", default_value=DEFAULT_TEMP_PATH)
     
     pipeline_session = PipelineSession()
     role = sagemaker.get_execution_role()
 
     # Create the network config
-    network_config = NetworkConfig(
-        subnets=['subnet-07cfb1a5945594ed2', 'subnet-094594e0b85e77bb6'],
-        security_group_ids=['sg-0d755d27b93bae7cf']
-    )
+
 
     instance_type = "ml.m5.xlarge"
 
