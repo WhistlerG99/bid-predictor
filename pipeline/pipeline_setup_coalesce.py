@@ -9,7 +9,7 @@ from sagemaker.session import Session
 from sagemaker.network import NetworkConfig
 
 
-ENVIRONMENT = "preprd"
+ENVIRONMENT = "prd"
 if ENVIRONMENT.lower() == "dev":
     ACCOUNT_ID = "622055002283"
     REGION = "us-east-1"
@@ -27,6 +27,7 @@ if ENVIRONMENT.lower() == "dev":
         f"s3://{BUCKET_NAME}/output/lookup_file"
         f"/lookup_table_bid_predictor.csv"
     )
+    DEFAULT_INPUT_PREFIX = "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/offer_probability_csv"
     DEFAULT_OUTPUT_CSV = (
         f"s3://{BUCKET_NAME}/{PREFIX}/shared"
         f"/offer_probability_csv/offer_probability.csv"
@@ -51,6 +52,7 @@ elif ENVIRONMENT.lower() == "stg":
         f"s3://{BUCKET_NAME}/output/lookup_file"
         f"/lookup_table_bid_predictor.csv"
     )
+    DEFAULT_INPUT_PREFIX = "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/offer_probability_csv"
     DEFAULT_OUTPUT_CSV = (
         f"s3://{BUCKET_NAME}/{PREFIX}/shared"
         f"/offer_probability_csv/offer_probability.csv"
@@ -76,6 +78,7 @@ elif ENVIRONMENT.lower() in ("preprd", "preprod"):
         f"s3://{BUCKET_NAME}/bid_success_predictor/"
         f"lookup_table_bid_predictor.csv"
     )
+    DEFAULT_INPUT_PREFIX = "bid_success_predictor/results/offer_probability_csv"
     DEFAULT_OUTPUT_CSV = (
         f"s3://{BUCKET_NAME}/bid_success_predictor_prd"
         f"/offer_probability_csv/offer_probability.csv"
@@ -104,9 +107,11 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
         f"s3://{BUCKET_NAME}/bid_success_predictor/"
         f"lookup_table_bid_predictor.csv"
     )
+    DEFAULT_INPUT_PREFIX = "bid_success_predictor/results/offer_probability_csv"
+    OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions-prd"
     DEFAULT_OUTPUT_CSV = (
-        f"s3://{BUCKET_NAME}/bid_success_predictor_prd"
-        f"/offer_probability_csv/offer_probability.csv"
+        f"s3://{OUTPUT_BUCKET_NAME}/bid_success_predictor_prd"
+        f"/offer_probabilities_csv/offer_probabilities.csv"
     )
 
     # Create the network config
@@ -125,11 +130,11 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
 # script_s3_uri = f"s3://{bucket}/{s3_key}"
 # print("Uploaded script to:", script_s3_uri)
 
-
 def main():
     s3_bucket_param = ParameterString(name="s3_bucket", default_value=BUCKET_NAME)
     hwm_path_param = ParameterString(name="hwm_path", default_value=DEFAULT_HWM_PATH)
     lookup_path_param = ParameterString(name="lookup_path", default_value=DEFAULT_LOOKUP_PATH)
+    input_prefix_param = ParameterString(name="input_prefix", default_value=DEFAULT_INPUT_PREFIX)
     output_csv_param = ParameterString(name="output_csv", default_value=DEFAULT_OUTPUT_CSV)
 
     sagemaker_session = sagemaker.Session()
@@ -156,6 +161,7 @@ def main():
             "--s3_bucket", s3_bucket_param,
             "--hwm_path", hwm_path_param,
             "--lookup_path", lookup_path_param,
+            "--input_prefix", input_prefix_param,
             "--output_csv", output_csv_param,
         ],
     )
@@ -166,6 +172,7 @@ def main():
             s3_bucket_param,
             hwm_path_param,
             lookup_path_param,
+            input_prefix_param,
             output_csv_param,
         ],
         steps=[processing_step],
