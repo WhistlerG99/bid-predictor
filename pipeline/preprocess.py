@@ -5,6 +5,7 @@ import glob
 import logging
 import json
 import boto3
+import mlflow
 import pandas as pd
 
 INPUT_DIR = "/opt/ml/processing/input"
@@ -16,62 +17,60 @@ MODEL_CONFIG_DIR = (
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# These will be passed via env from pipeline_setup.py
-MODEL_BUCKET = os.getenv(
-    "MODEL_BUCKET", "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-)
-MODEL_BASE_PREFIX = os.getenv(
-    "MODEL_BASE_PREFIX", "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
-)  # e.g. "dzd_.../dev"
-
 MODEL_NAME_PREFIX = os.getenv(
     "MODEL_NAME_PREFIX", "bid-predictor"
 )  # e.g. "bid-predictor"
+MODEL_REGISTRY_STAGE = os.getenv("MODEL_REGISTRY_STAGE", "Production")
+
+_tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+if not _tracking_uri:
+    _default_region = os.getenv("AWS_REGION") or boto3.session.Session().region_name
+    if _default_region:
+        _tracking_uri = f"https://{_default_region}.api.mlflow.sagemaker.aws"
+
+
+def _get_mlflow_client() -> mlflow.tracking.MlflowClient:
+    if not _tracking_uri:
+        raise RuntimeError("MLFLOW_TRACKING_URI is not set and AWS region could not be inferred")
+
+    mlflow.set_tracking_uri(_tracking_uri)
+    return mlflow.tracking.MlflowClient(tracking_uri=_tracking_uri)
 
 def select_model_for_carrier(carrier_code: str) -> str:
     """
-    List models in S3 under:
-      <MODEL_BASE_PREFIX>/bid-predictor-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
-    and return the S3 URI of the most recent one.
+    Resolve the latest MLflow Model Registry version for the carrier and
+    return its artifact URI.
     """
-    if not MODEL_BUCKET or not MODEL_BASE_PREFIX or not MODEL_NAME_PREFIX:
-        raise RuntimeError("MODEL_BUCKET, MODEL_BASE_PREFIX or MODEL_NAME_PREFIX not set")
+    if not MODEL_NAME_PREFIX:
+        raise RuntimeError("MODEL_NAME_PREFIX not set")
 
-    s3 = boto3.client("s3")
+    model_name = f"{MODEL_NAME_PREFIX}-{carrier_code}"
+    client = _get_mlflow_client()
 
-    # keys look like:
-    #   <MODEL_BASE_PREFIX>/bid-predictor-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
-    prefix = f"{MODEL_BASE_PREFIX}/{MODEL_NAME_PREFIX}-{carrier_code}-"
-    logger.info(f"Listing models with prefix: s3://{MODEL_BUCKET}/{prefix}")
+    logger.info(
+        "Selecting MLflow model", extra={"model": model_name, "stage": MODEL_REGISTRY_STAGE}
+    )
 
-    resp = s3.list_objects_v2(Bucket=MODEL_BUCKET, Prefix=prefix)
-    contents = resp.get("Contents", [])
+    if MODEL_REGISTRY_STAGE:
+        versions = client.get_latest_versions(model_name, stages=[MODEL_REGISTRY_STAGE])
+    else:
+        versions = client.search_model_versions(f"name='{model_name}'")
 
-    candidates = []
-    for obj in contents:
-        key = obj["Key"]
-        if not key.endswith("/model.tar.gz"):
-            continue
+    if not versions:
+        raise RuntimeError(f"No MLflow model versions found for carrier {carrier_code}")
 
-        # Extract timestamp from the directory name
-        # key: .../<prefix>-<carrier>-YYYY-mm-dd-HH-MM-SS/model.tar.gz
-        model_dir = key.rsplit("/", 1)[0].split("/")[-2]
-        # model_dir = "<prefix>-<carrier>-YYYY-mm-dd-HH-MM-SS"
-        prefix_str = f"{MODEL_NAME_PREFIX}-{carrier_code}-"
-        if not model_dir.startswith(prefix_str):
-            continue
-        ts_str = model_dir[len(prefix_str) :]  # "YYYY-mm-dd-HH-MM-SS"
+    best_version = max(versions, key=lambda mv: int(mv.version))
+    model_data = best_version.source
 
-        candidates.append((ts_str, key))
-
-    if not candidates:
-        raise RuntimeError(f"No model candidates found for carrier {carrier_code}")
-
-    # Your timestamp format is lexicographically sortable
-    best_ts, best_key = max(candidates, key=lambda x: x[0])
-    model_data = f"s3://{MODEL_BUCKET}/{best_key}"
-
-    logger.info(f"Selected model for {carrier_code}: {model_data}")
+    logger.info(
+        "Selected MLflow model",
+        extra={
+            "model": model_name,
+            "stage": MODEL_REGISTRY_STAGE,
+            "version": best_version.version,
+            "source": model_data,
+        },
+    )
     return model_data
 
 

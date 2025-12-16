@@ -44,7 +44,6 @@ if ENVIRONMENT.lower() == "dev":
     PIPELINE_NAME = "BidPredictorBatchInferenceDev6"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-    MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
 
     DATA_PREFIX = (
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
@@ -58,6 +57,7 @@ if ENVIRONMENT.lower() == "dev":
 
     IMAGE_NAME = "bid-predictor-inference-test"
     MODEL_NAME_PREFIX = "bid-predictor-test"
+    MODEL_REGISTRY_STAGE = "Staging"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = DATA_PREFIX+"/output"
@@ -71,7 +71,6 @@ elif ENVIRONMENT.lower() == "stg":
     PIPELINE_NAME = "BidPredictorBatchInference"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-    MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
 
     DATA_PREFIX = (
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
@@ -85,6 +84,7 @@ elif ENVIRONMENT.lower() == "stg":
 
     IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
+    MODEL_REGISTRY_STAGE = "Staging"
 
     OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"
     OUTPUT_DATA_PREFIX = "bid_success_predictor_stg"
@@ -98,12 +98,12 @@ elif ENVIRONMENT.lower() in ("preprd", "preprod"):
     PIPELINE_NAME = "BidPredictorBatchInferencePrePrd"
 
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
-    MODEL_BASE_PREFIX = "bid_success_predictor/models"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
     IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
+    MODEL_REGISTRY_STAGE = "Production"
 
     DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_PRD
     DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_PRD
@@ -125,12 +125,12 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
     PIPELINE_NAME = "BidPredictorBatchInferencePrd"
 
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
-    MODEL_BASE_PREFIX = "bid_success_predictor/models"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
     IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
+    MODEL_REGISTRY_STAGE = "Production"
 
     DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_PRD
     DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_PRD
@@ -144,6 +144,8 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
         subnets=['subnet-07cfb1a5945594ed2', 'subnet-094594e0b85e77bb6'],
         security_group_ids=['sg-0d755d27b93bae7cf']
     )
+
+MLFLOW_TRACKING_URI = f"https://{REGION}.api.mlflow.sagemaker.aws"
 
 
 
@@ -264,11 +266,11 @@ def main():
         instance_count=1,
         volume_size_in_gb=50,
         max_runtime_in_seconds=86400,  # 24 hours
-        base_job_name="BSPDataFecthing",        
+        base_job_name="BSPDataFecthing",
         sagemaker_session=pipeline_session,
-        env={  # pass model bucket & base prefix for dynamic selection
-            "MODEL_BUCKET": BUCKET_NAME,
-            "MODEL_BASE_PREFIX": MODEL_BASE_PREFIX,
+        env={  # pass MLflow registry info for dynamic selection
+            "MLFLOW_TRACKING_URI": MLFLOW_TRACKING_URI,
+            "MODEL_REGISTRY_STAGE": MODEL_REGISTRY_STAGE,
             "MODEL_NAME_PREFIX": MODEL_NAME_PREFIX,
         },
         network_config=network_config,

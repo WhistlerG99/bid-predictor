@@ -26,7 +26,6 @@ if ENVIRONMENT.lower() == "dev":
     PIPELINE_NAME = "BidPredictorBatchInferenceDev5"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-    MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
 
     DATA_PREFIX = (
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
@@ -34,6 +33,7 @@ if ENVIRONMENT.lower() == "dev":
     )
     IMAGE_NAME = "bid-predictor-inference-test"
     MODEL_NAME_PREFIX = "bid-predictor-test"
+    MODEL_REGISTRY_STAGE = "Staging"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = DATA_PREFIX+"/output"
@@ -45,7 +45,6 @@ elif ENVIRONMENT.lower() == "stg":
     PIPELINE_NAME = "BidPredictorBatchInference"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-    MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
 
     DATA_PREFIX = (
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
@@ -53,6 +52,7 @@ elif ENVIRONMENT.lower() == "stg":
     )
     IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
+    MODEL_REGISTRY_STAGE = "Staging"
 
     OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"
     OUTPUT_DATA_PREFIX = "bid_success_predictor_stg"
@@ -66,8 +66,8 @@ elif ENVIRONMENT.lower() in ("preprd", "preprod"):
     IMAGE_NAME = "bid-predictor-inference"
 
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
-    MODEL_BASE_PREFIX = "bid_success_predictor/models"
     MODEL_NAME_PREFIX = "bid-predictor"
+    MODEL_REGISTRY_STAGE = "Production"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
@@ -83,13 +83,15 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
     IMAGE_NAME = "bid-predictor-inference"
 
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
-    MODEL_BASE_PREFIX = "bid_success_predictor/models"
     MODEL_NAME_PREFIX = "bid-predictor"
+    MODEL_REGISTRY_STAGE = "Production"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = "bid_success_predictor/results"
+
+MLFLOW_TRACKING_URI = f"https://{REGION}.api.mlflow.sagemaker.aws"
 
 def main():
     pipeline_session = PipelineSession()
@@ -197,9 +199,9 @@ def main():
         instance_type=instance_type,
         instance_count=1,
         sagemaker_session=pipeline_session,
-        env={  # pass model bucket & base prefix for dynamic selection
-            "MODEL_BUCKET": BUCKET_NAME,
-            "MODEL_BASE_PREFIX": MODEL_BASE_PREFIX,
+        env={  # pass MLflow registry info for dynamic selection
+            "MLFLOW_TRACKING_URI": MLFLOW_TRACKING_URI,
+            "MODEL_REGISTRY_STAGE": MODEL_REGISTRY_STAGE,
             "MODEL_NAME_PREFIX": MODEL_NAME_PREFIX,
         },
     )
