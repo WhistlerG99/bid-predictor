@@ -18,12 +18,30 @@ from sagemaker.workflow.execution_variables import ExecutionVariables
 from sagemaker.workflow.functions import Join, JsonGet
 from sagemaker.workflow.properties import PropertyFile
 
+from sagemaker.network import NetworkConfig
 
-ENVIRONMENT = "prod"
+DEFAULT_REDSHIFT_HOST_STG = (
+    "redshift-serverless-wg-stg.234771642813"
+    ".us-east-1.redshift-serverless.amazonaws.com"
+)
+DEFAULT_REDSHIFT_PWD_STG = "/+R5T11uYH,x=zB[k"
+
+DEFAULT_REDSHIFT_HOST_PRD = (
+    "redshift-serverless-wg-prd.234771642813"
+    ".us-east-1.redshift-serverless.amazonaws.com"
+)
+DEFAULT_REDSHIFT_PWD_PRD = "5A)J6^US6HG0{q)@v;£"
+
+DEFAULT_REDSHIFT_USER = "sagemaker"
+DEFAULT_REDSHIFT_PORT = "5439"
+
+
+ENVIRONMENT = "dev"
 if ENVIRONMENT.lower() == "dev":
     ACCOUNT_ID = "622055002283"
     REGION = "us-east-1"
-    PIPELINE_NAME = "BidPredictorBatchInferenceDev5"
+
+    PIPELINE_NAME = "BidPredictorBatchInferenceDev6"
 
     BUCKET_NAME = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
     MODEL_BASE_PREFIX = "dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/dev"
@@ -32,11 +50,19 @@ if ENVIRONMENT.lower() == "dev":
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners_test"
     )
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_STG
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_STG
+    DEFAULT_LOOKUP =f"s3://{BUCKET_NAME}/{DATA_PREFIX}/lookup_table_bid_predictor.csv"
+    DEFAULT_TEMP_PATH = f"s3://{BUCKET_NAME}/{DATA_PREFIX}/processing"
+
     IMAGE_NAME = "bid-predictor-inference-test"
     MODEL_NAME_PREFIX = "bid-predictor-test"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = DATA_PREFIX+"/output"
+
+    network_config = None
 
 elif ENVIRONMENT.lower() == "stg":
     ACCOUNT_ID = "622055002283"
@@ -51,11 +77,19 @@ elif ENVIRONMENT.lower() == "stg":
         "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
         "bid_predictor_live_data_by_partners"
     )
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_STG
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_STG
+    DEFAULT_LOOKUP =f"s3://{BUCKET_NAME}/{DATA_PREFIX}/lookup_table_bid_predictor.csv"
+    DEFAULT_TEMP_PATH = f"s3://{BUCKET_NAME}/{DATA_PREFIX}/processing"
+
     IMAGE_NAME = "bid-predictor-inference"
     MODEL_NAME_PREFIX = "bid-predictor"
 
     OUTPUT_BUCKET_NAME = "ffr-bsp-model-predictions"
     OUTPUT_DATA_PREFIX = "bid_success_predictor_stg"
+
+    network_config = None
 
 elif ENVIRONMENT.lower() in ("preprd", "preprod"):
     ACCOUNT_ID = "382704342560"
@@ -63,16 +97,26 @@ elif ENVIRONMENT.lower() in ("preprd", "preprod"):
 
     PIPELINE_NAME = "BidPredictorBatchInferencePrePrd"
 
-    IMAGE_NAME = "bid-predictor-inference"
-
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
     MODEL_BASE_PREFIX = "bid_success_predictor/models"
-    MODEL_NAME_PREFIX = "bid-predictor"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
+    IMAGE_NAME = "bid-predictor-inference"
+    MODEL_NAME_PREFIX = "bid-predictor"
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_PRD
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_PRD
+    DEFAULT_LOOKUP = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/lookup_table_bid_predictor.csv"    
+    DEFAULT_TEMP_PATH = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/tmp"    
+
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = "bid_success_predictor_prd/output/results"
+
+    network_config = NetworkConfig(
+        subnets=['subnet-07cfb1a5945594ed2', 'subnet-094594e0b85e77bb6'],
+        security_group_ids=['sg-0d755d27b93bae7cf']
+    )
 
 elif ENVIRONMENT.lower() in ("prd", "prod"):
     ACCOUNT_ID = "382704342560"
@@ -80,20 +124,45 @@ elif ENVIRONMENT.lower() in ("prd", "prod"):
 
     PIPELINE_NAME = "BidPredictorBatchInferencePrd"
 
-    IMAGE_NAME = "bid-predictor-inference"
-
     BUCKET_NAME = "sagemaker-us-east-1-382704342560"
     MODEL_BASE_PREFIX = "bid_success_predictor/models"
-    MODEL_NAME_PREFIX = "bid-predictor"
 
     DATA_PREFIX = "bid_success_predictor/output/bid_predictor_live_data_by_partners"
 
+    IMAGE_NAME = "bid-predictor-inference"
+    MODEL_NAME_PREFIX = "bid-predictor"
+
+    DEFAULT_REDSHIFT_HOST = DEFAULT_REDSHIFT_HOST_PRD
+    DEFAULT_REDSHIFT_PWD = DEFAULT_REDSHIFT_PWD_PRD
+    DEFAULT_LOOKUP = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/lookup_table_bid_predictor.csv"    
+    DEFAULT_TEMP_PATH = "s3://sagemaker-us-east-1-382704342560/bid_success_predictor/tmp"    
+    
     OUTPUT_BUCKET_NAME = BUCKET_NAME
-    OUTPUT_DATA_PREFIX = "bid_success_predictor/results"
+    OUTPUT_DATA_PREFIX = "bid_success_predictor_prd/output/results"
+
+    network_config = NetworkConfig(
+        subnets=['subnet-07cfb1a5945594ed2', 'subnet-094594e0b85e77bb6'],
+        security_group_ids=['sg-0d755d27b93bae7cf']
+    )
+
+
 
 def main():
+
+    host_param = ParameterString(name="host", default_value=DEFAULT_REDSHIFT_HOST)
+    database_param = ParameterString(name="database", default_value="dev")
+    user_param = ParameterString(name="user", default_value=DEFAULT_REDSHIFT_USER)
+    password_param = ParameterString(name="password", default_value=DEFAULT_REDSHIFT_PWD)
+    port_param = ParameterString(name="port", default_value=DEFAULT_REDSHIFT_PORT)
+    carrier_param = ParameterString(name="carrier", default_value="SV")
+    partner_csv_s3_path_param = ParameterString(name="partner_csv_s3_path", default_value=DEFAULT_LOOKUP)
+    temp_s3_path_param = ParameterString(name="temp_s3_path", default_value=DEFAULT_TEMP_PATH)
+    
     pipeline_session = PipelineSession()
     role = sagemaker.get_execution_role()
+
+    # Create the network config
+
 
     instance_type = "ml.m5.xlarge"
 
@@ -108,24 +177,20 @@ def main():
     # ---------- Input parameters ----------
     # InputPrefix represents the FULL S3 key of the input file
     # e.g. "dzd_.../output/bid_predictor_live_data_by_partners/<partner>/<file>.parquet"
-    input_prefix = ParameterString(
-        name="InputPrefix",
-        default_value=(
-            "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/"
-            "bid_predictor_live_data_by_partners/EY/availability-offers-example.parquet"
-        ),
-    )
+    # input_prefix = ParameterString(
+    #     name="InputPrefix",
+    # )
 
     # Build full S3 URI from bucket + input_prefix
-    input_data_uri = Join(
-        on="",  # use empty separator for proper URI assembly
-        values=[
-            "s3://",
-            BUCKET_NAME,
-            "/",
-            input_prefix,
-        ],
-    )
+    # input_data_uri = Join(
+    #     on="",  # use empty separator for proper URI assembly
+    #     values=[
+    #         "s3://",
+    #         BUCKET_NAME,
+    #         "/",
+    #         input_prefix,
+    #     ],
+    # )
 
     # final parquet:
     final_output_path = Join(
@@ -189,19 +254,24 @@ def main():
     )
 
     # ---------- Preprocessing step ----------
-    # ScriptProcessor now gets env vars so preprocess.py can select the model
+    # ScriptProcessor now gets env vars so preprocess_full_process.py can select the model
+
     script_processor = ScriptProcessor(
         role=role,
         image_uri=image_uri,
         command=["python3"],
         instance_type=instance_type,
         instance_count=1,
+        volume_size_in_gb=50,
+        max_runtime_in_seconds=86400,  # 24 hours
+        base_job_name="BSPDataFecthing",        
         sagemaker_session=pipeline_session,
         env={  # pass model bucket & base prefix for dynamic selection
             "MODEL_BUCKET": BUCKET_NAME,
             "MODEL_BASE_PREFIX": MODEL_BASE_PREFIX,
             "MODEL_NAME_PREFIX": MODEL_NAME_PREFIX,
         },
+        network_config=network_config,
     )
 
     # PropertyFile now points to output_name="model_config"
@@ -211,19 +281,19 @@ def main():
         path="model_config.json",
     )
 
-    # preprocess.py is expected to:
+    # preprocess_full_process.py is expected to:
     # - write /opt/ml/processing/output/processed.parquet
     # - write /opt/ml/processing/output/model_config.json with {"model_data": "s3://.../model.tar.gz"}
     processing_step = ProcessingStep(
         name="PreprocessOffers",
         processor=script_processor,
-        code="preprocess.py",
-        inputs=[
-            ProcessingInput(
-                source=input_data_uri,
-                destination="/opt/ml/processing/input",
-            )
-        ],
+        code="preprocess_full_process.py",
+        # inputs=[
+        #     ProcessingInput(
+        #         source=input_data_uri,
+        #         destination="/opt/ml/processing/input",
+        #     )
+        # ],
         outputs=[
             ProcessingOutput(
                 output_name="preprocessed",
@@ -237,6 +307,17 @@ def main():
             ),
         ],
         property_files=[model_config_prop],  # expose model_config.json as step properties
+        job_arguments=[
+            "--host", host_param,
+            "--database", database_param,
+            "--user", user_param,
+            "--password", password_param,
+            "--port", port_param,
+            "--carrier", carrier_param,
+            "--partner_csv_s3_path", partner_csv_s3_path_param,
+            "--temp_s3_path", temp_s3_path_param,
+        ],
+        inputs=[]
     )
 
     # Use JsonGet to read "model_data" from model_config.json
@@ -297,6 +378,7 @@ def main():
         instance_type=instance_type,
         instance_count=1,
         sagemaker_session=pipeline_session,
+        network_config=network_config,
     )
 
     postprocess_step = ProcessingStep(
@@ -325,7 +407,17 @@ def main():
     # Ordering so that Preprocess (which selects model) runs before ModelStep
     pipeline = Pipeline(
         name=PIPELINE_NAME,
-        parameters=[input_prefix],
+        parameters=[
+            host_param,
+            database_param,
+            user_param,
+            password_param,
+            port_param,
+            carrier_param,
+            partner_csv_s3_path_param,
+            temp_s3_path_param,
+        ],
+        # parameters=[input_prefix],
         steps=[
             processing_step,       # must run first to produce model_data + processed.parquet
             model_step,

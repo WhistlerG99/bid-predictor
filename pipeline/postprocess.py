@@ -65,41 +65,46 @@ def main():
         df[c] = pd.to_datetime(df[c]).dt.round("s").astype("datetime64[ms]")
 
     timestamp = df["file_timestamp"].iloc[0]
-    logger.info(f"Using file_timestamp={timestamp} in final parquet name")
+    logger.info(f"Using file_timestamp={timestamp} in final output name")
 
     partner_id = df["partner_id"].iloc[0]
     logger.info(f"Using partner_id={partner_id}")
 
-    # Drop file_timestamp from final parquet
+    carrier_code = df["carrier_code"].iloc[0]
+    logger.info(f"Using carrier_code={carrier_code}")
+
+    # Drop file_timestamp from final output
     df = df.drop(columns=["file_timestamp"])
 
     year, month, day = re.search(r"(\d{4})-(\d{2})-(\d{2})T", timestamp).groups()
     # now = datetime.now()
     # year, month, day = f"{now.year:04d}", f"{now.month:02d}", f"{now.day:02d}"
-    
+
     # Write output to file_name=audit_bid_predictor/
-    audit_dir = OUTPUT_DIR + f"/file_name=audit_bid_predictor/partner_id={partner_id}/year={year}/month={month}/day={day}"
+    # audit_dir = OUTPUT_DIR + f"/file_name=audit_bid_predictor/partner_id={partner_id}/year={year}/month={month}/day={day}"
+    audit_dir = OUTPUT_DIR + f"/audit_bid_predictor_csv/{carrier_code}"
 
     audit_filename = (
-        f"{timestamp}-audit_bid_predictor.parquet"
+        f"{timestamp}-audit_bid_predictor.csv"
     )
     os.makedirs(audit_dir, exist_ok=True)
     audit_path = os.path.join(audit_dir, audit_filename)
 
-    df.to_parquet(audit_path, index=False)
-    logger.info(f"Wrote audit_bid_predictor parquet file to: {audit_path}")
+    df.to_csv(audit_path, index=False)
+    logger.info(f"Wrote audit_bid_predictor file to: {audit_path}")
 
     # Write output to file_name=offer_probabilities/
-    offer_prob_dir = OUTPUT_DIR + f"/file_name=offer_probabilities/partner_id={partner_id}/year={year}/month={month}/day={day}"
+    # offer_prob_dir = OUTPUT_DIR + f"/file_name=offer_probabilities/partner_id={partner_id}/year={year}/month={month}/day={day}"
+    offer_prob_dir = OUTPUT_DIR + f"/offer_probability_csv/{carrier_code}"
 
     offer_prob_filename = (
-        f"{timestamp}-offer_probabilities.parquet"
+        f"{timestamp}-offer_probabilities.csv"
     )
     os.makedirs(offer_prob_dir, exist_ok=True)
     offer_prob_path = os.path.join(offer_prob_dir, offer_prob_filename)
 
-    df[OFFER_PROB_COLS].to_parquet(offer_prob_path, index=False)
-    logger.info(f"Wrote offer_probabilities parquet file to: {offer_prob_path}")
+    df[OFFER_PROB_COLS].to_csv(offer_prob_path, index=False)
+    logger.info(f"Wrote offer_probabilities file to: {offer_prob_path}")
 
 
 if __name__ == "__main__":
