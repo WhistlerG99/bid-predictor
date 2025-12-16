@@ -52,9 +52,19 @@ def select_model_for_carrier(carrier_code: str) -> str:
     )
 
     filter_str = f"name='{model_name}'"
-    if MODEL_REGISTRY_STAGE:
-        filter_str += f" and current_stage='{MODEL_REGISTRY_STAGE}'"
     versions = list(client.search_model_versions(filter_str))
+
+    if MODEL_REGISTRY_STAGE:
+        staged_versions = [
+            mv for mv in versions if getattr(mv, "current_stage", None) == MODEL_REGISTRY_STAGE
+        ]
+        if staged_versions:
+            versions = staged_versions
+        else:
+            logger.warning(
+                "No model versions found in requested stage; falling back to all versions",
+                extra={"model": model_name, "stage": MODEL_REGISTRY_STAGE},
+            )
 
     if not versions:
         raise RuntimeError(f"No MLflow model versions found for carrier {carrier_code}")
