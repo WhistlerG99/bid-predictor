@@ -51,10 +51,10 @@ def select_model_for_carrier(carrier_code: str) -> str:
         "Selecting MLflow model", extra={"model": model_name, "stage": MODEL_REGISTRY_STAGE}
     )
 
+    filter_str = f"name='{model_name}'"
     if MODEL_REGISTRY_STAGE:
-        versions = client.get_latest_versions(model_name, stages=[MODEL_REGISTRY_STAGE])
-    else:
-        versions = client.search_model_versions(f"name='{model_name}'")
+        filter_str += f" and current_stage='{MODEL_REGISTRY_STAGE}'"
+    versions = list(client.search_model_versions(filter_str))
 
     if not versions:
         raise RuntimeError(f"No MLflow model versions found for carrier {carrier_code}")
