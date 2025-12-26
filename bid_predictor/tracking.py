@@ -4,7 +4,9 @@ import hashlib
 import re
 import time
 import threading
+import tempfile
 from collections import defaultdict
+from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import mlflow
@@ -662,21 +664,25 @@ def log_prob_examples(df):
         acc_prob.index = acc_prob.index.round("h")
         acc_prob = acc_prob.sort_index(ascending=False)
         
-        seats_avail = (
-            df.loc[auc, ["seats_available", "time_until_departure"]]
-            .reset_index()[["time_until_departure", "seats_available"]]
-            .drop_duplicates()
-            .set_index("time_until_departure")
-        )
-        seats_avail.index = seats_avail.index.round("h")
-        seats_avail = seats_avail.sort_index(ascending=False)
-        
+
         fig_p, ax_p = plt.subplots(figsize=(10, 8))
         acc_prob.plot.bar(ax=ax_p, zorder=1, alpha=0.9)
-        ax_s = seats_avail.plot(ax=ax_p, secondary_y=True)
+
+        if "seats_available" in df.columns:
+            seats_avail = (
+                df.loc[auc, ["seats_available", "time_until_departure"]]
+                .reset_index()[["time_until_departure", "seats_available"]]
+                .drop_duplicates()
+                .set_index("time_until_departure")
+            )
+            seats_avail.index = seats_avail.index.round("h")
+            seats_avail = seats_avail.sort_index(ascending=False)
+        
+            ax_s = seats_avail.plot(ax=ax_p, secondary_y=True)
+            ax_s.set_ylabel("Available Seats")
+        
         # ax_p.set_ylim(0,1)
         ax_p.legend(loc="upper center", bbox_to_anchor=(0.5, -0.35), ncol=2)
-        ax_s.set_ylabel("Available Seats")
         # draw grid behind the bars
         ax_p.set_axisbelow(True)
         ax_p.grid()
@@ -694,6 +700,18 @@ def log_pipeline_model(pipeline, artifact_path: str = "pipeline"):
     """Log the trained pipeline model to MLflow."""
 
     mlflow.sklearn.log_model(pipeline, artifact_path)
+
+
+def log_evaluation_results_parquet(
+    evaluation_results: pd.DataFrame,
+    artifact_name: str = "evaluation_results.parquet",
+) -> None:
+    """Log evaluation results as a parquet artifact in MLflow."""
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / artifact_name
+        evaluation_results.to_parquet(path, index=False)
+        mlflow.log_artifact(str(path))
 
 
 def follow_tsv(

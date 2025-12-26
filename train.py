@@ -16,6 +16,7 @@ import joblib
 from bid_predictor.bid_predictor import build_pipeline
 from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
 from bid_predictor.tracking import (
+    log_evaluation_results_parquet,
     log_classification_metrics,
     log_classification_metrics_by_time,
     log_prob_examples,
@@ -287,6 +288,7 @@ def train_and_log_model(
 
         bid_prob_test_results["Acceptance Probability"] = proba
 
+        log_evaluation_results_parquet(bid_prob_test_results.reset_index())
         log_classification_metrics(y_test, y_pred)
         log_classification_metrics_by_time(bid_prob_test_results)
         for carrier in ["AC", "LO"]:
