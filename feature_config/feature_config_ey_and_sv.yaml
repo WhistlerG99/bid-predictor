@@ -1,0 +1,253 @@
+features:
+  carrier_code:
+    categorical: true
+    include_in_model: false
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  flight_number:
+    categorical: true
+    include_in_model: false
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  flight_code:
+    categorical: true
+    include_in_model: true
+    derived: true
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  travel_date:
+    categorical: false
+    include_in_model: true
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  departure_timestamp:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  current_timestamp:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  days_before_departure:
+    categorical: false
+    include_in_model: true
+    derived: true
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+    bins:
+      min: 0
+      max: 5
+      nsteps: 76
+  available_count_24h:
+    categorical: false
+    include_in_model: true
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: true
+    monotonicity: 0
+    bins:
+      min: -1
+      max: 30
+      interval: 1
+  available_count_48h:
+    categorical: false
+    include_in_model: true
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: true
+    monotonicity: 0
+    bins:
+      min: -1
+      max: 30
+      interval: 1
+  available_count_72h:
+    categorical: false
+    include_in_model: true
+    derived: false
+    flight_feature: true
+    bid_feature: false
+    comp_feature: false
+    impute_median: true
+    monotonicity: 0
+    bins:
+      min: -1
+      max: 30
+      interval: 1      
+  item_count:
+    categorical: true
+    include_in_model: true
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_median: false
+    outlier:
+      max: 5
+  usd_base_amount:
+    categorical: false
+    include_in_model: true
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_median: false
+    monotonicity: 0
+    bins:
+      min: 0
+      max: 1700
+      interval: 10
+  fare_class:
+    categorical: true
+    include_in_model: true
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_median: false
+  offer_time:
+    categorical: true
+    include_in_model: true
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_median: false
+    bins:
+      min: 0
+      max: 30
+      interval: 1
+  multiplier_fare_class:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_value: 1.0
+    impute_median: false
+  multiplier_loyalty:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_value: 1.0
+    impute_median: false
+  multiplier_success_history:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_value: 1.0
+    impute_median: false
+  multiplier_payment_type:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_value: 1.0
+    impute_median: false
+  from_cabin:
+    categorical: true
+    include_in_model: true
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_median: false
+  upgrade_type:
+    categorical: true
+    include_in_model: true
+    derived: false
+    flight_feature: false
+    bid_feature: true
+    comp_feature: false
+    impute_median: false
+  snapshot_num:
+    categorical: false
+    include_in_model: false
+    derived: false
+    flight_feature: false
+    bid_feature: false
+    comp_feature: false
+    impute_median: false
+  usd_base_amount_25%:
+    categorical: false
+    include_in_model: true
+    derived: true
+    flight_feature: false
+    bid_feature: false
+    comp_feature: true
+    impute_median: false
+  usd_base_amount_50%:
+    categorical: false
+    include_in_model: true
+    derived: true
+    flight_feature: false
+    bid_feature: false
+    comp_feature: true
+    impute_median: false
+  usd_base_amount_75%:
+    categorical: false
+    include_in_model: true
+    derived: true
+    flight_feature: false
+    bid_feature: false
+    comp_feature: true
+    impute_median: false
+  usd_base_amount_max:
+    categorical: false
+    include_in_model: true
+    derived: true
+    flight_feature: false
+    bid_feature: false
+    comp_feature: true
+    impute_median: false
+  num_offers:
+    categorical: true
+    include_in_model: true
+    derived: true
+    flight_feature: false
+    bid_feature: false
+    comp_feature: true
+    impute_median: false
+    outlier:
+      max: 16
+  bid_rank:
+    categorical: true
+    include_in_model: true
+    derived: true
+    flight_feature: false
+    bid_feature: false
+    comp_feature: true
+    impute_median: false
