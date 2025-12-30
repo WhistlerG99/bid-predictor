@@ -111,14 +111,12 @@ def main():
     logger.info(f"Wrote model_config.json to {config_path}")
     # ---- END NEW STUFF ----
 
-    # Existing feature engineering below
-    df = df.rename(columns={"travel_dt": "travel_date"})
-
     df["offer_time"] = df.apply(
         lambda x: (x["departure_timestamp"] - x["created_timestamp"]).total_seconds()
         / (60 * 60 * 24),
         axis=1,
     )
+
     df["snapshot_num"] = 1
     df["current_timestamp"] = pd.Timestamp.now("utc").round(freq="s").tz_localize(None) # TODO: change to local time
     # df["current_timestamp"] = (
@@ -126,7 +124,16 @@ def main():
     # ).dt.tz_localize(None)
     df["file_timestamp"] = timestamp_str
 
-    for c in ["travel_date", "departure_timestamp"]:
+    # Existing feature engineering below
+    df = df.rename(
+        columns={
+            "travel_dt": "travel_date",
+            "departure_timestamp": "departure_timestamp_local",
+            "departure_datetime_utc": "departure_timestamp",
+        }
+    )
+
+    for c in ["travel_date", "departure_timestamp", "departure_timestamp_local"]:
         df[c] = pd.to_datetime(df[c])
 
     logger.info(f"Loaded DataFrame with shape: {df.shape}")

@@ -19,7 +19,7 @@ from sagemaker.workflow.functions import Join, JsonGet
 from sagemaker.workflow.properties import PropertyFile
 
 
-ENVIRONMENT = "prod"
+ENVIRONMENT = "stg"
 if ENVIRONMENT.lower() == "dev":
     ACCOUNT_ID = "622055002283"
     REGION = "us-east-1"
@@ -33,7 +33,7 @@ if ENVIRONMENT.lower() == "dev":
         "bid_predictor_live_data_by_partners_test"
     )
     IMAGE_NAME = "bid-predictor-inference-test"
-    MODEL_NAME_PREFIX = "bid-predictor-test"
+    MODEL_NAME_PREFIX = "bid-predictor"
 
     OUTPUT_BUCKET_NAME = BUCKET_NAME
     OUTPUT_DATA_PREFIX = DATA_PREFIX+"/output"

@@ -61,6 +61,9 @@ def main():
             "Check preprocess.py output."
         )
 
+    df = df.drop(columns=["departure_timestamp"], errors='ignore')
+    df = df.rename(columns={"departure_timestamp_local": "departure_timestamp"})
+
     for c in ["departure_timestamp", "created_timestamp", "accept_prob_timestamp"]:
         df[c] = pd.to_datetime(df[c]).dt.round("s").astype("datetime64[ms]")
 
