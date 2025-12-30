@@ -29,7 +29,7 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "bid-predictor-sv"
+experiment_name = "bid-predictor-test-sv"
 job_timestamp = f"{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}" #dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 job_name = f"{experiment_name}-{job_timestamp}"
 run_name = f"run-{job_timestamp}"
@@ -40,8 +40,8 @@ iterations = 500
 train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data"
 
 # train_s3 += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-# train_s3 += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
-train_s3 += "/saudia/bid_and_flight_data_snapshots.parquet"
+# train_s3 += "/etihad/bid_and_flight_data_snapshots_v3.parquet"
+train_s3 += "/saudia/bid_and_flight_data_snapshots_v3.parquet"
 
 
 est = Estimator(
