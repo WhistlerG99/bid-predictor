@@ -130,6 +130,7 @@ def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
         'carrier_code',
         'flight_number',
         'departure_timestamp',
+        'departure_timestamp_local',
         'origination_code',
         'destination_code',
         'days_before_departure',
@@ -179,11 +180,13 @@ def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
     data["accept_prob"] = probs[:,1]
     data["accept_prob_timestamp"] = pd.Timestamp.now()
 
+    cols = [c for c in cols if c in data.columns]
+
     data = data[cols].rename(
         columns={
             "usd_base_amount_25%": "usd_base_amount_25_percent",
             "usd_base_amount_50%": "usd_base_amount_50_percent",
-            "usd_base_amount_75%": "usd_base_amount_75_percent"
+            "usd_base_amount_75%": "usd_base_amount_75_percent",
         }
     )
 
