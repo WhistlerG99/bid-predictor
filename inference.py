@@ -178,7 +178,7 @@ def predict_fn(data: Union[pd.DataFrame, np.ndarray], model_state: dict) -> Any:
     data = pd.concat((data, X_tf[cols_derived]), axis=1)
 
     data["accept_prob"] = probs[:,1]
-    data["accept_prob_timestamp"] = pd.Timestamp.now()
+    data["accept_prob_timestamp"] = data["current_timestamp"]
 
     cols = [c for c in cols if c in data.columns]
 
