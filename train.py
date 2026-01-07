@@ -9,7 +9,34 @@ from typing import Any, Dict, Iterable, Mapping, Set
 
 import pandas as pd
 import yaml
+from urllib.parse import urlparse
 import mlflow
+
+try:
+    import mlflow.data as mldata
+except Exception:
+    mldata = None
+
+try:
+    from mlflow.data.pandas_dataset import PandasDataset
+except Exception:
+    PandasDataset = None
+
+try:
+    from mlflow.data.code_dataset_source import CodeDatasetSource
+except Exception:
+    CodeDatasetSource = None
+
+try:
+    from mlflow.data.meta_dataset import MetaDataset
+except Exception:
+    MetaDataset = None
+
+try:
+    import boto3
+except Exception:
+    boto3 = None
+
 import pyarrow.dataset as ds
 import sklearn
 import joblib
@@ -198,15 +225,84 @@ def parse_args():
             "tuning script. Command-line arguments override values from this file."
         ),
     )
+    p.add_argument("--training-data-path", type=str, default=None)
 
     args = p.parse_args()
     setattr(args, "_explicit_flags", _detect_explicit_flags(sys.argv[1:]))
     return args
 
 
+def _dataset_name_from_path(path: str) -> str:
+    # Works for local paths, s3://, etc.
+    p = urlparse(path)
+    base = os.path.basename(p.path) if p.scheme else os.path.basename(path)
+    return base or "training_dataset"
+
+
+def _fast_source_digest(source_uri: str) -> str | None:
+    """
+    Cheap, stable-ish digest without hashing the whole DataFrame:
+    - S3: use ETag + size (fast HEAD request)
+    - Local: use mtime + size
+    """
+    try:
+        if source_uri.startswith("s3://") and boto3 is not None:
+            # s3://bucket/key...
+            path = source_uri[5:]
+            bucket, key = path.split("/", 1)
+
+            s3 = boto3.client("s3")
+            head = s3.head_object(Bucket=bucket, Key=key)
+
+            etag = head.get("ETag", "").strip('"')
+            size = head.get("ContentLength")
+            # ETag is usually MD5 for single-part uploads; for multipart it’s still a useful fingerprint.
+            return f"etag:{etag}|bytes:{size}"
+
+        # local file path
+        if os.path.exists(source_uri):
+            st = os.stat(source_uri)
+            return f"mtime:{int(st.st_mtime)}|bytes:{st.st_size}"
+    except Exception:
+        pass
+
+    return None
+
+
+def _log_mlflow_input_dataset(data: Any, training_data_path: str) -> None:
+    dataset_name = _dataset_name_from_path(str(training_data_path))
+
+    # Always keep these tags for easy filtering/debugging
+    mlflow.set_tag("dataset_name", dataset_name)
+    mlflow.set_tag("dataset_source", str(training_data_path))
+
+    # Prefer metadata-only dataset logging to avoid hashing the entire DataFrame
+    if MetaDataset is not None and CodeDatasetSource is not None:
+        source_obj = CodeDatasetSource(str(training_data_path))
+        digest = _fast_source_digest(str(training_data_path))  # can be None
+        meta_ds = MetaDataset(source=source_obj, name=dataset_name, digest=digest)
+        mlflow.log_input(meta_ds, context="training")
+        return
+
+    # Fallback (slower): if MetaDataset isn't available, keep your old approach
+    if PandasDataset is None or CodeDatasetSource is None or not isinstance(data, pd.DataFrame):
+        return
+
+    # if not isinstance(data, pd.DataFrame):
+    #     return
+
+    # if PandasDataset is None or CodeDatasetSource is None:
+    #     return
+
+    source_obj = CodeDatasetSource(str(training_data_path))
+    ds_obj = PandasDataset(df=data, source=source_obj, name=dataset_name)
+    mlflow.log_input(ds_obj, context="training")
+
+
 def train_and_log_model(
     data,
     feature_config,
+    train_file,
     args,
 ):
     run_name = f"run-{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}"
@@ -221,6 +317,7 @@ def train_and_log_model(
     run_name = var_args.pop("run_name", run_name)
     explicit_flags = set(var_args.pop("_explicit_flags", set()))
     catboost_config_path = var_args.pop("catboost_config", None)
+    training_data_path = var_args.pop("training_data_path", train_file) or train_file
 
     X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(
         data, pre_features, testing=testing
@@ -232,6 +329,8 @@ def train_and_log_model(
         nested=(mlflow.active_run() is not None),
         log_system_metrics=True,
     ) as run:
+        _log_mlflow_input_dataset(data, training_data_path)
+        
         catboost_file_params = _load_catboost_config(catboost_config_path)
 
         if catboost_file_params.get("monotone_constraints") is None and any(
@@ -289,7 +388,7 @@ def train_and_log_model(
         bid_prob_test_results["Acceptance Probability"] = proba
 
         log_evaluation_results_parquet(bid_prob_test_results.reset_index())
-        log_classification_metrics(y_test, y_pred)
+        log_classification_metrics(y_test, proba)
         log_classification_metrics_by_time(bid_prob_test_results)
         for carrier in ["AC", "LO"]:
             if carrier in bid_prob_test_results.index.levels[0]:
@@ -300,33 +399,41 @@ def train_and_log_model(
         log_prob_examples(bid_prob_test_results)
         log_feature_importances(pipeline, X_train, y_train, cat_features)
         log_evaluation_figures(y_test, y_pred, proba)
-        log_pipeline_model(pipeline)
-        _persist_model_artifacts(pipeline)
+        if detect_execution_environment()[0] == "sagemaker_job":
+            log_pipeline_model(pipeline)
+            _persist_model_artifacts(pipeline)
 
 
 def main():
+    args = parse_args()
+
     if detect_execution_environment()[0] == "sagemaker_job":
         train_file = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
-    elif detect_execution_environment()[0] in (
-        "sagemaker_notebook",
-        "sagemaker_terminal",
-    ):
-        train_file = os.environ.get("S3_BUCKET_DATA") + "/data"
-        # train_file += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        # train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
-        train_file += "/saudia/bid_and_flight_data_snapshots.parquet"
     else:
-        train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-        # train_file = "../bid_data_snapshots_v2.parquet"
+        if args.training_data_path:
+            train_file = args.training_data_path
+        else:
+            if detect_execution_environment()[0] in (
+                "sagemaker_notebook",
+                "sagemaker_terminal",
+            ):                    
+                train_file = os.environ.get("S3_BUCKET_DATA") + "/data"
+                # train_file += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+                # train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
+                # train_file += "/saudia/bid_and_flight_data_snapshots.parquet"
+                train_file += "/saudia/bid_and_flight_data_snapshots_v3.parquet"
+            else:
+                train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+                # train_file = "../bid_data_snapshots_v2.parquet"
 
     data = load_dataset_cached(train_file)
 
-    args = parse_args()
     feature_config = load_feature_config(args.feature_config)
 
     train_and_log_model(
         data,
         feature_config,
+        train_file,
         args,
     )
 

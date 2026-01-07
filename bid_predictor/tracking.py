@@ -306,14 +306,20 @@ def log_feature_config_artifacts(feature_config: Mapping[str, Mapping]):
     return feature_summary
 
 
-def log_classification_metrics(y_true, y_pred):
+def log_classification_metrics(y_true, y_prob):
     """Log basic classification metrics to MLflow."""
 
-    metrics = {
-        "precision": float(precision_score(y_true, y_pred)),
-        "recall": float(recall_score(y_true, y_pred)),
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-    }
+    metrics = {}
+    for t in [0.1, 0.3, 0.5, 0.7, 0.9]:
+        metrics.update(
+            {
+                f"accuracy_{int(100*t)}": float(accuracy_score(y_true, (y_prob >= t).astype(int))),
+                f"precision_{int(100*t)}": float(precision_score(y_true, (y_prob >= t).astype(int), zero_division=np.nan)),
+                f"recall_{int(100*t)}": float(recall_score(y_true, (y_prob >= t).astype(int), zero_division=np.nan)),
+                f"negative_precision_{int(100*t)}": float(precision_score((y_true==0).astype(int), (y_prob < t).astype(int), zero_division=np.nan)),
+                f"negative_recall_{int(100*t)}": float(recall_score((y_true==0).astype(int), (y_prob < t).astype(int), zero_division=np.nan)),
+            }
+        )
     mlflow.log_metrics(metrics)
 
 

@@ -30,9 +30,12 @@ devices = "0"
 # devices = "0,1,2,3"
 
 experiment_name = "bid-predictor-test-sv"
+
 job_timestamp = f"{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}" #dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 job_name = f"{experiment_name}-{job_timestamp}"
+
 run_name = f"run-{job_timestamp}"
+
 # feature_config = "feature_config/feature_config_bid_rank_2_v5.yaml"
 feature_config = "feature_config/feature_config_etihad.yaml"
 iterations = 500
@@ -60,6 +63,7 @@ est = Estimator(
         "experiment-name": experiment_name,
         "run-name": run_name,
         "feature-config": feature_config,
+        "training-data-path": train_s3,
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
