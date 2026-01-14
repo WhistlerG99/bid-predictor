@@ -44,9 +44,14 @@ def load_offer_data(path):
         columns={
             "operating_carrier": "carrier_code",
             "operating_flight_num": "flight_number",
-        }
+            "ord_multiplier_fare_class": "multiplier_fare_class", 
+            "ord_multiplier_loyalty": "multiplier_loyalty", 
+            "ord_multiplier_success_history": "multiplier_success_history", 
+            "ord_multiplier_payment_type": "multiplier_payment_type",
+        },
+        errors="ignore",
     )
-    df = df[df.offer_status.isin(["TICKETED", "EXPIRED"])]
+    df = df[df.offer_status.isin(["TICKETED", "EXPIRED", "CC_AUTH_DECLINED", "CC_AUTH_RETRY"])]
     df["travel_date"] = pd.to_datetime(df.travel_dt)
     df[["travel_year", "travel_month", "travel_dow"]] = df.apply(
         lambda x: (

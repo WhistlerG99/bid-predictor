@@ -79,9 +79,9 @@ features: List[str] = (
 if __name__ == "__main__":
     data_dir = "bid-predictor-historical-by-partners-EY-SV/SV"
 
-    flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-cols-20251117T202158/"
+    flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-cols-20260106T163532/"
     offers_file = (
-        f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-offers-ord-20251117T200423/"
+        f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-offers-ord-20260107T143304/"
     )
 
     grp_cols = [
@@ -109,15 +109,6 @@ if __name__ == "__main__":
     # use None for no-match (consistent with earlier cells)
     df_offers["upgrade_type"] = df_offers["upgrade_type"].where(
         df_offers["upgrade_type"].notna(), None
-    )
-
-    df_offers = df_offers.rename(
-        columns={
-            "ord_multiplier_fare_class": "multiplier_fare_class",
-            "ord_multiplier_loyalty": "multiplier_loyalty",
-            "ord_multiplier_success_history": "multiplier_success_history",
-            "ord_multiplier_payment_type": "multiplier_payment_type",
-        }
     )
 
     df_flights = df_flights[
@@ -154,7 +145,7 @@ if __name__ == "__main__":
     data = data[features + ["seats_available"]]
 
     data.to_parquet(
-        f"{OUTPUT_PREFIX}/saudia/bid_and_flight_data.parquet",
+        f"{OUTPUT_PREFIX}/saudia/bid_and_flight_data_20260107.parquet",
         coerce_timestamps="us",
         allow_truncated_timestamps=True,
     )

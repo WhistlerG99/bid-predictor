@@ -8,6 +8,11 @@ from bid_predictor.preprocessor import (
 )
 
 
+BUCKET = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
+PREFIX = "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output"
+OUTPUT_PREFIX = "s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/data"
+
+
 avail_cols: List[str] = [
     "available_count_01h",
     "available_count_12h",
@@ -57,16 +62,35 @@ features: List[str] = (
 
 
 if __name__ == "__main__":
-    grp_cols = ["flight_number", "carrier_code", "departure_local_date_time", "cabin_type"]
-    # grp_cols = ["flight_number", "carrier_code", "departure_local_date_time", "upgrade_type"]
+    data_dir = "bid-predictor-historical-by-partners-EY-SV/EY"
 
-    df_flights = load_flight_data("../data/etihad/raw_data/joined_cols_point3_ey_2years_data.csv")
+    # flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-cols-20251117T202158/"
+    # offers_file = (
+    #     f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-offers-ord-20251117T200423/"
+    # )
+
+    # flights_file="../data/etihad/raw_data/joined_cols_point3_ey_2years_data.csv"
+    # offers_file="../data/etihad/raw_data/point_1_joined_offers_orld_tables_with_usd_col.csv"
+    
+    flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-cols-20260106T163532/"
+    offers_file = (
+        f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-offers-ord-20260107T143304/"
+    )
+
+    grp_cols = [
+        "flight_number",
+        "carrier_code",
+        "departure_local_date_time",
+        "cabin_type"
+    ]
+
+    df_flights = load_flight_data(flights_file)
     df_flights = df_flights[df_flights.booking_fare_class.isin(["F","J","Y"])]
 
     grps = df_flights.groupby(grp_cols, observed =True).size().sort_values()
     df_flights = df_flights.merge(grps[grps==1].reset_index().drop(columns=0),on=grp_cols)
 
-    df_offers = load_offer_data("../data/etihad/raw_data/point_1_joined_offers_orld_tables_with_usd_col.csv")
+    df_offers = load_offer_data(offers_file)
 
     # extract "FIRST" or "BUSINESS" when they appear as suffixes like "XXX_FIRST" or "XXX_BUSINESS"
     df_offers["upgrade_type"] = (
@@ -82,4 +106,8 @@ if __name__ == "__main__":
 
     data = data[features + ["seats_available"]]
 
-    data.to_parquet("../data/etihad/bid_and_flight_data_etihad.parquet", coerce_timestamps="us", allow_truncated_timestamps=True)
+    data.to_parquet(
+        f"{OUTPUT_PREFIX}/etihad/bid_and_flight_data_20260107.parquet",
+        coerce_timestamps="us",
+        allow_truncated_timestamps=True,
+    )
