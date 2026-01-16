@@ -66,6 +66,7 @@ est = Estimator(
         "training-data-path": train_s3,
         "test-fraction": 0.2,
         "scale-pos-weight": 0.25,
+        # "auto-class-weights": "Balanced",
         # "travel-date-min": None,
         # "travel-date-max": None,
     },
