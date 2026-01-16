@@ -5,11 +5,13 @@ from bid_predictor.preprocessor import (
     load_offer_data,
     preprocess_data,
     get_seats_available,
+    AUCTION_DATE_COLS,
+    CABIN_DATE_COLS,
 )
 
 
 BUCKET = "amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8"
-PREFIX = "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output"
+PREFIX = "dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/bsp-historical"
 OUTPUT_PREFIX = "s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/5vt5uv9jpcqmxz/data"
 
 
@@ -29,6 +31,21 @@ event_date_cols: List[str] = [
     "event_local_date_72h",
 ]
 
+event_utc_date_cols: List[str] = [
+    "event_date_01h",
+    "event_date_12h",
+    "event_date_24h",
+    "event_date_48h",
+    "event_date_72h",
+]
+
+update_time_cols: List[str] = [
+    "update_time_01h",
+    "update_time_12h",
+    "update_time_24h",
+    "update_time_48h",
+    "update_time_72h",
+]
 
 features: List[str] = (
     [
@@ -38,6 +55,8 @@ features: List[str] = (
         "offer_status",
         "carrier_code",
         "flight_number",
+        "origination",
+        "destination",
         "travel_date",
         "item_count",
         "usd_base_amount",
@@ -62,52 +81,74 @@ features: List[str] = (
 
 
 if __name__ == "__main__":
-    data_dir = "bid-predictor-historical-by-partners-EY-SV/EY"
+    data_dir = "EY/historical-offers-availability-2026-01-14T05-05-05"
 
-    # flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-cols-20251117T202158/"
-    # offers_file = (
-    #     f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-offers-ord-20251117T200423/"
-    # )
-
-    # flights_file="../data/etihad/raw_data/joined_cols_point3_ey_2years_data.csv"
-    # offers_file="../data/etihad/raw_data/point_1_joined_offers_orld_tables_with_usd_col.csv"
-    
-    flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-cols-20260106T163532/"
+    flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/flight-data.parquet"
     offers_file = (
-        f"s3://{BUCKET}/{PREFIX}/{data_dir}/joined-offers-ord-20260107T143304/"
+        f"s3://{BUCKET}/{PREFIX}/{data_dir}/offer-data.parquet"
     )
 
-    grp_cols = [
-        "flight_number",
-        "carrier_code",
-        "departure_local_date_time",
-        "cabin_type"
+    df_flights = load_flight_data(flights_file)
+    df_flights = df_flights[(df_flights.booking_fare_class.isin(["F","J","Y"]))&(df_flights.cabin_type.isin(["BUSINESS","FIRST"]))]
+    
+    df_flights = df_flights[
+        df_flights.columns.intersection(features).tolist()
+        + event_utc_date_cols
+        + update_time_cols
+        + [
+            "travel_date_local",
+            "cabin_type",
+            "departure_date_utc",
+        ]
     ]
 
-    df_flights = load_flight_data(flights_file)
-    df_flights = df_flights[df_flights.booking_fare_class.isin(["F","J","Y"])]
-
-    grps = df_flights.groupby(grp_cols, observed =True).size().sort_values()
-    df_flights = df_flights.merge(grps[grps==1].reset_index().drop(columns=0),on=grp_cols)
-
     df_offers = load_offer_data(offers_file)
+
+    print()
+    print(df_offers.groupby("offer_status").size().sort_values()[::-1])
+    print()
+
+    df_offers = df_offers[df_offers.offer_status.isin(["TICKETED", "EXPIRED", "CC_AUTH_DECLINED", "CC_AUTH_RETRY"])]
+    num_bids1 = len(df_offers[["id"] + AUCTION_DATE_COLS].drop_duplicates())
+    print(f"Number of unique bids (after status filter): {num_bids1}")
+    
+    df_offers = df_offers[df_offers.instant_upgrade == 0] # Dropping instant upgrades
+
+    num_bids2 = len(df_offers[["id"] + AUCTION_DATE_COLS].drop_duplicates())
+    print(f"Number of unique bids (after instant_upgrade filter): {num_bids2} (change: {num_bids1 - num_bids2})")
 
     # extract "FIRST" or "BUSINESS" when they appear as suffixes like "XXX_FIRST" or "XXX_BUSINESS"
     df_offers["upgrade_type"] = (
         df_offers["upgrade_type"]
-        .str.extract(r'(?:_|^)(FIRST|BUSINESS)(?:$|\b)', flags=re.IGNORECASE)[0]
+        .str.extract(r"(?:_|^)(FIRST|BUSINESS|EXTRA_SEAT)(?:$|\b)", flags=re.IGNORECASE)[0]
         .str.upper()
     )
     # use None for no-match (consistent with earlier cells)
-    df_offers["upgrade_type"] = df_offers["upgrade_type"].where(df_offers["upgrade_type"].notna(), None)
+    df_offers["upgrade_type"] = df_offers["upgrade_type"].where(
+        df_offers["upgrade_type"].notna(), None
+    )
+
+    print()
+    print(df_offers.groupby("upgrade_type").size().sort_values()[::-1])
+    print()
+
+    df_offers = df_offers[df_offers["upgrade_type"].isin(["BUSINESS","FIRST"])]
+
+    num_bids3 = len(df_offers[["id"] + AUCTION_DATE_COLS].drop_duplicates())
+    print(f"Number of unique bids (after upgrade_type filter): {num_bids3} (change: {num_bids2 - num_bids3})\n")
+
+    df_offers = df_offers[
+        df_offers.columns.intersection(features).tolist()
+    ].reset_index(drop=True)
 
     data = preprocess_data(df_flights, df_offers)
+
     data["seats_available"] = data.apply(get_seats_available, axis=1)
 
     data = data[features + ["seats_available"]]
 
     data.to_parquet(
-        f"{OUTPUT_PREFIX}/etihad/bid_and_flight_data_20260107.parquet",
+        f"{OUTPUT_PREFIX}/etihad/bid_and_flight_data_20260107_v2.parquet",
         coerce_timestamps="us",
         allow_truncated_timestamps=True,
     )
