@@ -207,7 +207,7 @@ def parse_args():
         learning_rate=None,
         l2_leaf_reg=3.0,
         loss_function="Logloss",
-        auto_class_weights="Balanced",
+        # auto_class_weights="Balanced",
         eval_metric="AUC",
         random_state=42,
     )
@@ -215,7 +215,9 @@ def parse_args():
     p.add_argument("--feature-config", type=str, default=None)
     p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
     p.add_argument("--run-name", type=str, default=None)
-    p.add_argument("--testing", action="store_true")
+    p.add_argument("--test-fraction", type=float, default=0.2)
+    p.add_argument("--travel-date-min", type=str, default=None)
+    p.add_argument("--travel-date-max", type=str, default=None)
     p.add_argument(
         "--catboost-config",
         type=str,
@@ -312,7 +314,9 @@ def train_and_log_model(
     pre_features = feature_config["pre_features"]
 
     var_args = vars(args)
-    testing = var_args.pop("testing")
+    test_fraction = var_args.pop("test_fraction", 0.2)
+    travel_date_min = var_args.pop("travel_date_min", None)
+    travel_date_max = var_args.pop("travel_date_max", None)
     experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
     run_name = var_args.pop("run_name", run_name)
     explicit_flags = set(var_args.pop("_explicit_flags", set()))
@@ -320,7 +324,11 @@ def train_and_log_model(
     training_data_path = var_args.pop("training_data_path", train_file) or train_file
 
     X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(
-        data, pre_features, testing=testing
+        data,
+        pre_features,
+        test_fraction=test_fraction,
+        travel_date_min=travel_date_min,
+        travel_date_max=travel_date_max,
     )
 
     mlflow.set_experiment(experiment_name)

@@ -28,6 +28,76 @@ DEFAULT_RENAME_COLUMNS: Mapping[str, str] = {
 }
 
 
+def _train_test_split_by_travel_date(
+    df: pd.DataFrame,
+    fraction: float,
+    date_col: str = "travel_date",
+    *,
+    min_dt: Optional[str | pd.Timestamp] = None,
+    max_dt: Optional[str | pd.Timestamp] = None,
+) -> Tuple[pd.Timestamp, pd.DataFrame, pd.DataFrame]:
+    """
+    Finds a *day-level* threshold t (midnight) such that:
+      df1 = df_window[df_window[date_col] < t]
+      df2 = df_window[df_window[date_col] >= t]
+    and len(df2)/len(df_window) ~= fraction.
+
+    If min_dt and/or max_dt are provided:
+    - df_window is restricted to:
+        travel_date >= min_dt
+        travel_date <=  max_dt
+    - returned df1 and df2 contain ONLY rows within that window
+    - fraction is applied ONLY within that window
+
+    Notes:
+    - t is normalized to midnight (time ignored).
+    - NaT/unparseable dates are excluded (since they can't be windowed/split meaningfully).
+    """
+    if not (0.0 <= fraction <= 1.0):
+        raise ValueError("fraction must be between 0 and 1 inclusive.")
+    if date_col not in df.columns:
+        raise KeyError(f"Column '{date_col}' not found in df.")
+    if len(df) == 0:
+        raise ValueError("df is empty.")
+
+    # Parse datetimes
+    s = pd.to_datetime(df[date_col], errors="coerce")
+
+    # Remove NaT rows (can't be compared to thresholds)
+    base_mask = s.notna()
+
+    # Apply window constraints
+    if min_dt is not None:
+        min_dt = pd.to_datetime(min_dt)
+        base_mask &= (s >= min_dt)
+
+    if max_dt is not None:
+        max_dt = pd.to_datetime(max_dt)
+        base_mask &= (s <= max_dt)
+
+    df_window = df.loc[base_mask].copy()
+    s_window = s.loc[base_mask]
+
+    if df_window.empty:
+        raise ValueError(
+            f"No rows remain after applying date window on '{date_col}'."
+        )
+
+    # Compute day-normalized threshold
+    if fraction == 1.0:
+        t = s_window.min().normalize()
+    elif fraction == 0.0:
+        t = s_window.max().normalize() + pd.Timedelta(days=1)
+    else:
+        t = pd.Timestamp(s_window.quantile(1-fraction)).normalize()
+
+    # Split *within the window only*
+    df_train = df_window.loc[s_window < t].copy()
+    df_test = df_window.loc[~(s_window < t)].copy()
+
+    return t, df_train, df_test
+
+
 @dataclass(frozen=True)
 class DatasetLoadOptions:
     """Options that control how the training dataset is loaded."""
@@ -247,12 +317,13 @@ def prepare_prediction_dataframe(
 
     return feature_df
 
-
 def prepare_features(
     data: pd.DataFrame,
     pre_features: Sequence[str],
     *,
-    testing: bool = True,
+    test_fraction: float = 0.2,
+    travel_date_min: Optional[str|pd.Timestamp] = None, 
+    travel_date_max: Optional[str|pd.Timestamp] = None, 
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series, pd.DataFrame]:
     """Prepare features for training or evaluation splits."""
 
@@ -274,16 +345,14 @@ def prepare_features(
         dict.fromkeys(available_pre_features + ["offer_status", "id", "decision_timestamp"])
     )
 
-    if testing:
-        cutoff = "2023-08-01"
-        yX_test = data[
-            (data.travel_date >= cutoff) & (data.travel_date <= "2023-08-15")
-        ][selection_columns].copy()
-    else:
-        cutoff = "2025-05-01"
-        yX_test = data.loc[data.travel_date >= cutoff, selection_columns].copy()
+    _, yX_train, yX_test = _train_test_split_by_travel_date(
+        data,
+        test_fraction,
+        min_dt=travel_date_min,
+        max_dt=travel_date_max,
+    )
 
-    yX_train = data.loc[data.travel_date < cutoff, selection_columns].copy()
+    yX_test, yX_train = yX_test[selection_columns], yX_train[selection_columns]
 
     X_train = yX_train.loc[:, available_pre_features]
     X_test = yX_test.loc[:, available_pre_features]

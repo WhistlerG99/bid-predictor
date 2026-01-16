@@ -29,7 +29,7 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "bid-predictor-test-sv"
+experiment_name = "bid-predictor-test-ey"
 
 job_timestamp = f"{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}" #dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 job_name = f"{experiment_name}-{job_timestamp}"
@@ -43,8 +43,8 @@ iterations = 500
 train_s3 = os.environ.get("S3_BUCKET_DATA") + "/data"
 
 # train_s3 += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
-# train_s3 += "/etihad/bid_and_flight_data_snapshots_v3.parquet"
-train_s3 += "/saudia/bid_and_flight_data_snapshots_v3.parquet"
+train_s3 += "/etihad/bid_and_flight_data_snapshots_20260107.parquet"
+# train_s3 += "/saudia/bid_and_flight_data_snapshots_20260107.parquet"
 
 
 est = Estimator(
@@ -64,6 +64,10 @@ est = Estimator(
         "run-name": run_name,
         "feature-config": feature_config,
         "training-data-path": train_s3,
+        "test-fraction": 0.2,
+        "scale-pos-weight": 0.25,
+        # "travel-date-min": None,
+        # "travel-date-max": None,
     },
     # keep this so you can iterate code without rebuilding the image
     entry_point="train.py",
