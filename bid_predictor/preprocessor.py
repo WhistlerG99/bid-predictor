@@ -115,11 +115,6 @@ def load_offer_data(path):
         df["utc_diff"], "m"
     )
 
-    df["offer_time"] = df.apply(
-        lambda x: (x["departure_timestamp"] - x["created"]).total_seconds()
-        / (60 * 60 * 24),
-        axis=1,
-    )
     df["usd_base_amount"] = (df["base_amount"].astype(float) * df["inverse_rate"].astype(float)).round(2)
 
     num_offer_rows = len(df)
@@ -193,6 +188,7 @@ def preprocess_data(df_flights, df_offers):
     )
 
     data = pd.concat((data_dedup, data_dup)).reset_index(drop=True)
+    data["departure_timestamp"] = data["departure_local_date_time"] # <- trust departure datetime from flight table over offers table  
 
     num_rows = len(data)
     num_bids = len(data[["id"] + AUCTION_DATE_COLS].drop_duplicates())
@@ -221,6 +217,12 @@ def preprocess_data(df_flights, df_offers):
         data[f"update_local_time_{i:02d}h"] = data[f"update_time_{i:02d}h"] + (
             data["departure_local_date_time"] - data["departure_date_utc"]
         )
+
+    data["offer_time"] = data.apply(
+        lambda x: (x["departure_timestamp"] - x["created"]).total_seconds()
+        / (60 * 60 * 24),
+        axis=1,
+    )
 
     data["flight_number"] = pd.Categorical(data["flight_number"])
     return data

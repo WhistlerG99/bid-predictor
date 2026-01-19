@@ -65,7 +65,7 @@ est = Estimator(
         "feature-config": feature_config,
         "training-data-path": train_s3,
         "test-fraction": 0.2,
-        "scale-pos-weight": 0.25,
+        "scale-pos-weight": 0.5,
         # "auto-class-weights": "Balanced",
         # "travel-date-min": None,
         # "travel-date-max": None,
