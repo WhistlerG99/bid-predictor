@@ -314,10 +314,10 @@ def log_classification_metrics(y_true, y_prob):
         metrics.update(
             {
                 f"accuracy_{int(100*t)}": float(accuracy_score(y_true, (y_prob >= t).astype(int))),
-                f"precision_{int(100*t)}": float(precision_score(y_true, (y_prob >= t).astype(int), zero_division=np.nan)),
-                f"recall_{int(100*t)}": float(recall_score(y_true, (y_prob >= t).astype(int), zero_division=np.nan)),
-                f"negative_precision_{int(100*t)}": float(precision_score((y_true==0).astype(int), (y_prob < t).astype(int), zero_division=np.nan)),
-                f"negative_recall_{int(100*t)}": float(recall_score((y_true==0).astype(int), (y_prob < t).astype(int), zero_division=np.nan)),
+                f"precision_{int(100*t)}": float(precision_score(y_true, (y_prob >= t).astype(int), zero_division=0)),
+                f"recall_{int(100*t)}": float(recall_score(y_true, (y_prob >= t).astype(int), zero_division=0)),
+                f"negative_precision_{int(100*t)}": float(precision_score((y_true==0).astype(int), (y_prob < t).astype(int), zero_division=0)),
+                f"negative_recall_{int(100*t)}": float(recall_score((y_true==0).astype(int), (y_prob < t).astype(int), zero_division=0)),
             }
         )
     mlflow.log_metrics(metrics)

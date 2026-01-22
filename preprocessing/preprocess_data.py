@@ -81,14 +81,14 @@ features: List[str] = (
 
 
 if __name__ == "__main__":
-    carrier_code = "EY"
+    carrier_code = "SV"
     
     data_dir = f"{carrier_code}/historical-offers-availability-2026-01-14T05-05-05"
 
     if carrier_code=="SV":
-        output_path = "saudia/bid_and_flight_data_20260107_v2.parquet"
+        output_path = "saudia/bid_and_flight_data_20260107.parquet"
     elif carrier_code=="EY":
-        output_path = "etihad/bid_and_flight_data_20260107_v2.parquet"
+        output_path = "etihad/bid_and_flight_data_20260107.parquet"
 
     flights_file = f"s3://{BUCKET}/{PREFIX}/{data_dir}/flight-data.parquet"
     offers_file = (
@@ -120,11 +120,7 @@ if __name__ == "__main__":
 
     df_offers = load_offer_data(offers_file)
 
-    print()
-    print(df_offers.groupby("offer_status").size().sort_values()[::-1])
-    print()
-
-    df_offers = df_offers[df_offers.offer_status.isin(["TICKETED", "EXPIRED", "CC_AUTH_DECLINED", "CC_AUTH_RETRY"])]
+    df_offers = df_offers[df_offers.offer_status.isin(["TICKETED", "EXPIRED"])]#, "CC_AUTH_DECLINED", "CC_AUTH_RETRY"])]
     num_bids1 = len(df_offers[["id"] + AUCTION_DATE_COLS].drop_duplicates())
     print(f"Number of unique bids (after status filter): {num_bids1}")
     
@@ -143,10 +139,6 @@ if __name__ == "__main__":
     df_offers["upgrade_type"] = df_offers["upgrade_type"].where(
         df_offers["upgrade_type"].notna(), None
     )
-
-    print()
-    print(df_offers.groupby("upgrade_type").size().sort_values()[::-1])
-    print()
 
     df_offers = df_offers[df_offers["upgrade_type"].isin(["BUSINESS","FIRST"])]
 

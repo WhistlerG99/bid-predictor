@@ -29,7 +29,7 @@ devices = "0"
 # devices = "-1"
 # devices = "0,1,2,3"
 
-experiment_name = "bid-predictor-test-ey"
+experiment_name = "bid-predictor-test-2-ey"
 
 job_timestamp = f"{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}" #dt.datetime.utcnow().strftime("%Y-%m-%d-%H-%M-%S")
 job_name = f"{experiment_name}-{job_timestamp}"
@@ -65,8 +65,8 @@ est = Estimator(
         "feature-config": feature_config,
         "training-data-path": train_s3,
         "test-fraction": 0.2,
-        "scale-pos-weight": 0.5,
-        # "auto-class-weights": "Balanced",
+        # "scale-pos-weight": 0.25,
+        "auto-class-weights": "Balanced",
         # "travel-date-min": None,
         # "travel-date-max": None,
     },
