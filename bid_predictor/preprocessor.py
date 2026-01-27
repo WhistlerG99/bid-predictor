@@ -1,133 +1,235 @@
 import pandas as pd
+import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
+
+logger = logging.getLogger(__name__)
+
+AUCTION_DATE_COLS = [
+    "carrier_code",
+    "partner_id",
+    "flight_number",
+    "origination",
+    "destination",
+    "travel_date",
+    "upgrade_type",
+]
+
+CABIN_DATE_COLS = [
+    "carrier_code",
+    "partner_id",
+    "flight_number",
+    "origination",
+    "destination",
+    "travel_date_local",
+    "cabin_type",
+]
+
+
+AUCTION_DATETIME_COLS = [
+    "carrier_code",
+    "partner_id",
+    "flight_number",
+    "origination",
+    "destination",
+    "departure_timestamp",
+    "upgrade_type",
+]
+
+CABIN_DATETIME_COLS = [
+    "carrier_code",
+    "partner_id",
+    "flight_number",
+    "origination",
+    "destination",
+    "departure_local_date_time",
+    "cabin_type",
+]
 
 def load_flight_data(path):
-    df = pd.read_csv(path, low_memory=False)
-    df["departure_date_utc"] = pd.to_datetime(df.departure_date_utc)
-    df["travel_year_month"] = pd.to_datetime(
-        df.apply(
-            lambda x: f"{x['departure_date_utc'].year}-{x['departure_date_utc'].month}",
-            axis=1,
-        )
-    )
-    df["travel_date_utc"] = pd.to_datetime(
-        df["departure_date_utc"].apply(lambda x: x.date())
-    )
-    df["departure_local_date_time"] = pd.to_datetime(df["departure_local_date_time"])
+    """Load raw flight metadata CSVs or Parquets and derive calendar helper columns."""
+    path = str(path)
+    if path.endswith(".csv"):
+        df = pd.read_csv(path, low_memory=False)
+    else:
+        try:
+            df = pd.read_parquet(path)
+        except Exception as e:
+            raise ValueError("Unsupported file format. Please provide a .csv or .parquet file.")
+
+
+    df["departure_local_date_time"] = pd.to_datetime(df["departure_local_date_time"], errors="coerce")
     df["travel_date_local"] = pd.to_datetime(
-        df["departure_local_date_time"].apply(lambda x: x.date())
+        df["departure_local_date_time"].apply(lambda x: x.date()),
+        errors="coerce"
     )
-    df["flight_number"] = pd.Categorical(df.flight_number)
+
+
+    num_flight_rows = len(df)
+    num_flight_cabins = len(df[CABIN_DATETIME_COLS].drop_duplicates())
+    logger.info("Loaded Flight Table")
+    logger.info(f"Number of rows: {num_flight_rows:,}")
+    logger.info(f"Number of unique auctions/cabins: {num_flight_cabins:,}\n")
+
     return df
 
 
 def load_offer_data(path):
-    df = pd.read_csv(path, low_memory=False)
+    """Load bid offer CSVs or Parquets and normalize column names and categorical fields."""
+    path = str(path)
+    if path.endswith(".csv"):
+        df = pd.read_csv(path, low_memory=False)
+    else:
+        try:
+            df = pd.read_parquet(path)
+        except Exception as e:
+            raise ValueError("Unsupported file format. Please provide a .csv or .parquet file.")
     df = df.rename(
         columns={
             "operating_carrier": "carrier_code",
             "operating_flight_num": "flight_number",
-        }
+            "ord_multiplier_fare_class": "multiplier_fare_class", 
+            "ord_multiplier_loyalty": "multiplier_loyalty", 
+            "ord_multiplier_success_history": "multiplier_success_history", 
+            "ord_multiplier_payment_type": "multiplier_payment_type",
+        },
+        errors="ignore",
     )
-    df = df[df.offer_status.isin(["TICKETED", "EXPIRED"])]
-    df["travel_date"] = pd.to_datetime(df.travel_dt)
-    df[["travel_year", "travel_month", "travel_dow"]] = df.apply(
-        lambda x: (
-            x["travel_date"].year,
-            x["travel_date"].month,
-            x["travel_date"].day_of_week,
-        ),
-        axis=1,
-        result_type="expand",
+
+    df["created"] = pd.to_datetime(df["created"], errors="coerce")
+
+    df["travel_date"] = pd.to_datetime(df["travel_dt"], errors="coerce")
+
+    df["decision_timestamp"] = pd.to_datetime(
+        df["upgrade_timestamp"].combine_first(df["expiration_timestamp"])
     )
-    for col in ["flight_number", "travel_year", "travel_month", "travel_dow"]:
-        df[col] = pd.Categorical(df[col])
+
+    dates = pd.to_datetime(df["travel_date"], errors="coerce")
+    times = pd.to_timedelta(df["dep_tm"], errors="coerce")
+    df["departure_timestamp"] = dates + times
+
+    df["departure_timestamp_utc"] = df["departure_timestamp"] - pd.to_timedelta(
+        df["utc_diff"], "m"
+    )
+
+    df["usd_base_amount"] = (df["base_amount"].astype(float) * df["inverse_rate"].astype(float)).round(2)
+
+    num_offer_rows = len(df)
+    num_offer_bids = len(df[["id"] + AUCTION_DATE_COLS].drop_duplicates())
+    num_offer_cabins = len(df[AUCTION_DATE_COLS].drop_duplicates())
+    logger.info("Finished Loading Offers Table")
+    logger.info(f"Number of rows: {num_offer_rows:,}")
+    logger.info(f"Number of unique bids: {num_offer_bids:,}")
+    logger.info(f"Number of unique auctions/cabins: {num_offer_cabins:,}\n")
+
     return df
 
 
 def preprocess_data(df_flights, df_offers):
-    df_flights_ = df_flights.drop(columns=["equip"]).drop_duplicates(
-        subset=[
-            "carrier_code",
-            "flight_number",
-            "travel_date_local",
-            "cabin_type",
-            "origination",
-            "destination",
-            "booking_fare_class",
-        ]
+    """Join flight and offer datasets and engineer shared temporal features."""
+
+    start = str(max(df_offers["travel_date"].min(), df_flights["travel_date_local"].min()).date())
+    end = str(min(df_offers["travel_date"].max(), df_flights["travel_date_local"].max()).date())
+
+    df_flights = df_flights[(df_flights["travel_date_local"]>=start)&(df_flights["travel_date_local"]<=end)]
+    df_offers = df_offers[(df_offers["travel_date"]>=start)&(df_offers["travel_date"]<=end)]
+
+    num_flight_rows = len(df_flights)
+    num_flight_cabins = len(df_flights[CABIN_DATETIME_COLS].drop_duplicates())
+
+    num_offer_rows = len(df_offers)
+    num_offer_bids = len(df_offers[["id"] + AUCTION_DATE_COLS].drop_duplicates())
+    num_offer_cabins = len(df_offers[AUCTION_DATE_COLS].drop_duplicates())
+
+    logger.info(f"Filtered Flights and Offers bewteen {start} and {end}")
+    logger.info("Flight Table")
+    logger.info(f"Number of rows: {num_flight_rows:,}")
+    logger.info(f"Number of unique auctions/cabins: {num_flight_cabins:,}\n")
+    logger.info("Offers Table")
+    logger.info(f"Number of rows: {num_offer_rows:,}")
+    logger.info(f"Number of unique bids: {num_offer_bids:,}")
+    logger.info(f"Number of unique auctions/cabins: {num_offer_cabins:,}\n")
+
+
+    flight_dups = df_flights.groupby(CABIN_DATE_COLS, observed=True).size().sort_values()
+
+    if (flight_dups>2).any():
+        logger.warn(
+            "There are records in the flight table that have more\n"
+            "than 2 duplicates with the same flight identifiers.\n"
+            "This might mean that you have not filtered out the\n"
+            "right booking_fare_class types."
+        )
+
+
+    df_flights_dedup = df_flights.merge(
+        flight_dups[flight_dups == 1].reset_index().drop(columns=0), on=CABIN_DATE_COLS
     )
-    df_offers_ = df_offers.replace(
-        {
-            "from_cabin": {
-                "REGIONAL_PREMIUM_ECONOMY": "PREMIUM_ECONOMY",
-                "REGIONAL_BUSINESS": "BUSINESS",
-            },
-            "upgrade_type": {
-                "REGIONAL_PREMIUM_ECONOMY": "PREMIUM_ECONOMY",
-                "REGIONAL_BUSINESS": "BUSINESS",
-            },
-        }
+
+    data_dedup = df_offers.merge(
+        df_flights_dedup,
+        left_on=AUCTION_DATE_COLS,
+        right_on=CABIN_DATE_COLS,
+        how="inner"
     )
-    out = df_offers_.merge(
-        df_flights_,
-        left_on=[
-            "carrier_code",
-            "flight_number",
-            "partner_id",
-            "travel_date",
-            "upgrade_type",
-        ],
-        right_on=[
-            "carrier_code",
-            "flight_number",
-            "partner_id",
-            "travel_date_local",
-            "cabin_type",
-        ],
-        how="inner",
+
+    df_flights_dup = df_flights.merge(
+        flight_dups[flight_dups > 1].reset_index().drop(columns=0), on=CABIN_DATE_COLS
     )
-    out = out.replace(
-        {
-            k: {"PREMIUM_ECONOMY": "P-ECON", "ECONOMY": "ECON", "BUSINESS": "BUS"}
-            for k in ["from_cabin", "upgrade_type"]
-        }
+
+    data_dup = df_offers.merge(
+        df_flights_dup,
+        left_on=AUCTION_DATETIME_COLS,
+        right_on=CABIN_DATETIME_COLS,
+        how="inner"
     )
-    out["decision_timestamp"] = pd.to_datetime(
-        out["upgrade_timestamp"].combine_first(out["expiration_timestamp"])
-    )
+
+    data = pd.concat((data_dedup, data_dup)).reset_index(drop=True)
+    data["departure_timestamp"] = data["departure_local_date_time"] # <- trust departure datetime from flight table over offers table  
+
+    num_rows = len(data)
+    num_bids = len(data[["id"] + AUCTION_DATE_COLS].drop_duplicates())
+    num_cabins = len(data[AUCTION_DATE_COLS].drop_duplicates())
+
+    logger.info("Offers+Flight Table")
+    logger.info(f"Number of rows: {num_rows:,}")
+    logger.info(f"Number of unique bids: {num_bids} (dropped bids: {num_offer_bids-num_bids:,})")
+    logger.info(f"Number of unique auctions/cabins: {num_cabins:,}\n")
+
+    if num_rows!=num_bids:
+        logger.warn(
+            "There are duplicate offer id's in the output table.\n"
+            "You should double check that nothing is wrong!"
+        )
+
+    data["departure_date_utc"] = pd.to_datetime(data["departure_date_utc"], errors="coerce")
+
     for i in [1, 12, 24, 48, 72]:
-        out[f"event_date_{i:02d}h"] = pd.to_datetime(out[f"event_date_{i:02d}h"])
-        out[f"update_time_{i:02d}h"] = pd.to_datetime(out[f"update_time_{i:02d}h"])
-    out["created"] = pd.to_datetime(out["created"])
-    out["departure_local_date_time"] = pd.to_datetime(out["departure_local_date_time"])
-    out["departure_timestamp"] = pd.to_datetime(
-        out[["travel_dt", "dep_tm"]].apply(
-            lambda x: x["travel_dt"] + " " + x["dep_tm"], axis=1
+        data[f"event_date_{i:02d}h"] = pd.to_datetime(data[f"event_date_{i:02d}h"], errors="coerce")
+        data[f"update_time_{i:02d}h"] = pd.to_datetime(data[f"update_time_{i:02d}h"], errors="coerce")
+
+        data[f"event_local_date_{i:02d}h"] = data[f"event_date_{i:02d}h"] + (
+            data["departure_local_date_time"] - data["departure_date_utc"]
         )
-    )
-    out["departure_timestamp_utc"] = out["departure_timestamp"] - pd.to_timedelta(
-        out["utc_diff"], "m"
-    )
-    for i in [1, 12, 24, 48, 72]:
-        out[f"event_local_date_{i:02d}h"] = out[f"event_date_{i:02d}h"] + (
-            out["departure_local_date_time"] - out["departure_date_utc"]
+        data[f"update_local_time_{i:02d}h"] = data[f"update_time_{i:02d}h"] + (
+            data["departure_local_date_time"] - data["departure_date_utc"]
         )
-        out[f"update_local_time_{i:02d}h"] = out[f"update_time_{i:02d}h"] + (
-            out["departure_local_date_time"] - out["departure_date_utc"]
-        )
-    out["offer_time"] = out.apply(
+
+    data["offer_time"] = data.apply(
         lambda x: (x["departure_timestamp"] - x["created"]).total_seconds()
         / (60 * 60 * 24),
         axis=1,
     )
-    out = out[out.instant_upgrade == 0].reset_index(drop=True)
-    out["usd_base_amount"] = (out["base_amount"] * out["inverse_rate"]).round(2)
-    out["flight_number"] = pd.Categorical(out["flight_number"])
-    return out
+
+    data["flight_number"] = pd.Categorical(data["flight_number"])
+    return data
 
 
 def get_seats_available(row):
+    """Estimate seats available at decision time using staggered inventory snapshots."""
     time_columns = [
         ("event_local_date_01h", "available_count_01h"),
         ("event_local_date_12h", "available_count_12h"),

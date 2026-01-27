@@ -1,0 +1,16 @@
+# Demonstrates toggling feature engineering switches alongside CatBoost params.
+catboost:
+  iterations: [250]
+  depth: [6]
+  learning_rate: [0.08]
+  random_strength: [0.0, 2.0]
+transform:
+  impute_median:
+    seats_available: [true]
+  outlier:
+    item_count: [{max: 5}, {max: 7}]
+    num_offers: [{max: 12}, {max: 16}]
+  bins:
+    usd_base_amount:
+      - {min: 0, max: 1700, interval: 20}
+      - {min: 0, max: 1700, interval: 50}

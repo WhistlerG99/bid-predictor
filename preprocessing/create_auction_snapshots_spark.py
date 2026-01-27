@@ -105,7 +105,7 @@ def event_times(df: pd.DataFrame) -> pd.DataFrame:
     event_dates.columns = [0]
 
     times = pd.concat((decision_timestamps, createds, event_dates))
-    times = pd.to_datetime(times[0], format='ISO8601')
+    times = pd.to_datetime(times[0], format="ISO8601")
     times = times.dropna().sort_values()
 
     # times_ = times.drop(index=[x for x in times.index if x.startswith("created")])
@@ -121,11 +121,17 @@ def event_times(df: pd.DataFrame) -> pd.DataFrame:
             .tolist()
         )
     except IndexError:
-        key = df[["carrier_code", "flight_number", "travel_date", "upgrade_type"]].iloc[0].values.tolist()
-        raise IndexError(f"1) This is the problem dataframe: {str(times)},\nThis is the flight {str(key)}")
+        key = (
+            df[["carrier_code", "flight_number", "travel_date", "upgrade_type"]]
+            .iloc[0]
+            .values.tolist()
+        )
+        raise IndexError(
+            f"1) This is the problem dataframe: {str(times)},\nThis is the flight {str(key)}"
+        )
 
     times_ = times[times.index.str.startswith("decision_timestamp")]
-    if times_.size==0:
+    if times_.size == 0:
         return pd.Series(name=0, dtype=np.dtype("<M8[ns]"))
     end_time = times_.iloc[-1]
 
@@ -277,6 +283,7 @@ def get_snapshots(df: pd.DataFrame) -> pd.DataFrame:
     keep = [c for c in features if c in dfs.columns]
     return dfs[keep]
 
+
 # -----------------------------
 # Spark job
 # -----------------------------
@@ -292,31 +299,33 @@ def build_spark(app_name: str = "auction-snapshots") -> SparkSession:
 
 
 def output_schema() -> T.StructType:
-    return T.StructType([
-        T.StructField("id", T.LongType(), True),
-        T.StructField("partner_id", T.IntegerType(), True),
-        T.StructField("conf_num", T.StringType(), True),
-        T.StructField("offer_status", T.StringType(), True),
-        T.StructField("carrier_code", T.StringType(), True),
-        T.StructField("flight_number", T.StringType(), True),
-        T.StructField("travel_date", T.TimestampType(), True),
-        T.StructField("item_count", T.IntegerType(), True),
-        T.StructField("usd_base_amount", T.DoubleType(), True),
-        T.StructField("fare_class", T.StringType(), True),
-        T.StructField("offer_time", T.DoubleType(), True),
-        T.StructField("multiplier_fare_class", T.DoubleType(), True),
-        T.StructField("multiplier_loyalty", T.DoubleType(), True),
-        T.StructField("multiplier_success_history", T.DoubleType(), True),
-        T.StructField("multiplier_payment_type", T.DoubleType(), True),
-        T.StructField("from_cabin", T.StringType(), True),
-        T.StructField("upgrade_type", T.StringType(), True),
-        T.StructField("decision_timestamp", T.TimestampType(), True),
-        T.StructField("created", T.TimestampType(), True),
-        T.StructField("current_timestamp", T.TimestampType(), True),
-        T.StructField("current_available_seats", T.IntegerType(), True),
-        T.StructField("current_seats_col", T.StringType(), True),
-        T.StructField("snapshot_num", T.IntegerType(), True),
-    ])
+    return T.StructType(
+        [
+            T.StructField("id", T.LongType(), True),
+            T.StructField("partner_id", T.IntegerType(), True),
+            T.StructField("conf_num", T.StringType(), True),
+            T.StructField("offer_status", T.StringType(), True),
+            T.StructField("carrier_code", T.StringType(), True),
+            T.StructField("flight_number", T.StringType(), True),
+            T.StructField("travel_date", T.TimestampType(), True),
+            T.StructField("item_count", T.IntegerType(), True),
+            T.StructField("usd_base_amount", T.DoubleType(), True),
+            T.StructField("fare_class", T.StringType(), True),
+            T.StructField("offer_time", T.DoubleType(), True),
+            T.StructField("multiplier_fare_class", T.DoubleType(), True),
+            T.StructField("multiplier_loyalty", T.DoubleType(), True),
+            T.StructField("multiplier_success_history", T.DoubleType(), True),
+            T.StructField("multiplier_payment_type", T.DoubleType(), True),
+            T.StructField("from_cabin", T.StringType(), True),
+            T.StructField("upgrade_type", T.StringType(), True),
+            T.StructField("decision_timestamp", T.TimestampType(), True),
+            T.StructField("created", T.TimestampType(), True),
+            T.StructField("current_timestamp", T.TimestampType(), True),
+            T.StructField("current_available_seats", T.IntegerType(), True),
+            T.StructField("current_seats_col", T.StringType(), True),
+            T.StructField("snapshot_num", T.IntegerType(), True),
+        ]
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -336,11 +345,7 @@ def main():
     spark = build_spark()
 
     # Read CSV. Schema is inferred; if you know exact schema, set it explicitly
-    df = (
-        spark.read.option("header", True)
-        .option("inferSchema", True)
-        .csv(args.input)
-    )
+    df = spark.read.option("header", True).option("inferSchema", True).csv(args.input)
     df = df.drop(*[c for c in df.columns if "." in c])
     df = df[pre_features]
     # Basic hygiene: drop exact duplicate rows
@@ -358,10 +363,7 @@ def main():
             df = df.withColumn(c, F.col(c).cast(typ))
 
     # Filter travel_date >= cutoff (cast if it came as string)
-    df = df.withColumn(
-        "travel_date",
-        F.to_timestamp("travel_date")
-    )
+    df = df.withColumn("travel_date", F.to_timestamp("travel_date"))
     if args.min_travel_date is not None:
         df = df.filter(F.col("travel_date") >= F.lit(args.min_travel_date))
 
@@ -386,19 +388,26 @@ def main():
                 pdf[c] = np.nan
         out = get_snapshots(pdf)
         # Enforce dtypes that match output_schema to avoid parser confusion
-        for c in ["id", "partner_id", "item_count", "current_available_seats", "snapshot_num"]:
+        for c in [
+            "id",
+            "partner_id",
+            "item_count",
+            "current_available_seats",
+            "snapshot_num",
+        ]:
             if c in out.columns:
                 out[c] = pd.to_numeric(out[c], errors="coerce").astype("Int64")
         for c in ["decision_timestamp", "created", *event_date_cols]:
             if c in out.columns:
                 out[c] = pd.to_datetime(out[c], errors="coerce")
         if "usd_base_amount" in out.columns:
-            out["usd_base_amount"] = pd.to_numeric(out["usd_base_amount"], errors="coerce")
+            out["usd_base_amount"] = pd.to_numeric(
+                out["usd_base_amount"], errors="coerce"
+            )
         return out
 
-    result = (
-        df.groupBy(group_keys)
-        .applyInPandas(grouped_snapshots, schema=output_schema())
+    result = df.groupBy(group_keys).applyInPandas(
+        grouped_snapshots, schema=output_schema()
     )
 
     # Reorder/select to output features and write a single CSV (coalesce(1) to avoid sharded output)

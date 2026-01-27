@@ -1,0 +1,3 @@
+id,operating_carrier,s3_path,live_data_s3_path
+11,EY,s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/bid-predictor-historical-by-partners-EY-SV/EY,s3://sagemaker-us-east-1-382704342560/bid_success_predictor/output/bid_predictor_live_data_by_partners/EY
+579,SV,s3://amazon-sagemaker-622055002283-us-east-1-b37b41a56cd8/dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/output/bid-predictor-historical-by-partners-EY-SV/SV,s3://sagemaker-us-east-1-382704342560/bid_success_predictor/output/bid_predictor_live_data_by_partners/SV

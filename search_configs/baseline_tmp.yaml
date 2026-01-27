@@ -1,0 +1,11 @@
+# Compact grid exploring learning rate, depth, and basic feature cleanup.
+catboost:
+  iterations: [100]
+  depth: [6, 8]
+  learning_rate: [0.05]
+  l2_leaf_reg: [5.0]
+transform:
+  impute_median:
+    seats_available: [true]
+  outlier:
+    item_count: [{max: 5}, {max: 8}]

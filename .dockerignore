@@ -1,0 +1,30 @@
+# Don't send scratch artifacts / big blobs
+scratch/
+**/*.joblib
+**/*.pkl
+**/*.pt
+**/*.pth
+
+# General junk
+__pycache__/
+.ipynb_checkpoints/
+*.log
+*.tmp
+
+# If your repo lives on this S3 mount, these help too:
+*.csv
+*.parquet
+*.npy
+*.npz
+
+# You probably also want to ignore VCS and other stuff:
+.git
+mlruns/
+notebooks/
+docs/
+data/
+catboost_info/
+build/
+.pytest_cache/
+tests/
+preprocessing/

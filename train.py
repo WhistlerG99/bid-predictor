@@ -1,102 +1,383 @@
 import os
+import sys
 import argparse
+import warnings
+import inspect
+import shutil
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, Set
+
 import pandas as pd
+import yaml
+from urllib.parse import urlparse
 import mlflow
-from catboost import Pool
-import matplotlib.pyplot as plt
+
+try:
+    import mlflow.data as mldata
+except Exception:
+    mldata = None
+
+try:
+    from mlflow.data.pandas_dataset import PandasDataset
+except Exception:
+    PandasDataset = None
+
+try:
+    from mlflow.data.code_dataset_source import CodeDatasetSource
+except Exception:
+    CodeDatasetSource = None
+
+try:
+    from mlflow.data.meta_dataset import MetaDataset
+except Exception:
+    MetaDataset = None
+
+try:
+    import boto3
+except Exception:
+    boto3 = None
+
+import pyarrow.dataset as ds
 import sklearn
-from sklearn.metrics import (
-    precision_score,
-    recall_score,
-    accuracy_score,
-    confusion_matrix,
-    ConfusionMatrixDisplay,
-    RocCurveDisplay,
-    PrecisionRecallDisplay,
+import joblib
+from bid_predictor.bid_predictor import build_pipeline
+from bid_predictor.feature_config import load_feature_config, _GROUPBY_KEY_FEATURES
+from bid_predictor.tracking import (
+    log_evaluation_results_parquet,
+    log_classification_metrics,
+    log_classification_metrics_by_time,
+    log_prob_examples,
+    log_evaluation_figures,
+    log_feature_config_artifacts,
+    log_feature_importances,
+    log_pipeline_model,
+    log_run_parameters,
+    start_catboost_mlflow_stream,
 )
-from bid_predictor.bid_predictor import (
-    build_pipeline,
-    pre_features,
-    cat_features,
-    features,
-)
-from bid_predictor.tracking import start_catboost_mlflow_stream
-from bid_predictor.utils import in_sagemaker
+from bid_predictor.data import load_dataset_cached, prepare_features
+from bid_predictor.utils import detect_execution_environment, get_output_dir
+from catboost import CatBoostClassifier
 from dotenv import load_dotenv
+
 load_dotenv()
-if in_sagemaker():
+
+warnings.filterwarnings(
+    "ignore",
+    message=(
+        "This Pipeline instance is not fitted yet. Call 'fit' with appropriate arguments "
+        "before using other methods such as transform, predict, etc. This will raise an "
+        "error in 1.8 instead of the current warning."
+    ),
+    category=FutureWarning,
+)
+
+if detect_execution_environment()[0] in (
+    "sagemaker_notebook",
+    "sagemaker_job",
+    "sagemaker_terminal",
+):
     arn = os.environ["MLFLOW_AWS_ARN"]
     mlflow.set_tracking_uri(arn)
+
+DEFAULT_EXP_NAME = "tests"
+
+
+def _introspect_catboost_defaults() -> Dict[str, Any]:
+    signature = inspect.signature(CatBoostClassifier.__init__)
+    defaults: Dict[str, Any] = {}
+    for name, param in signature.parameters.items():
+        if name == "self" or param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        ):
+            continue
+        defaults[name] = None if param.default is inspect._empty else param.default
+    return defaults
+
+
+_CATBOOST_PARAM_DEFAULTS = _introspect_catboost_defaults()
+CATBOOST_PARAM_NAMES = tuple(_CATBOOST_PARAM_DEFAULTS.keys())
+CATBOOST_FLAG_MAP = {
+    name: f"--{name.replace('_', '-')}" for name in CATBOOST_PARAM_NAMES
+}
+
+
+def _parse_catboost_cli_value(raw: str | None) -> Any:
+    if raw is None:
+        return None
+    try:
+        value = yaml.safe_load(raw)
+    except yaml.YAMLError:
+        return raw
+    return value
+
+
+def _register_catboost_arguments(parser: argparse.ArgumentParser) -> None:
+    for name in CATBOOST_PARAM_NAMES:
+        flag = CATBOOST_FLAG_MAP[name]
+        parser.add_argument(
+            flag,
+            dest=name,
+            type=str if name=="devices" else _parse_catboost_cli_value,
+            default=_CATBOOST_PARAM_DEFAULTS[name],
+        )
+
+
+def _detect_explicit_flags(argv: Iterable[str]) -> Set[str]:
+    explicit: Set[str] = set()
+    for name, flag in CATBOOST_FLAG_MAP.items():
+        for arg in argv:
+            if arg == flag or arg.startswith(f"{flag}="):
+                explicit.add(name)
+                break
+    return explicit
+
+
+def _load_catboost_config(path: str | None) -> Dict[str, Any]:
+    if not path:
+        return {}
+
+    config_path = Path(path)
+    if not config_path.is_file():
+        raise FileNotFoundError(f"CatBoost configuration file not found: {config_path}")
+
+    with config_path.open("r", encoding="utf-8") as handle:
+        payload = yaml.safe_load(handle) or {}
+
+    if isinstance(payload, Mapping) and "catboost" in payload:
+        payload = payload["catboost"]
+
+    if not isinstance(payload, Mapping):
+        raise ValueError(
+            "CatBoost configuration must be a mapping of parameter names to values"
+        )
+
+    return {str(key): value for key, value in payload.items()}
+
+
+def _merge_catboost_params(
+    cli_params: Mapping[str, Any],
+    config_params: Mapping[str, Any],
+    explicit_flags: Set[str],
+) -> Dict[str, Any]:
+    merged = dict(cli_params)
+    for key, value in config_params.items():
+        if key in explicit_flags:
+            continue
+        merged[key] = value
+    return merged
+
+
+def _persist_model_artifacts(pipeline) -> None:
+    """Persist the trained pipeline and inference entry point for SageMaker."""
+
+    if detect_execution_environment()[0] != "sagemaker_job":
+        return
+
+    model_dir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")
+
+    target_dir = Path(model_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    model_path = target_dir / "pipeline.joblib"
+    joblib.dump(pipeline, model_path)
+
+    # Copy the "bid_predictor" directory next to pipeline.joblib
+    bid_predictor_src = Path(__file__).resolve().with_name("bid_predictor")
+    if bid_predictor_src.exists() and bid_predictor_src.is_dir():
+        bid_predictor_dst = target_dir / "bid_predictor"
+
+        # If it already exists from a previous run, replace it
+        if bid_predictor_dst.exists():
+            shutil.rmtree(bid_predictor_dst)
+
+        shutil.copytree(bid_predictor_src, bid_predictor_dst)
+
+    print(f"Saved model to {model_dir}")       
 
 
 def parse_args():
     p = argparse.ArgumentParser()
-    # CatBoost knobs
-    p.add_argument("--task_type", type=str, default="CPU")   # "GPU" to use GPU
-    p.add_argument("--devices", type=str, default="0")       # "0", "0,1", etc.
-    p.add_argument("--iterations", type=int, default=200)
-    p.add_argument("--depth", type=int, default=8)
-    p.add_argument("--learning_rate", type=float, default=0.1)
-    p.add_argument("--l2_leaf_reg", type=float, default=3.0)
+    _register_catboost_arguments(p)
+    p.set_defaults(
+        task_type="CPU",
+        devices="0",
+        iterations=200,
+        depth=6,
+        learning_rate=None,
+        l2_leaf_reg=3.0,
+        loss_function="Logloss",
+        eval_metric="AUC",
+        random_state=42,
+    )
     # your own toggles
-    p.add_argument("--eval_metric", type=str, default="AUC")
-    p.add_argument("--seed", type=int, default=42)
-    # bool flags — use explicit parsing
-    p.add_argument("--use_border_count", type=int, default=1) # 1/0 from SageMaker
-    return p.parse_args()
+    p.add_argument("--feature-config", type=str, default=None)
+    p.add_argument("--experiment-name", type=str, default=DEFAULT_EXP_NAME)
+    p.add_argument("--run-name", type=str, default=None)
+    p.add_argument("--test-fraction", type=float, default=0.2)
+    p.add_argument("--travel-date-min", type=str, default=None)
+    p.add_argument("--travel-date-max", type=str, default=None)
+    p.add_argument(
+        "--catboost-config",
+        type=str,
+        default=None,
+        help=(
+            "Optional YAML file containing CatBoost hyperparameters exported from the "
+            "tuning script. Command-line arguments override values from this file."
+        ),
+    )
+    p.add_argument("--training-data-path", type=str, default=None)
+
+    args = p.parse_args()
+    setattr(args, "_explicit_flags", _detect_explicit_flags(sys.argv[1:]))
+    return args
 
 
-def prepare_features(out):
-    out.sort_values(["travel_date", "carrier_code", "flight_number"]).reset_index(
-        drop=True
+def _dataset_name_from_path(path: str) -> str:
+    # Works for local paths, s3://, etc.
+    p = urlparse(path)
+    base = os.path.basename(p.path) if p.scheme else os.path.basename(path)
+    return base or "training_dataset"
+
+
+def _fast_source_digest(source_uri: str) -> str | None:
+    """
+    Cheap, stable-ish digest without hashing the whole DataFrame:
+    - S3: use ETag + size (fast HEAD request)
+    - Local: use mtime + size
+    """
+    try:
+        if source_uri.startswith("s3://") and boto3 is not None:
+            # s3://bucket/key...
+            path = source_uri[5:]
+            bucket, key = path.split("/", 1)
+
+            s3 = boto3.client("s3")
+            head = s3.head_object(Bucket=bucket, Key=key)
+
+            etag = head.get("ETag", "").strip('"')
+            size = head.get("ContentLength")
+            # ETag is usually MD5 for single-part uploads; for multipart it’s still a useful fingerprint.
+            return f"etag:{etag}|bytes:{size}"
+
+        # local file path
+        if os.path.exists(source_uri):
+            st = os.stat(source_uri)
+            return f"mtime:{int(st.st_mtime)}|bytes:{st.st_size}"
+    except Exception:
+        pass
+
+    return None
+
+
+def _log_mlflow_input_dataset(data: Any, training_data_path: str) -> None:
+    dataset_name = _dataset_name_from_path(str(training_data_path))
+
+    # Always keep these tags for easy filtering/debugging
+    mlflow.set_tag("dataset_name", dataset_name)
+    mlflow.set_tag("dataset_source", str(training_data_path))
+
+    # Prefer metadata-only dataset logging to avoid hashing the entire DataFrame
+    if MetaDataset is not None and CodeDatasetSource is not None:
+        source_obj = CodeDatasetSource(str(training_data_path))
+        digest = _fast_source_digest(str(training_data_path))  # can be None
+        meta_ds = MetaDataset(source=source_obj, name=dataset_name, digest=digest)
+        mlflow.log_input(meta_ds, context="training")
+        return
+
+    # Fallback (slower): if MetaDataset isn't available, keep your old approach
+    if PandasDataset is None or CodeDatasetSource is None or not isinstance(data, pd.DataFrame):
+        return
+
+    # if not isinstance(data, pd.DataFrame):
+    #     return
+
+    # if PandasDataset is None or CodeDatasetSource is None:
+    #     return
+
+    source_obj = CodeDatasetSource(str(training_data_path))
+    ds_obj = PandasDataset(df=data, source=source_obj, name=dataset_name)
+    mlflow.log_input(ds_obj, context="training")
+
+
+def train_and_log_model(
+    data,
+    feature_config,
+    train_file,
+    args,
+):
+    run_name = f"run-{pd.Timestamp.now():%Y-%m-%d-%H-%M-%S}"
+
+    cat_features = list(feature_config["cat_features"])
+    features = list(feature_config["features"])
+    pre_features = feature_config["pre_features"]
+
+    var_args = vars(args)
+    test_fraction = var_args.pop("test_fraction", 0.2)
+    travel_date_min = var_args.pop("travel_date_min", None)
+    travel_date_max = var_args.pop("travel_date_max", None)
+    experiment_name = var_args.pop("experiment_name", DEFAULT_EXP_NAME)
+    run_name = var_args.pop("run_name", run_name)
+    explicit_flags = set(var_args.pop("_explicit_flags", set()))
+    catboost_config_path = var_args.pop("catboost_config", None)
+    training_data_path = var_args.pop("training_data_path", train_file) or train_file
+
+    X_train, X_test, y_train, y_test, bid_prob_test_results = prepare_features(
+        data,
+        pre_features,
+        test_fraction=test_fraction,
+        travel_date_min=travel_date_min,
+        travel_date_max=travel_date_max,
     )
 
-    out = out.fillna(
-        {
-            "multiplier_fare_class": 1.0,
-            "multiplier_loyalty": 1.0,
-            "multiplier_success_history": 1.0,
-            "multiplier_payment_type": 1.0,
+    mlflow.set_experiment(experiment_name)
+    with mlflow.start_run(
+        run_name=run_name,
+        nested=(mlflow.active_run() is not None),
+        log_system_metrics=True,
+    ) as run:
+        _log_mlflow_input_dataset(data, training_data_path)
+        
+        catboost_file_params = _load_catboost_config(catboost_config_path)
+
+        if catboost_file_params.get("monotone_constraints") is None and any(
+            feature_config.get("monotone_constraints", [])
+        ):
+            catboost_file_params["monotone_constraints"] = feature_config.get(
+                "monotone_constraints", []
+            )
+
+        cli_catboost_params = {
+            name: var_args.get(name)
+            for name in CATBOOST_PARAM_NAMES
+            if name in var_args
         }
-    )
-
-    cutoff = "2025-05-01"
-    # cutoff = "2023-08-01"
-    yX_train = out[out.travel_date < cutoff][pre_features + ["offer_status"]]
-    yX_test = out[out.travel_date >= cutoff][pre_features + ["offer_status"]]
-    # yX_test = out[(out.travel_date >= cutoff) & (out.travel_date <= "2023-08-15")][
-        # pre_features + ["offer_status"]
-    # ]
-
-    X_train, X_test = yX_train[pre_features], yX_test[pre_features]
-    y_train = (yX_train["offer_status"] == "TICKETED").astype(int)
-    y_test = (yX_test["offer_status"] == "TICKETED").astype(int)
-    return X_train, X_test, y_train, y_test
-
-
-def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features):
-    args = parse_args()
-
-    mlflow.set_experiment("catboost-bid-predictor")
-    run_name = f"catboost_{pd.Timestamp.now():%Y%m%d_%H%M%S}"
-    with mlflow.start_run(run_name=run_name, nested=(mlflow.active_run() is not None), log_system_metrics=True) as run:
-        eval_metric = "AUC"
-        mlflow.log_param("n_features", len(features))
-        mlflow.log_param("features", ",".join(features))
-        mlflow.log_param("categorical_features", ",".join(cat_features))
-        mlflow.log_param("train_rows", len(X_train))
-        mlflow.log_param("test_rows", len(X_test))
-        mlflow.log_param("eval_metric", eval_metric)
-        mlflow.log_params(vars(args))
-
-        pipeline = build_pipeline(
-            task_type=args.task_type,
-            devices=args.devices,
+        merged_catboost_params = _merge_catboost_params(
+            cli_catboost_params, catboost_file_params, explicit_flags
         )
 
-        if in_sagemaker():
-            train_dir = pipeline[-1].cb_params.get("train_dir", "/opt/ml/output/catboost")
-            # train_dir = os.environ.get("CATBOOST_TRAIN_DIR", "/opt/ml/output/catboost")
+        for key, value in merged_catboost_params.items():
+            var_args[key] = value
+
+        log_run_parameters(var_args, features, cat_features, len(X_train), len(X_test))
+        log_feature_config_artifacts(feature_config)
+
+        catboost_kwargs = var_args.copy()
+        catboost_kwargs.pop("feature_config", None)
+        catboost_kwargs.pop("cat_features", None)
+        catboost_kwargs["train_dir"] = get_output_dir()
+        catboost_kwargs["allow_writing_files"] = True
+
+        pipeline = build_pipeline(feature_config=feature_config, **catboost_kwargs)
+
+        if detect_execution_environment()[0] in (
+            "sagemaker_notebook",
+            "sagemaker_job",
+            "sagemaker_terminal",
+        ):  # == "sagemaker_job":
+            train_dir = pipeline[-1].cb_params.get(
+                "train_dir", "/opt/ml/output/catboost"
+            )
 
             # start streaming before fit
             stop_stream = start_catboost_mlflow_stream(train_dir, run.info.run_id)
@@ -110,105 +391,58 @@ def train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features
 
         proba = pipeline.predict_proba(X_test)[:, 1]
         y_pred = (proba >= 0.5).astype(int)
-        mlflow.log_metrics(
-            {
-                "precision": float(precision_score(y_test, y_pred)),
-                "recall": float(recall_score(y_test, y_pred)),
-                "accuracy": float(accuracy_score(y_test, y_pred)),
-            }
-        )
 
-        X_train_trns = pipeline[:-1].transform(X_train)
-        train_pool = Pool(X_train_trns, y_train, cat_features=cat_features)
-        fi_vals = pipeline[-1].get_feature_importance(train_pool)
-        fi = pd.Series(fi_vals, index=X_train_trns.columns).sort_values()
-        fig_fi, ax_fi = plt.subplots(figsize=(10, 8))
-        fi.plot.barh(ax=ax_fi)
-        ax_fi.set_title("CatBoost Feature Importance")
-        ax_fi.set_xlabel("Importance")
-        ax_fi.grid(zorder=0)
-        ax_fi.set_axisbelow(True)
-        fig_fi.tight_layout()
-        mlflow.log_figure(fig_fi, "feature_importance.png")
-        plt.close(fig_fi)
+        bid_prob_test_results["Acceptance Probability"] = proba
 
-        cm = confusion_matrix(y_test, y_pred)
-        cmn = confusion_matrix(y_test, y_pred, normalize="true")
-
-        fig_cm, ax_cm = plt.subplots(figsize=(5, 5))
-        ConfusionMatrixDisplay(cm).plot(ax=ax_cm)
-        ax_cm.set_title("Confusion Matrix")
-        fig_cm.tight_layout()
-        mlflow.log_figure(fig_cm, "confusion_matrix.png")
-        plt.close(fig_cm)
-
-        fig_cmn, ax_cmn = plt.subplots(figsize=(5, 5))
-        ConfusionMatrixDisplay(cmn).plot(ax=ax_cmn)
-        ax_cmn.set_title("Confusion Matrix (Normalized)")
-        fig_cmn.tight_layout()
-        mlflow.log_figure(fig_cmn, "confusion_matrix_normalized.png")
-        plt.close(fig_cmn)
-
-        fig_roc, ax_roc = plt.subplots(figsize=(6, 5))
-        RocCurveDisplay.from_predictions(
-            y_test, proba, ax=ax_roc, drop_intermediate=True
-        )
-        ax_roc.set_title("ROC Curve")
-        fig_roc.tight_layout()
-        mlflow.log_figure(fig_roc, "roc_curve.png")
-        plt.close(fig_roc)
-
-        fig_pr, ax_pr = plt.subplots(figsize=(6, 5))
-        PrecisionRecallDisplay.from_predictions(y_test, proba, ax=ax_pr)
-        ax_pr.set_title("Precision-Recall Curve")
-        fig_pr.tight_layout()
-        mlflow.log_figure(fig_pr, "precision_recall_curve.png")
-        plt.close(fig_pr)
-
-        fig_ap, ax_ap = plt.subplots(1, 2, figsize=(12, 5))
-        ax_ap[0].hist(proba[y_test == 1], alpha=0.4, label="Ticketed", bins=100)
-        ax_ap[0].hist(proba[y_test == 0], alpha=0.4, label="Expired", bins=100)
-        ax_ap[0].grid(zorder=0)
-        ax_ap[0].set_axisbelow(True)
-        ax_ap[0].legend(loc="best")
-        ax_ap[0].set_xlabel("Acceptence Probability")
-        ax_ap[0].set_title("Linear Scale")
-        ax_ap[1].hist(proba[y_test == 1], alpha=0.4, label="Ticketed", bins=100)
-        ax_ap[1].hist(proba[y_test == 0], alpha=0.4, label="Expired", bins=100)
-        ax_ap[1].set_yscale("log")
-        ax_ap[1].grid(zorder=0)
-        ax_ap[1].set_axisbelow(True)
-        ax_ap[1].legend(loc="best")
-        ax_ap[1].set_xlabel("Acceptence Probability")
-        ax_ap[1].set_title("Log Scale")
-        fig_ap.tight_layout()
-        mlflow.log_figure(fig_ap, "acceptance_probability.png")
-        plt.close(fig_ap)
-
-        mlflow.sklearn.log_model(pipeline, "pipeline")
+        log_evaluation_results_parquet(bid_prob_test_results.reset_index())
+        log_classification_metrics(y_test, proba)
+        log_classification_metrics_by_time(bid_prob_test_results)
+        for carrier in ["AC", "LO"]:
+            if carrier in bid_prob_test_results.index.levels[0]:
+                log_classification_metrics_by_time(
+                    bid_prob_test_results.loc[carrier],
+                    figure_path=f"classification_metrics_vs_time_utill_departure_{carrier.lower()}.png",
+                )
+        log_prob_examples(bid_prob_test_results)
+        log_feature_importances(pipeline, X_train, y_train, cat_features)
+        log_evaluation_figures(y_test, y_pred, proba)
+        if detect_execution_environment()[0] == "sagemaker_job":
+            log_pipeline_model(pipeline)
+            _persist_model_artifacts(pipeline)
 
 
 def main():
-    if in_sagemaker():
-        train_dir = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
+    args = parse_args()
+
+    if detect_execution_environment()[0] == "sagemaker_job":
+        train_file = os.environ.get("SM_CHANNEL_TRAIN", "/opt/ml/input/data/train")
     else:
-        train_dir = "../old-bid-predictor"
+        if args.training_data_path:
+            train_file = args.training_data_path
+        else:
+            if detect_execution_environment()[0] in (
+                "sagemaker_notebook",
+                "sagemaker_terminal",
+            ):                    
+                train_file = os.environ.get("S3_BUCKET_DATA") + "/data"
+                # train_file += "/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+                # train_file += "/etihad/bid_and_flight_data_snapshots_etihad_v2.parquet"
+                # train_file += "/saudia/bid_and_flight_data_snapshots.parquet"
+                train_file += "/saudia/bid_and_flight_data_snapshots_v3.parquet"
+            else:
+                train_file = "./data/air_canada_and_lot/bid_data_snapshots_v2.parquet"
+                # train_file = "../bid_data_snapshots_v2.parquet"
 
-    train_file = train_dir + "/bid_data_enriched_new_reduced.csv"
+    data = load_dataset_cached(train_file)
 
-    data = pd.read_csv(
+    feature_config = load_feature_config(args.feature_config)
+
+    train_and_log_model(
+        data,
+        feature_config,
         train_file,
-        parse_dates=["travel_date"],
-        dtype={
-            "carrier_code": "category",
-            "flight_number": "category",
-            "fare_class": "category",
-        },
-        low_memory=False,
+        args,
     )
-
-    X_train, X_test, y_train, y_test = prepare_features(data)
-    train_and_log_model(X_train, X_test, y_train, y_test, cat_features, features)
 
 
 if __name__ == "__main__":
