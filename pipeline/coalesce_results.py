@@ -105,7 +105,7 @@ def overwrite_the_csv(df, output_csv_path):
 def read_lookup_carriers(path):
     parsed = urlparse(path)
     s3_object = s3.get_object(Bucket=parsed.netloc, Key=parsed.path.lstrip("/"))
-    df_lookup = pd.read_csv(io.BytesIO(s3_object['Body'].read()), dtype=str)
+    df_lookup = pd.read_csv(io.BytesIO(s3_object["Body"].read()), dtype=str)
     if "operating_carrier" not in df_lookup.columns:
         raise ValueError("Lookup CSV does not contain 'operating_carrier' column")
     carriers = df_lookup["operating_carrier"].dropna().unique().tolist()
@@ -129,8 +129,6 @@ def main():
     output_csv = args.output_csv
 
     operating_carriers = read_lookup_carriers(lookup_path)
-
-    # Read HWM ONCE
     last_hwm = read_high_water_mark(hwm_path)
 
     all_carriers_df = pd.DataFrame()
@@ -141,31 +139,43 @@ def main():
 
         # s3_root_prefix = f"dzd_4dt0rvdnr1hoiv/dfbsxtgjets9wn/offer_probability_csv/{carrier}/"
         s3_root_prefix = f"{input_prefix}/{carrier}/"
-
         all_files = list_csv_files(s3_bucket, s3_root_prefix)
 
-        new_files = []
-        new_timestamps = []
-
+        files_with_ts = []
         for key in all_files:
             ts = extract_ts_from_filename(key)
-            if ts and (last_hwm is None or ts > last_hwm):
-                new_files.append(key)
-                new_timestamps.append(ts)
+            if ts:
+                files_with_ts.append((key, ts))
 
-        print(f"Found {len(new_files)} new CSV files to process for carrier {carrier}.")
-
-        if not new_files:
-            print(f"No new files to process for carrier {carrier}.")
+        if not files_with_ts:
+            print(f"No valid timestamped files found for carrier {carrier}.")
             continue
 
+        newer_than_hwm = [
+            (key, ts) for key, ts in files_with_ts
+            if last_hwm is None or ts > last_hwm
+        ]
+
+        if newer_than_hwm:
+            selected_files = [key for key, ts in newer_than_hwm]
+            selected_timestamps = [ts for key, ts in newer_than_hwm]
+            print(f"Using {len(selected_files)} files newer than HWM for carrier {carrier}.")
+        else:
+            latest_key, latest_ts = max(files_with_ts, key=lambda x: x[1])
+            selected_files = [latest_key]
+            selected_timestamps = []
+            print(
+                f"No files newer than HWM for carrier {carrier}. "
+                f"Falling back to latest file: {latest_key}"
+            )
+
         df_carrier = pd.DataFrame()
-        for key in new_files:
+        for key in selected_files:
             df_part = read_csv_from_s3(s3_bucket, key)
             df_carrier = pd.concat([df_carrier, df_part], ignore_index=True)
 
         all_carriers_df = pd.concat([all_carriers_df, df_carrier], ignore_index=True)
-        all_new_timestamps.extend(new_timestamps)
+        all_new_timestamps.extend(selected_timestamps)
 
     if not all_carriers_df.empty:
         overwrite_the_csv(all_carriers_df, output_csv)
